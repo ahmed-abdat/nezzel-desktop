@@ -1,0 +1,38 @@
+[
+  [
+    2,
+    {
+      "title": "Public Bluesky image post"
+    }
+  ],
+  [
+    3,
+    "https://truffle.us-east.host.bsky.network/xrpc/com.atproto.sync.getBlob?did=did:plc:yqfmy2p54vqgekrcz5zzykhl&cid=bafkreiemk4x5vzhug7am5vtkq2oruuhgign7jy4s5wxvshizywptbv43zu",
+    {
+      "extension": "jpeg",
+      "height": 1024,
+      "num": 1,
+      "width": 768
+    }
+  ],
+  [
+    3,
+    "https://truffle.us-east.host.bsky.network/xrpc/com.atproto.sync.getBlob?did=did:plc:yqfmy2p54vqgekrcz5zzykhl&cid=bafkreign6kz3v7v67ckq6wjqycyelxvbu3e32u7s4m7acyhljkaikzxsee",
+    {
+      "extension": "jpeg",
+      "height": 1024,
+      "num": 2,
+      "width": 768
+    }
+  ],
+  [
+    3,
+    "https://truffle.us-east.host.bsky.network/xrpc/com.atproto.sync.getBlob?did=did:plc:yqfmy2p54vqgekrcz5zzykhl&cid=bafkreicusua2wgifw4u3igagwpvq4uilonvgbaufaiv5ppbxepybnbifsu",
+    {
+      "extension": "jpeg",
+      "height": 3000,
+      "num": 3,
+      "width": 4000
+    }
+  ]
+]

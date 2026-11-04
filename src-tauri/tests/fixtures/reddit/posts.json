@@ -1,0 +1,35 @@
+[
+  {
+    "name": "image",
+    "html": "<shreddit-post id=\"t3_decoy\" post-type=\"image\" content-href=\"https://i.redd.it/decoy.jpg\"></shreddit-post><shreddit-post id=\"t3_abc123\" post-type=\"image\" post-title=\"Synthetic post\" author=\"synthetic\" content-href=\"https://i.redd.it/full.jpg\"></shreddit-post>",
+    "kind": "image",
+    "count": 1
+  },
+  {
+    "name": "gallery",
+    "html": "<shreddit-post id=\"t3_decoy\" post-type=\"image\" content-href=\"https://i.redd.it/decoy.jpg\"></shreddit-post><shreddit-post id=\"t3_abc123\" post-type=\"gallery\" post-title=\"Synthetic post\" author=\"synthetic\" content-href=\"https://www.reddit.com/gallery/abc123\"><gallery-carousel><ul><li slot=\"page-1\"><figure><a href=\"https://i.redd.it/one.jpg\"><img src=\"https://preview.redd.it/one.jpg?width=320&amp;s=fixture\"></a></figure></li><li slot=\"page-2\"><figure><a href=\"https://i.redd.it/two.jpg\"><img src=\"https://preview.redd.it/two.jpg?width=320&amp;s=fixture\"></a></figure></li></ul></gallery-carousel></shreddit-post>",
+    "kind": "carousel",
+    "count": 2
+  },
+  {
+    "name": "mixed",
+    "html": "<shreddit-post id=\"t3_decoy\" post-type=\"image\" content-href=\"https://i.redd.it/decoy.jpg\"></shreddit-post><shreddit-post id=\"t3_abc123\" post-type=\"gallery\" post-title=\"Synthetic post\" author=\"synthetic\" content-href=\"https://www.reddit.com/gallery/abc123\"><gallery-carousel><ul><li slot=\"page-1\"><figure><a href=\"https://i.redd.it/one.jpg\"><img src=\"https://preview.redd.it/one.jpg?width=320&amp;s=fixture\"></a></figure></li><li slot=\"page-2\"><shreddit-player post-id=\"t3_abc123\" src=\"https://v.redd.it/abcdefgh1234\" poster=\"https://preview.redd.it/clip.jpg\" packaged-media-json=\"{&quot;playbackMp4s&quot;:{&quot;permutations&quot;:[{&quot;source&quot;:{&quot;url&quot;:&quot;https://v.redd.it/abcdefgh1234/DASH_720.mp4&quot;}}]}}\"></shreddit-player></li></ul></gallery-carousel></shreddit-post>",
+    "kind": "mixed",
+    "count": 2
+  },
+  {
+    "name": "video",
+    "html": "<shreddit-post id=\"t3_decoy\" post-type=\"image\" content-href=\"https://i.redd.it/decoy.jpg\"></shreddit-post><shreddit-post id=\"t3_abc123\" post-type=\"video\" post-title=\"Synthetic post\" author=\"synthetic\" content-href=\"https://v.redd.it/abcdefgh1234\"><li slot=\"page-2\"><shreddit-player post-id=\"t3_abc123\" src=\"https://v.redd.it/abcdefgh1234\" poster=\"https://preview.redd.it/clip.jpg\" packaged-media-json=\"{&quot;playbackMp4s&quot;:{&quot;permutations&quot;:[{&quot;source&quot;:{&quot;url&quot;:&quot;https://v.redd.it/abcdefgh1234/DASH_720.mp4&quot;}}]}}\"></shreddit-player></li></shreddit-post>",
+    "target": "https://v.redd.it/abcdefgh1234/DASHPlaylist.mpd"
+  },
+  {
+    "name": "external",
+    "html": "<shreddit-post id=\"t3_decoy\" post-type=\"image\" content-href=\"https://i.redd.it/decoy.jpg\"></shreddit-post><shreddit-post id=\"t3_abc123\" post-type=\"link\" post-title=\"Synthetic post\" author=\"synthetic\" content-href=\"https://www.youtube.com/watch?v=synthetic\"></shreddit-post>",
+    "target": "https://www.youtube.com/watch?v=synthetic"
+  },
+  {
+    "name": "promoted-profile-gif",
+    "html": "<shreddit-post permalink=\"/user/synthetic/comments/abc123/title/\" content-href=\"https://v.redd.it/abcdefgh1234\" is-profile-post id=\"t3_abc123\" post-title=\"Synthetic post\" post-type=\"gif\" author=\"synthetic\" subreddit-name=\"u_synthetic\"><shreddit-player src=\"https://v.redd.it/abcdefgh1234/HLSPlaylist.m3u8?f=hd%2CsubsAll&amp;v=1&amp;a=1\" gif post-id=\"t3_abc123\" post-type=\"gif\" poster=\"https://external-preview.redd.it/clip.jpeg?width=640&amp;crop=smart&amp;format=pjpg&amp;auto=webp&amp;s=x\" preview=\"https://v.redd.it/abcdefgh1234/CMAF_96.mp4\"></shreddit-player></shreddit-post>",
+    "target": "https://v.redd.it/abcdefgh1234/DASHPlaylist.mpd"
+  }
+]

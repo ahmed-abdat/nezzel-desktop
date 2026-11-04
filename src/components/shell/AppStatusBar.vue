@@ -1,0 +1,92 @@
+<template>
+  <footer class="flex h-7 shrink-0 items-center gap-3 border-t border-hairline bg-sidebar px-4 text-[11.5px] text-muted-foreground" :aria-label="t('shell.status.label')">
+    <!-- Start: live state. One polite region so screen readers hear "2 downloading" without the speed ticking. -->
+    <span class="inline-flex min-w-0 items-center gap-1.5" role="status">
+      <span class="size-1.5 shrink-0 rounded-full" :class="dotCls" aria-hidden="true" />
+      <span class="tnum truncate">{{ stateText }}</span>
+      <template v-if="downloading.length && totalSpeed">
+        <span class="nz-sep" aria-hidden="true" />
+        <bdi class="tnum" aria-hidden="true">{{ speed(totalSpeed) }}</bdi>
+      </template>
+      <template v-if="downloading.length && failed.length">
+        <span class="nz-sep" aria-hidden="true" />
+        <span class="tnum text-destructive">{{ t('shell.status.failed', { n: n(failed.length) }, failed.length) }}</span>
+      </template>
+    </span>
+
+    <!-- End: where files go. Click opens it in Finder/Explorer; the tooltip shows the full path. -->
+    <tooltip v-if="downloadDir" :content="downloadDir" side="top">
+      <button
+        type="button"
+        class="ms-auto inline-flex min-w-0 max-w-[50%] items-center gap-1.5 rounded px-1 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+        :aria-label="`${t('shell.status.openFolder')}: ${downloadDir}`"
+        @click="openFolder"
+      >
+        <folder-open class="size-3.5 shrink-0" aria-hidden="true" />
+        <bdi class="truncate" dir="ltr">{{ folderName }}</bdi>
+      </button>
+    </tooltip>
+  </footer>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { FolderOpen } from '@lucide/vue';
+import Tooltip from '@/components/ui/tooltip/Tooltip.vue';
+import { useDownloadBuckets } from '../../composables/useDownloadBuckets';
+import { useLocaleNumber } from '../../composables/useLocaleNumber';
+import { useOpener } from '../../composables/useOpener';
+import { useMediaProgressStore } from '../../stores/media/progress';
+import { MediaState, useMediaStateStore } from '../../stores/media/state';
+import { useToastStore } from '../../stores/toast';
+import { useSettingsStore } from '../../stores/settings';
+import { compactFolderPath, parentFolder } from '../../helpers/folderPath';
+
+const { t } = useI18n();
+const { count: n, speed } = useLocaleNumber();
+const { active, downloading } = useDownloadBuckets();
+const stateStore = useMediaStateStore();
+const progressStore = useMediaProgressStore();
+const settingsStore = useSettingsStore();
+const { openPath } = useOpener();
+
+const inState = (...states: MediaState[]) => computed(() => active.value.filter(group => states.includes(stateStore.getGroupState(group.id) as MediaState)));
+const failed = inState(MediaState.error);
+const reading = inState(MediaState.fetching, MediaState.fetchingList);
+const totalSpeed = computed(() => downloading.value.reduce((sum, group) => sum + (progressStore.findGroupProgress(group.id)?.speedBps ?? 0), 0));
+
+const stateText = computed(() => {
+  if (downloading.value.length) return t('shell.status.downloading', { n: n(downloading.value.length) }, downloading.value.length);
+  if (reading.value.length) return t('shell.status.reading', { n: n(reading.value.length) }, reading.value.length);
+  if (failed.value.length) return t('shell.status.failed', { n: n(failed.value.length) }, failed.value.length);
+  return t('shell.status.ready');
+});
+const dotCls = computed(() => {
+  if (downloading.value.length) return 'bg-primary animate-pulse motion-reduce:animate-none';
+  if (reading.value.length) return 'bg-primary/60 animate-pulse motion-reduce:animate-none';
+  if (failed.value.length) return 'bg-destructive';
+  return 'bg-primary/60';
+});
+
+const downloadDir = computed(() => settingsStore.settings.output?.downloadDir ?? null);
+const folderName = computed(() => compactFolderPath(downloadDir.value ?? ''));
+
+async function openFolder() {
+  const dir = downloadDir.value;
+  if (!dir) return;
+  try {
+    await openPath(dir);
+  } catch {
+    // The default Downloads/Nezzel folder is created by the first download; until then open its parent.
+    const parent = parentFolder(dir);
+    if (parent) {
+      try {
+        await openPath(parent);
+        return;
+      } catch { /* Both locations failed. */ }
+    }
+    useToastStore().showToast(t('feedback.folderFailed'), { style: 'error' });
+  }
+}
+</script>

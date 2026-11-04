@@ -1,0 +1,74 @@
+{
+  "tray": {
+    "pasteLink": "Coller le lien",
+    "activeDownloads": "Téléchargements actifs : {n}",
+    "quit": "Quitter",
+    "showOrHide": "Afficher/Masquer la fenêtre",
+    "addToQueue": "Ajouter depuis le presse-papiers",
+    "addAndDownload": "Ajouter et télécharger depuis le presse-papiers",
+    "downloadQueue": "Télécharger la file",
+    "shortcuts": {
+      "ctrlShiftV": "Ctrl + Maj + V",
+      "ctrlShiftD": "Ctrl + Maj + D",
+      "ctrlShiftEnter": "Ctrl + Maj + Entrée",
+      "altShiftV": "Alt + Maj + V",
+      "altShiftD": "Alt + Maj + D",
+      "altShiftEnter": "Alt + Maj + Entrée"
+    }
+  },
+  "notifications": {
+    "queueAdded": {
+      "title": "Ajouté à la file",
+      "body": "{title}"
+    },
+    "queueDownloading": {
+      "title": "Téléchargement de la file",
+      "body": "Téléchargement de {n} élément | Téléchargement de {n} éléments"
+    },
+    "queueFinished": {
+      "title": "File terminée",
+      "body": "Téléchargement terminé de {n} élément | Téléchargement terminé de {n} éléments"
+    },
+    "videoFinished": {
+      "title": "Enregistré",
+      "body": "{title}"
+    },
+    "playlistFinished": {
+      "title": "Playlist terminée",
+      "body": "{title}"
+    },
+    "videoReady": {
+      "title": "Prêt à télécharger",
+      "body": "{title}"
+    },
+    "playlistReady": {
+      "title": "Playlist prête à télécharger",
+      "body": "{title} | {title} ({n} élément) | {title} ({n} éléments)"
+    },
+    "downloadFailed": {
+      "title": "Échec du téléchargement",
+      "body": "{title}\n{message}"
+    }
+  },
+  "resolve": {
+    "photosOnly": "Cette publication contient des photos, pas de vidéo. Le téléchargement des photos sera bientôt disponible."
+  },
+  "files": {
+    "errors": {
+      "fileNotPublic": "Ce fichier n’est pas partagé publiquement. Demandez au propriétaire de le rendre accessible à toute personne disposant du lien.",
+      "fileRateLimited": "Ce site limite les téléchargements pour le moment. Réessayez plus tard.",
+      "fileCancelled": "Téléchargement en pause.",
+      "fileAddressRefused": "Ce lien ne peut pas être ouvert en toute sécurité. Utilisez un lien HTTP ou HTTPS public.",
+      "fileNetwork": "Le téléchargement a été interrompu. Reprenez-le ou copiez un nouveau lien.",
+      "fileEncoding": "Le serveur a changé la façon d’envoyer ce fichier. Essayez un autre lien.",
+      "fileState": "Le téléchargement enregistré n’a pas pu être vérifié. Choisissez un autre dossier pour recommencer.",
+      "fileBusy": "Ce fichier est déjà en cours de téléchargement. Attendez la fin.",
+      "fileIo": "Le fichier n’a pas pu être enregistré. Vérifiez le dossier et l’espace disponible, puis réessayez.",
+      "fileChanged": "Le fichier a changé sur le serveur. Réessayez le téléchargement.",
+      "fileNotFile": "Le site a envoyé une page au lieu du fichier. Copiez un nouveau lien de téléchargement direct.",
+      "fileEmpty": "Le serveur a envoyé un fichier vide. Essayez un autre lien.",
+      "fileSpace": "L’espace disponible est insuffisant. Libérez de l’espace ou choisissez un autre dossier.",
+      "fileProxy": "Le téléchargement de fichiers via ce proxy n’est pas encore sécurisé. Désactivez le proxy pour ce fichier."
+    }
+  }
+}

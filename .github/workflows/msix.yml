@@ -1,0 +1,77 @@
+name: 'Build MSIX revision'
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-msix:
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ['windows-latest', 'windows-11-arm']
+    env:
+      WINDOWS_PFX_B64: ${{ secrets.WINDOWS_PFX_B64 }}
+      WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust 1.99.1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.99.1
+          targets: ${{ matrix.platform == 'windows-11-arm' && 'aarch64-pc-windows-msvc' || '' }}
+
+      - name: Install cargo-about
+        uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        with:
+          tool: cargo-about
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Windows exe (no bundle, no release)
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: '--no-bundle'
+
+      - name: Fetch tool binaries for MSIX
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm run manifest:fetch
+
+      - name: Build and sign MSIX
+        uses: ./.github/actions/msix-build-sign
+        with:
+          pfx-b64: ${{ secrets.WINDOWS_PFX_B64 }}
+          pfx-password: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+          architecture: ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nezzel-msix-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          path: Nezzel_${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}.msix

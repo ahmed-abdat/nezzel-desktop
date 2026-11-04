@@ -1,0 +1,212 @@
+{
+  "generatedAt": "2026-11-02",
+  "tools": {
+    "yt-dlp": {
+      "version": "2026.10.26",
+      "files": {
+        "linux-x86_64": {
+          "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_linux.zip",
+          "sha256": "f34053415136e55073dd64ba5326d161ecc23ce0e98c081d8752867b37809450",
+          "bundle": {
+            "keep_folder": true,
+            "folder_name": "yt-dlp_linux",
+            "entry": "yt-dlp_linux",
+            "rename_entry_to": "yt-dlp"
+          }
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_linux_aarch64.zip",
+          "sha256": "74708e707e8fa8177c8347e58152337edf320149cd7b225defd453f7cde47822",
+          "bundle": {
+            "keep_folder": true,
+            "folder_name": "yt-dlp_linux_aarch64",
+            "entry": "yt-dlp_linux_aarch64",
+            "rename_entry_to": "yt-dlp"
+          }
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_win.zip",
+          "sha256": "fd51b212cf8380c7a52ee08c0d6be7f3c59b2f2c832eaf7b45acfae6eab57419",
+          "bundle": {
+            "keep_folder": true,
+            "folder_name": "yt-dlp",
+            "entry": "yt-dlp.exe",
+            "rename_entry_to": "yt-dlp.exe"
+          }
+        },
+        "windows-aarch64": {
+          "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_win_arm64.zip",
+          "sha256": "5eaa4c61f3c09189f3a551bf1855c13aad61fb865cc33f06012a6c2dbe287a45",
+          "bundle": {
+            "keep_folder": true,
+            "folder_name": "yt-dlp",
+            "entry": "yt-dlp_arm64.exe",
+            "rename_entry_to": "yt-dlp.exe"
+          }
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_macos.zip",
+          "sha256": "20d98fa608998eff87d1d35a6e9fb65e4b874639a6cc89addc19da3becde3ef1",
+          "bundle": {
+            "keep_folder": true,
+            "folder_name": "yt-dlp_macos",
+            "entry": "yt-dlp_macos",
+            "rename_entry_to": "yt-dlp"
+          }
+        },
+        "darwin-aarch64": {
+          "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_macos.zip",
+          "sha256": "20d98fa608998eff87d1d35a6e9fb65e4b874639a6cc89addc19da3becde3ef1",
+          "bundle": {
+            "keep_folder": true,
+            "folder_name": "yt-dlp_macos",
+            "entry": "yt-dlp_macos",
+            "rename_entry_to": "yt-dlp"
+          }
+        }
+      }
+    },
+    "ffmpeg": {
+      "version": "9.0.2 / N-128280-ga88838af48",
+      "files": {
+        "linux-x86_64": {
+          "version": "N-128280-ga88838af48",
+          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-01-19-06/ffmpeg-N-128280-ga88838af48-linux64-gpl.tar.xz",
+          "sha256": "8f581751ab4e6c4ca5f5a15c9abe375a088d68405c3e7b79097669ce459ac270",
+          "entry": "ffmpeg-N-128280-ga88838af48-linux64-gpl/bin/ffmpeg"
+        },
+        "linux-aarch64": {
+          "version": "N-128280-ga88838af48",
+          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-01-19-06/ffmpeg-N-128280-ga88838af48-linuxarm64-gpl.tar.xz",
+          "sha256": "fb8c67ad9b79273d89c6e854e173c36f9eb714cc0edc5cdfe39c25445a6edc86",
+          "entry": "ffmpeg-N-128280-ga88838af48-linuxarm64-gpl/bin/ffmpeg"
+        },
+        "windows-x86_64": {
+          "version": "N-128280-ga88838af48",
+          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-01-19-06/ffmpeg-N-128280-ga88838af48-win64-gpl.zip",
+          "sha256": "68085d2ec5ae3b700d7558b2c826fb5b03a6cf9b5500f6200540fc8f66adedda",
+          "entry": "ffmpeg-N-128280-ga88838af48-win64-gpl/bin/ffmpeg.exe"
+        },
+        "darwin-x86_64": {
+          "version": "9.0.2",
+          "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip",
+          "sha256": "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4",
+          "entry": "ffmpeg"
+        },
+        "darwin-aarch64": {
+          "version": "9.0.2",
+          "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+          "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+          "entry": "ffmpeg"
+        },
+        "windows-aarch64": {
+          "version": "N-128280-ga88838af48",
+          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-01-19-06/ffmpeg-N-128280-ga88838af48-winarm64-gpl.zip",
+          "sha256": "106bed14cd95589a85d9b10ef41349dffbc71747b09fcb2b20e1214e13209f4d",
+          "entry": "ffmpeg-N-128280-ga88838af48-winarm64-gpl/bin/ffmpeg.exe"
+        }
+      }
+    },
+    "ffprobe": {
+      "version": "9.0.2 / N-128280-ga88838af48",
+      "files": {
+        "linux-x86_64": {
+          "version": "N-128280-ga88838af48",
+          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-01-19-06/ffmpeg-N-128280-ga88838af48-linux64-gpl.tar.xz",
+          "sha256": "8f581751ab4e6c4ca5f5a15c9abe375a088d68405c3e7b79097669ce459ac270",
+          "entry": "ffmpeg-N-128280-ga88838af48-linux64-gpl/bin/ffprobe"
+        },
+        "linux-aarch64": {
+          "version": "N-128280-ga88838af48",
+          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-01-19-06/ffmpeg-N-128280-ga88838af48-linuxarm64-gpl.tar.xz",
+          "sha256": "fb8c67ad9b79273d89c6e854e173c36f9eb714cc0edc5cdfe39c25445a6edc86",
+          "entry": "ffmpeg-N-128280-ga88838af48-linuxarm64-gpl/bin/ffprobe"
+        },
+        "windows-x86_64": {
+          "version": "N-128280-ga88838af48",
+          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-01-19-06/ffmpeg-N-128280-ga88838af48-win64-gpl.zip",
+          "sha256": "68085d2ec5ae3b700d7558b2c826fb5b03a6cf9b5500f6200540fc8f66adedda",
+          "entry": "ffmpeg-N-128280-ga88838af48-win64-gpl/bin/ffprobe.exe"
+        },
+        "darwin-x86_64": {
+          "version": "9.0.2",
+          "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffprobe.zip",
+          "sha256": "2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd",
+          "entry": "ffprobe"
+        },
+        "darwin-aarch64": {
+          "version": "9.0.2",
+          "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
+          "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6",
+          "entry": "ffprobe"
+        },
+        "windows-aarch64": {
+          "version": "N-128280-ga88838af48",
+          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-01-19-06/ffmpeg-N-128280-ga88838af48-winarm64-gpl.zip",
+          "sha256": "106bed14cd95589a85d9b10ef41349dffbc71747b09fcb2b20e1214e13209f4d",
+          "entry": "ffmpeg-N-128280-ga88838af48-winarm64-gpl/bin/ffprobe.exe"
+        }
+      }
+    },
+    "deno": {
+      "version": "v2.9.8",
+      "files": {
+        "linux-x86_64": {
+          "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-unknown-linux-gnu.zip",
+          "sha256": "e890975bc2549807bbcc0b584ffafda72cc7c93349dd99c80483dd784f6c4609",
+          "entry": "deno"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-aarch64-unknown-linux-gnu.zip",
+          "sha256": "d49596c20b9788cf8f5d8ddf644103d4bde56ed239753f0bdb92ba9361d51905",
+          "entry": "deno"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip",
+          "sha256": "cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf",
+          "entry": "deno.exe"
+        },
+        "windows-aarch64": {
+          "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-aarch64-pc-windows-msvc.zip",
+          "sha256": "b413b92b735b50c198e8fe3b85af1aa50e29d5f72e229aab701d132286e14cef",
+          "entry": "deno.exe"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-apple-darwin.zip",
+          "sha256": "4b2f5edd2639b7470f034238b321d7002d8dfb4726d8558f52c17afac370eb2c",
+          "entry": "deno"
+        },
+        "darwin-aarch64": {
+          "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-aarch64-apple-darwin.zip",
+          "sha256": "9f0bf660393da2eaff044cdc7444cb08c73f235849b61d224d825a194ce7c98e",
+          "entry": "deno"
+        }
+      }
+    },
+    "AtomicParsley": {
+      "version": "20240608.083822.1ed9031",
+      "files": {
+        "linux-x86_64": {
+          "url": "https://github.com/wez/atomicparsley/releases/download/20240608.083822.1ed9031/AtomicParsleyLinux.zip",
+          "sha256": "3ad238d57845fafa27563046478e78552f3cc61eabd8c308f2dc007a9c3c40b7",
+          "entry": "AtomicParsley"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/wez/atomicparsley/releases/download/20240608.083822.1ed9031/AtomicParsleyWindows.zip",
+          "sha256": "cc7c5a7dcaba28869f3819e4a57f382dc0ff307b7b013f9bffd028605ae6f52d",
+          "entry": "AtomicParsley.exe"
+        },
+        "windows-aarch64": {
+          "url": "https://github.com/wez/atomicparsley/releases/download/20240608.083822.1ed9031/AtomicParsleyWindows.zip",
+          "sha256": "cc7c5a7dcaba28869f3819e4a57f382dc0ff307b7b013f9bffd028605ae6f52d",
+          "entry": "AtomicParsley.exe"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/wez/atomicparsley/releases/download/20240608.083822.1ed9031/AtomicParsleyMacOS.zip",
+          "sha256": "48d5d977c6d0b4be64f0a065da698cdc2e7ac31d6d195e9ced3b2bd6194a1e9f",
+          "entry": "AtomicParsley"
+        }
+      }
+    }
+  }
+}

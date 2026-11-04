@@ -1,0 +1,11 @@
+# Default gitleaks rules, plus one allowlist: the Tauri updater's minisign PUBLIC key
+# (base64 of "untrusted comment: minisign public key: ..."), which is public by design.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Tauri updater minisign public key"
+paths = ['''^src-tauri/tauri\.conf\.json$''', '''(^|/)src-tauri/tauri\.conf\.json$''']
+regexes = ['''dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6''']
+condition = "AND"
+regexTarget = "line"

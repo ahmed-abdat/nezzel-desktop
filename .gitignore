@@ -1,0 +1,66 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-isolation
+dist-ssr
+docs/manifest
+licenses/*
+!licenses/tools-NOTICES.txt
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.iml
+
+# Tests
+test-results/
+coverage/
+# Hash-verified aria2 sidecars are prepared by scripts/fetch-aria2.py.
+src-tauri/binaries/aria2c-*-apple-darwin
+src-tauri/binaries/aria2c-*-unknown-linux-gnu
+src-tauri/binaries/aria2c-*-pc-windows-msvc.exe
+# Prepared, verified gallery-dl executables and per-target build metadata.
+src-tauri/binaries/gallery-dl*
+.impeccable/hook.cache.json
+__pycache__/
+
+# Pinned installer tools and local unpacked-payload cache metadata.
+src-tauri/binaries/tools/
+src-tauri/binaries/ffmpeg-*
+src-tauri/binaries/ffprobe-*
+src-tauri/binaries/deno-*
+
+# Internal files kept out of the public repository
+AGENTS.md
+CLAUDE.md
+.claude/
+.codex/
+.mcp.json
+.agents/
+.impeccable/
+PRODUCT.md
+DESIGN.md
+report.md
+research/
+url-import-test.csv
+docs/OPEN_DECISIONS.md
+scripts/login-check.sh
+scripts/public-export.sh
+.public-exclude
+*.pyc

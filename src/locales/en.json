@@ -1,0 +1,1985 @@
+{
+  "common": {
+    "download": "Download",
+    "save": "Save",
+    "later": "Later",
+    "load": "Load",
+    "install": "Install",
+    "percentage": "{percent}%",
+    "add": "Add",
+    "back": "Back",
+    "continue": "Continue",
+    "retry": "Retry",
+    "enable": "Enable",
+    "pleaseWait": "Please wait…",
+    "loading": "Loading",
+    "emptySearch": "No results found",
+    "parenthesis": "({content})",
+    "divide": "{left} / {right}",
+    "video": "video",
+    "unknown": "unknown",
+    "confirm": "Confirm",
+    "best": "Best",
+    "resume": "Resume",
+    "urlImport": {
+      "added": "Link added to the list | {n} links added to the list",
+      "partial": "Added {added} links. Skipped {skipped} lines that aren't links",
+      "noneFound": "No valid links found in the input/file",
+      "readError": "Couldn't read that file",
+      "unsupportedType": "Only .txt and .csv files with links can be imported",
+      "reading": "Reading the file…"
+    },
+    "close": "Close"
+  },
+  "layout": {
+    "header": {
+      "placeholder": "Enter a video/playlist link to add to the queue",
+      "watchClipboardPlaceholder": "Watching clipboard: copied links are added to the queue",
+      "actions": {
+        "more": "More add actions",
+        "watchClipboardStart": "Watch clipboard",
+        "watchClipboardStop": "Stop watching clipboard",
+        "importFile": "Import links",
+        "inputFilters": "Filters"
+      },
+      "nav": {
+        "inputFilters": "Filters",
+        "settings": "App Settings"
+      }
+    },
+    "footer": {
+      "progress": {
+        "downloading": "Downloading queue - {done} of {total} completed",
+        "completed": "Download complete – {n} item downloaded. | Download complete – {n} items downloaded",
+        "ready": "Ready to download! {n} item queued. | Ready to download! {n} items queued"
+      },
+      "nav": {
+        "downloadLocation": "Locations",
+        "login": {
+          "screenReader": {
+            "on": "Edit login (currently logged in)",
+            "off": "Edit login (currently not logged in)"
+          },
+          "tooltip": {
+            "on": "Edit log in",
+            "off": "Log in"
+          }
+        },
+        "subtitles": {
+          "screenReader": {
+            "on": "Edit subtitles (currently enabled)",
+            "off": "Edit subtitles (currently disabled)"
+          },
+          "tooltip": "Subtitles"
+        }
+      },
+      "format": {
+        "trackSelect": {
+          "screenReader": "Select track for all videos"
+        },
+        "formatSelect": {
+          "noFormats": "No formats",
+          "placeholder": "Select format",
+          "screenReader": "Select format for all videos"
+        }
+      },
+      "queue": {
+        "empty": "Empty queue",
+        "resume": "Resume all",
+        "pause": "Pause all",
+        "clearSuccessful": "Clear successful",
+        "clearErrored": "Clear errored",
+        "clearPending": "Clear pending",
+        "cancelDownloading": "Cancel downloading",
+        "more": "More queue actions"
+      }
+    }
+  },
+  "auth": {
+    "title": "Authentication",
+    "cookies": {
+      "legend": "Cookies",
+      "legendBadge": "Recommended",
+      "legendLabel": "Use logged in sessions from a cookies file or import from your browser",
+      "file": {
+        "label": "Load cookies from a cookies.txt file",
+        "hint": "In order to export your cookies to a file {link}",
+        "hintLink": "see the guide"
+      },
+      "browser": {
+        "label": "Automatically load cookies from a browser",
+        "placeholder": "Do not load cookies from a browser",
+        "hint": "Some browsers may not support loading cookies. See the {link}",
+        "hintLink": "list of compatible browsers"
+      },
+      "automatic": "Automatic (use a signed-in profile)",
+      "alwaysUseBrowserLogins": "Always use my browser logins"
+    },
+    "credentials": {
+      "title": "Advanced methods",
+      "description": "Use methods like basic auth, bearer tokens, headers, video password, etc.",
+      "labels": {
+        "username": "Username",
+        "password": "Password",
+        "token": "Token",
+        "headers": "Headers"
+      },
+      "basicAuth": {
+        "legend": "Basic auth",
+        "legendLabel": "Used for sites with simple authentication"
+      },
+      "videoPassword": {
+        "legend": "Video password",
+        "legendLabel": "Provide a password to access protected videos"
+      },
+      "bearerToken": {
+        "legend": "Bearer token",
+        "legendLabel": "Provide a bearer token to access private resources"
+      },
+      "customHeaders": {
+        "legend": "Custom headers",
+        "legendBadge": "Advanced",
+        "legendLabel": "One per line: FIELD:VALUE",
+        "placeholder": "X-Api-Key:…"
+      }
+    },
+    "init": {
+      "title": "Saved accounts are off",
+      "description": "Turn on to keep passwords and tokens encrypted with your system keychain",
+      "hint": "The secrets store uses your system's keyring, this might require a password",
+      "error": {
+        "title": "Unable to enable the secrets store",
+        "description": "An error occurred while enabling the secrets store, please try again",
+        "hint": "Error: {error}",
+        "unknown": "Unknown error"
+      },
+      "toasts": {
+        "error": "Unable to initialize the secrets store: {error}"
+      }
+    },
+    "toasts": {
+      "error": "Couldn’t save logins: {error}",
+      "saved": "Logins saved"
+    },
+    "login": {
+      "needed": "This {site} post needs you to be logged in",
+      "useBrowser": "Use {browser} ({profile})",
+      "notNow": "Not now",
+      "exhausted": "No browser login worked. Sign in to the site in your browser and try again"
+    }
+  },
+  "media": {
+    "view": {
+      "tabs": {
+        "metadata": "Metadata",
+        "logs": "Logs"
+      },
+      "thumbnailAlt": "Thumbnail for {title}",
+      "metadata": {
+        "uploader": "Uploader",
+        "extractor": "Extractor",
+        "link": "Link",
+        "chapters": "Chapters",
+        "description": "Description"
+      },
+      "stats": {
+        "title": "Video Statistics",
+        "views": "Views",
+        "likes": "Likes",
+        "dislikes": "Dislikes",
+        "comments": "Comments",
+        "rating": "Rating",
+        "duration": "Duration"
+      },
+      "logs": {
+        "failure": "Failure",
+        "errors": {
+          "count": "Errors ({count})",
+          "empty": "No errors found"
+        },
+        "warnings": {
+          "count": "Warnings ({count})",
+          "empty": "No warnings found"
+        },
+        "skipped": {
+          "count": "Skipped items ({count})",
+          "empty": "No items were skipped by filters",
+          "items": "{count} item | {count} items"
+        },
+        "all": {
+          "title": "All logs",
+          "empty": "No logs found"
+        },
+        "toasts": {
+          "reported": "Problem reported, thank you",
+          "error": "Couldn't send the report"
+        }
+      }
+    },
+    "preferences": {
+      "badges": {
+        "override": "Override"
+      },
+      "labels": {
+        "quality": "Choose format, codec, and track preferences",
+        "network": "Configure proxy, impersonation, extractor settings, and request headers. Overrides app defaults for this download",
+        "output": "Configure container, conversion, and filename templates. Overrides app defaults for this download",
+        "subtitles": "Choose subtitles for this download",
+        "headersOverride": "One per line: FIELD:VALUE. Replaces global headers for this download"
+      },
+      "subtitles": {
+        "empty": "No subtitles found for this download",
+        "languages": {
+          "legend": "Available languages",
+          "hint": "Only these subtitles can be downloaded for this item",
+          "manual": "Creator-provided",
+          "auto": "Auto-generated",
+          "noneManual": "No creator subtitles found",
+          "noneAuto": "No auto subtitles found"
+        }
+      },
+      "hints": {
+        "format": "Pick video or audio quality. Higher quality usually means larger files and longer downloads",
+        "encodings": "Choose preferred codecs. Useful for playback compatibility or keeping original quality",
+        "tracks": "Pick language or channel variants when available, for example dubbed audio"
+      },
+      "tabs": {
+        "quality": "Quality",
+        "subtitles": "Subtitles",
+        "network": "Network"
+      }
+    },
+    "steps": {
+      "fetch": {
+        "progress": "{percentage}% — {done} of {total}",
+        "progressLabel": "Fetching metadata…"
+      },
+      "configure": {
+        "format": {
+          "trackSelect": {
+            "screenReader": "Select track to download"
+          },
+          "formatSelect": {
+            "noFormats": "No formats",
+            "placeholder": "Select format",
+            "screenReader": "Select format of the track"
+          }
+        },
+        "encodings": {
+          "audioSelect": {
+            "noFormats": "No audio encodings",
+            "placeholder": "Audio codec",
+            "screenReader": "Select audio encoding"
+          },
+          "videoSelect": {
+            "noFormats": "No video encodings",
+            "placeholder": "Video codec",
+            "screenReader": "Select video encoding"
+          }
+        },
+        "tracks": {
+          "availableInResolutions": "Available in",
+          "unavailableForSelectedResolution": "Unavailable for selected resolution",
+          "audioSelect": {
+            "noFormats": "No audio tracks",
+            "placeholder": "Audio track",
+            "screenReader": "Select audio track"
+          },
+          "videoSelect": {
+            "noFormats": "No video tracks",
+            "placeholder": "Video track",
+            "screenReader": "Select video track"
+          }
+        },
+        "metadata": {
+          "duration": "Duration: {duration}",
+          "size": "Size",
+          "sizeInfo": "The amount of data that will be downloaded.\nNot the final size of the file",
+          "items": "Items: {amount} {details}",
+          "failedCount": "({amount} failed)",
+          "skippedCount": "({amount} skipped)",
+          "failedAndSkippedCount": "({failed} failed, {skipped} skipped)"
+        },
+        "trackTypes": {
+          "both": "Video + Audio",
+          "audio": "Audio",
+          "video": "Video"
+        }
+      },
+      "download": {
+        "progress": "Downloading {category}… — {percentage}%",
+        "progressList": "Downloading… {percentage}% — {done} of {total}",
+        "indeterminate": "{status}…",
+        "category": {
+          "video": "video",
+          "audio": "audio",
+          "subtitles": "subtitles",
+          "thumbnail": "thumbnail",
+          "metadata": "metadata",
+          "other": "other"
+        },
+        "status": {
+          "initializing": "Initializing",
+          "downloading": "Downloading",
+          "merging": "Merging",
+          "remuxing": "Remuxing",
+          "reencoding": "Re-encoding",
+          "finalizing": "Cleaning up"
+        },
+        "metadata": {
+          "eta": "ETA: {eta}",
+          "speed": "Speed: {speed}"
+        }
+      },
+      "paused": {
+        "progress": "Download paused — {percentage}%",
+        "progressList": "Download paused — {percentage}% — {done} of {total}",
+        "indeterminate": "Download paused",
+        "metadata": {
+          "eta": "Remaining: {eta}",
+          "etaItems": "Remaining: {n} item | Remaining: {n} items"
+        }
+      },
+      "done": {
+        "complete": "Download complete — 100%",
+        "showFolder": "Show in folder",
+        "open": "Open file",
+        "openFirst": "Open first file",
+        "undeterminedLocation": "Download location could not be determined for this item"
+      },
+      "error": {
+        "errorPrefix": "Error - {message}",
+        "report": "Report",
+        "showFull": "View logs",
+        "signIn": "Sign in",
+        "filters": "Edit filters"
+      }
+    },
+    "card": {
+      "actions": {
+        "remove": "Remove",
+        "externalUrl": "Visit on external link",
+        "retry": "Retry download",
+        "download": "Download individually",
+        "preferences": "Download preferences",
+        "pause": "Pause download",
+        "resume": "Resume download",
+        "metadata": "Show metadata"
+      },
+      "toasts": {
+        "retry": "Retrying download",
+        "retryError": "Couldn't retry download",
+        "applyFailed": "Couldn't apply that selection. Try again"
+      }
+    },
+    "detail": {
+      "failed": "This download didn’t work",
+      "useLogin": "Use my browser login",
+      "copyLink": "Copy link",
+      "stats": "Popularity",
+      "technical": "Technical details",
+      "noLog": "No engine output yet",
+      "copyDetails": "Copy details",
+      "copied": "Copied"
+    }
+  },
+  "subtitles": {
+    "title": "Subtitles",
+    "defaults": {
+      "legend": "Subtitle defaults",
+      "hint": "Used when a video has subtitles"
+    },
+    "options": {
+      "enable": {
+        "legend": "Subtitle downloads",
+        "legendLabel": "Choose default subtitle settings",
+        "label": "Enable subtitles",
+        "hint": "Download subtitles when available"
+      },
+      "autoGenerated": {
+        "label": "Download auto-generated subtitles",
+        "hint": "Also download auto subtitles when available"
+      },
+      "format": {
+        "legend": "Preferred format",
+        "legendLabel": "Select your preferred subtitle format. If the format is not available, the next best format will be used",
+        "label": "Format"
+      },
+      "embed": {
+        "label": "Add subtitles track",
+        "hint": "Add subtitles to the video file, this works for mp4, mkv and webm formats"
+      },
+      "languages": {
+        "legend": "Languages",
+        "legendLabel": "Pick preferred subtitle languages",
+        "downloadAll": "Download all available subtitles",
+        "search": "Search languages",
+        "searchPlaceholder": "Search by language name",
+        "noResult": "No languages match \"{query}\"",
+        "selected": "Selected",
+        "none": "None",
+        "allSelected": "All available subtitles"
+      }
+    },
+    "toasts": {
+      "saved": "Subtitle settings saved",
+      "error": "Couldn't save subtitle settings. {error}"
+    },
+    "formats": {
+      "srt": "SubRip (.srt)",
+      "vtt": "WebVTT (.vtt)",
+      "ass": "Advanced SubStation Alpha (.ass)",
+      "ttml": "Timed Text Markup (.ttml)",
+      "json3": "JSON (.json)"
+    }
+  },
+  "location": {
+    "title": "Download location",
+    "downloadDir": {
+      "label": "Download location",
+      "hint": "Click in the box to select where videos get downloaded to"
+    },
+    "directory": {
+      "legend": "Organise by",
+      "legendLabel": "Select how downloads get organised in folders",
+      "videoDir": {
+        "label": "Download location",
+        "hint": "Override the global download location when downloading videos"
+      },
+      "audioDir": {
+        "label": "Download location",
+        "hint": "Override the global download location when downloading audio"
+      },
+      "directoryPreset": {
+        "label": "Organise downloads by",
+        "exampleLabel": "Example output",
+        "options": {
+          "none": "No subfolders",
+          "playlist": "Playlist",
+          "channel": "Channel",
+          "channelPlaylist": "Channel → playlist",
+          "yearMonth": "Year / month",
+          "artistAlbum": "Artist → album",
+          "custom": "Custom"
+        },
+        "examples": {
+          "playlist": "My Playlist/",
+          "channel": "MyChannel/",
+          "channelPlaylist": "MyChannel/My Playlist/",
+          "yearMonth": "2025/03/",
+          "artistAlbum": "Artist Name/Album Name/"
+        }
+      },
+      "outputFormat": {
+        "label": "Directory format"
+      }
+    },
+    "filename": {
+      "legend": "Filename format",
+      "legendLabel": "Select the filename that downloads will have",
+      "reversePlaylistNumbering": {
+        "label": "Reverse playlist numbering",
+        "hint": "Number playlist items from the end instead of the beginning"
+      },
+      "formatPreset": {
+        "label": "Filename preset",
+        "exampleLabel": "Example output",
+        "options": {
+          "titleQuality": "Title + quality",
+          "titleOnly": "Title only",
+          "titleQualityPlaylist": "Playlist + title + quality",
+          "custom": "Custom"
+        },
+        "examples": {
+          "video": {
+            "titleQuality": "My Video-(1080p30).mp4",
+            "titleOnly": "My Video.mp4",
+            "titleQualityPlaylist": "03-My Video-(1080p30).mkv"
+          },
+          "audio": {
+            "titleQuality": "My Audio-(320k).mp3",
+            "titleOnly": "My Audio.mp3",
+            "titleQualityPlaylist": "03-My Audio-(320k).mp3"
+          }
+        },
+        "restrictFilenames": {
+          "label": "Restrict filenames",
+          "hint": "Replaces spaces with underscores and removes special characters like \"&\" from filenames"
+        }
+      },
+      "outputFormat": {
+        "label": "Filename format"
+      }
+    },
+    "toasts": {
+      "saved": "Folders and file names saved",
+      "error": "Couldn’t save folders and file names"
+    }
+  },
+  "inputFilters": {
+    "title": "Input Filters",
+    "filesize": {
+      "legend": "File size",
+      "hint": "Only keep items bigger or smaller than the size you choose"
+    },
+    "dates": {
+      "legend": "Upload dates",
+      "hint": "Keep only items uploaded on, before, or after a date"
+    },
+    "advanced": {
+      "legend": "Advanced filters",
+      "hint": "These are raw yt-dlp filters for advanced use"
+    },
+    "fields": {
+      "minSize": {
+        "label": "Minimum file size"
+      },
+      "maxSize": {
+        "label": "Maximum file size"
+      },
+      "size": {
+        "valuePlaceholder": "50",
+        "unitPlaceholder": "Unit"
+      },
+      "date": {
+        "modeLabel": "Match rule",
+        "clearMode": "Off",
+        "hint": "Pick the date rule, then choose the date",
+        "mode": {
+          "exact": "On date",
+          "before": "On or before",
+          "after": "On or after"
+        },
+        "activeLabel": {
+          "exact": "Videos uploaded on this date",
+          "before": "Videos uploaded on or before this date",
+          "after": "Videos uploaded on or after this date"
+        },
+        "presetsLabel": "Quick presets",
+        "presets": {
+          "today": "Today",
+          "yesterday": "Yesterday",
+          "last7Days": "Last 7 days",
+          "last30Days": "Last 30 days"
+        }
+      },
+      "matchFilters": {
+        "label": "Match filters",
+        "placeholder": "!is_live & view_count >=? 10000",
+        "hint": "Examples: !is_live, duration >? 600, like_count >=? 100"
+      },
+      "breakMatchFilters": {
+        "label": "Break-match filters",
+        "placeholder": "duration >? 3600",
+        "hint": "Stop checking the current link when an item fails this filter"
+      }
+    },
+    "playlistSelection": {
+      "title": "Choose playlist items",
+      "description": "Select what items to download",
+      "selectionSummary": "{count} of {total} item selected | {count} of {total} items selected",
+      "selectionSummaryAll": "All items selected | All {count} items selected",
+      "advancedButton": "Advanced",
+      "simpleButton": "Reset",
+      "advancedTitle": "Advanced playlist selection",
+      "advancedHint": "Select multiple items, negative numbers and multiple ranges",
+      "advancedDescription": "Current selection",
+      "advancedEmpty": "No advanced selection configured yet",
+      "addSingle": "Add item",
+      "addRange": "Add range",
+      "applyFull": "Download all items",
+      "applySelection": "Download selected items",
+      "useAdvanced": "Use advanced selection",
+      "noMatches": "This range does not match any items in the playlist",
+      "row": {
+        "single": "Single",
+        "range": "Range"
+      },
+      "remove": "Remove",
+      "fields": {
+        "advancedLabel": "Advanced",
+        "index": "Item",
+        "indexPlaceholder": "1 or -1",
+        "start": "Start",
+        "startPlaceholder": "1",
+        "end": "End",
+        "endPlaceholder": "10",
+        "input": "Items"
+      },
+      "errors": {
+        "playlistIndex": "Use a whole number other than 0. Negative numbers count from the end",
+        "playlistRangeBounds": "Set start and end. Negatives count from the end"
+      }
+    },
+    "toasts": {
+      "saved": "Link filters saved",
+      "error": "Couldn’t save link filters: {error}"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "reset": {
+      "label": "Reset",
+      "confirm": "Click again to reset"
+    },
+    "tabs": {
+      "downloads": "Downloads",
+      "app": "App",
+      "network": "Network",
+      "system": "System",
+      "about": "About"
+    },
+    "performance": {
+      "legend": "Performance",
+      "legendLabel": "Configure how many system resources are used",
+      "maxConcurrency": {
+        "label": "Max concurrent jobs:"
+      },
+      "splitPlaylistThreshold": {
+        "label": "Split playlists into separate videos when:",
+        "options": {
+          "never": "Never split",
+          "lessThan": "Less than {number} videos"
+        }
+      },
+      "autoLoadSize": {
+        "label": "Automatically load video size:"
+      },
+      "concurrentFragments": "Parallel fragments (1–16)",
+      "aria2Enabled": "Accelerate direct files with aria2",
+      "aria2Missing": "aria2 is unavailable on this device"
+    },
+    "input": {
+      "legend": "Input",
+      "legendLabel": "Choose how you start downloading with Nezzel",
+      "autoFillClipboard": {
+        "label": "Automatically fill in copied links:",
+        "hint": "Detect links you copied, so you can download them with one click"
+      },
+      "preferVideoInMixedLinks": {
+        "label": "Prefer single video for playlist links:",
+        "hint": "When a link contains both a video and a playlist, download only the video instead of the full playlist"
+      },
+      "globalShortcuts": {
+        "label": "Enable shortcuts:",
+        "add_hint": "Add videos to the queue with:",
+        "download_hint": "Download the queue with:",
+        "instant_hint": "Add and download immediately with:"
+      },
+      "authentication": {
+        "label": "Log in to download private videos:",
+        "link": "Configure authentication"
+      }
+    },
+    "output": {
+      "legend": "Output",
+      "legendLabel": "Configure what kind of files get downloaded",
+      "addThumbnail": {
+        "label": "Add cover image:",
+        "hint": "Embed the thumbnail inside the file so media players can display artwork"
+      },
+      "saveThumbnail": {
+        "label": "Save thumbnail file:",
+        "hint": "Download the best available thumbnail next to the media file"
+      },
+      "addMetadata": {
+        "label": "Add title & artist info:",
+        "hint": "Save metadata such as title, uploader/artist and description inside the file"
+      },
+      "preciseCuts": {
+        "label": "Precise cut:",
+        "hint": "Cuts at exact frames instead of nearby keyframes. Very slow.\nEnable only if normal cuts are wrong, garbled, or have black/missing segments"
+      },
+      "partialDownload": {
+        "legend": "Partial download",
+        "hint": "Set timestamps or chapters to download only some parts",
+        "use": "Use",
+        "useTimes": "Timestamps",
+        "useChapter": "Chapters",
+        "chapter": "Chapter",
+        "startAt": "Start at",
+        "stopAt": "Stop at",
+        "invalidHint": "Invalid timestamps will be ignored",
+        "allChapters": "All chapters",
+        "errors": {
+          "invalid": "Enter a valid time",
+          "beforeStart": "The stop time must be after the start time",
+          "exceedsDuration": "The timestamp cannot exceed the video duration"
+        }
+      },
+      "location": {
+        "label": "Download location & filenames:",
+        "link": "Configure download locations"
+      },
+      "subtitles": {
+        "label": "Add subtitles:",
+        "link": "Configure subtitles"
+      },
+      "keepOriginalStreams": {
+        "label": "Keep original streams",
+        "hint": "Avoid container conversion and re-encoding unless a selected post-processing step requires it"
+      },
+      "postprocess": {
+        "label": "Video post-processing:",
+        "hint": "Post-processing runs after the download finishes",
+        "reencodeWarning": "This option will re-encode, this is heavy and can take a long time",
+        "keepOriginalStreamsConflict": "This option requires re-encoding. Disable Keep original streams to use it",
+        "mp42RequiresMp4": "This option requires mp4 output",
+        "options": {
+          "none": "None",
+          "fps30": "Re-encode to 30 fps",
+          "mp42": "Set mp4 brand to mp42",
+          "custom": "Custom"
+        }
+      },
+      "postprocessMode": {
+        "label": "Custom post-processing mode:",
+        "hint": "Choose whether custom ffmpeg args run during remuxing or re-encoding",
+        "options": {
+          "remux": "Run during remux",
+          "reencode": "Run during re-encode"
+        }
+      },
+      "postprocessArgs": {
+        "label": "Advanced ffmpeg args:",
+        "hint": "Advanced users only. Separate arguments with spaces; quoted values are preserved"
+      },
+      "tabs": {
+        "audio": {
+          "screenreader": "Audio settings",
+          "label": "Audio",
+          "format": {
+            "label": "Audio format:",
+            "hint": "Choose the preferred audio format",
+            "options": {
+              "mp3": "MP3 (recommended)",
+              "m4a": "M4A",
+              "ogg": "OGG",
+              "aac": "AAC",
+              "opus": "Opus",
+              "wav": "WAV",
+              "flac": "FLAC"
+            }
+          },
+          "postprocess": {
+            "label": "Audio post-processing:",
+            "options": {
+              "none": "None",
+              "custom": "Custom"
+            }
+          }
+        },
+        "video": {
+          "screenreader": "Video settings",
+          "label": "Video",
+          "container": {
+            "label": "Video format:",
+            "hint": "Choose the preferred video container",
+            "options": {
+              "mp4": "MP4",
+              "mkv": "MKV"
+            }
+          }
+        }
+      }
+    },
+    "appearance": {
+      "legend": "Appearance",
+      "legendLabel": "Configure how the application looks and feels",
+      "theme": {
+        "label": "Theme:",
+        "options": {
+          "system": "System ({theme})",
+          "light": "Light",
+          "dark": "Dark"
+        }
+      },
+      "language": {
+        "label": "Language:",
+        "options": {
+          "system": "System ({language})"
+        }
+      },
+      "expandedOptions": {
+        "label": "Additional selector:",
+        "hint": "Choose which extra selector is shown before downloading",
+        "options": {
+          "none": "None",
+          "encodings": "Encodings",
+          "tracks": "Tracks"
+        }
+      }
+    },
+    "network": {
+      "legend": "Network",
+      "legendLabel": "Configure how the application connects to the internet",
+      "enableProxy": {
+        "label": "Connect via proxy:"
+      },
+      "proxy": {
+        "label": "Proxy configuration:"
+      },
+      "impersonate": {
+        "label": "Impersonation:",
+        "hint": "Impersonate a specific OS or browser, to prevent fingerprinting",
+        "options": {
+          "none": "Do not impersonate",
+          "any": "Impersonate a random client"
+        }
+      },
+      "extractorArgs": {
+        "label": "Extractor arguments:",
+        "hint": "Customise the extractor arguments for yt-dlp. One argument per line",
+        "placeholder": "youtube:player_js_variant=main",
+        "flagWarning": "Enter only the value. The app adds --extractor-args automatically"
+      }
+    },
+    "sponsorBlock": {
+      "legend": "SponsorBlock",
+      "legendLabel": "Remove or mark parts of a video",
+      "removeParts": {
+        "label": "Parts to remove:",
+        "placeholder": "Select 1 or more parts to remove from the video"
+      },
+      "markParts": {
+        "label": "Parts to mark:",
+        "placeholder": "Select 1 or more parts to mark with a chapter"
+      },
+      "apiUrl": {
+        "label": "API URL:"
+      },
+      "preciseCuts": {
+        "label": "Precise cut:",
+        "hint": "Makes SponsorBlock removals and partial downloads cut at exact frames. Very slow.\nEnable only if normal cuts are wrong, garbled, or have black/missing segments"
+      },
+      "parts": {
+        "sponsor": {
+          "label": "Sponsor",
+          "description": "Paid product or service promotion by creator or third-party"
+        },
+        "selfpromo": {
+          "label": "Self-Promo / Unpaid",
+          "description": "Creator’s own promotion of merch, services or channels (unpaid)"
+        },
+        "interaction": {
+          "label": "Interaction Reminder",
+          "description": "Reminders to like/subscribe/follow or interact with the creator"
+        },
+        "intro": {
+          "label": "Intro / Intermission",
+          "description": "Intro animation, intermission or non-content pause at the start"
+        },
+        "outro": {
+          "label": "Outro / Endcards / Credits",
+          "description": "End cards, credits or closing segment near the end"
+        },
+        "hook": {
+          "label": "Hook / Greetings",
+          "description": "Narrated trailers for the upcoming video, greetings and goodbyes"
+        },
+        "music_offtopic": {
+          "label": "Non-Music Section",
+          "description": "Bits of talking or distractions in videos with music"
+        },
+        "preview": {
+          "label": "Preview / Recap",
+          "description": "Preview of upcoming content or recap of previous segments"
+        },
+        "filler": {
+          "label": "Filler / Tangents",
+          "description": "Tangents, jokes or filler scenes not required to understand the main content"
+        },
+        "chapter": {
+          "label": "Chapter",
+          "description": "Marks a chapter/section of the video (used with chapter action type)"
+        }
+      }
+    },
+    "update": {
+      "legend": "Updates",
+      "legendLabel": "Choose which parts of the app should update automatically",
+      "updateBinaries": {
+        "label": "Automatically update tools:",
+        "hint": "Nezzel uses tools like yt-dlp and ffmpeg to download videos. Enable this to keep them up to date"
+      },
+      "updateApp": {
+        "label": "Automatically update the app:",
+        "hint": "Turn this on to receive new features and bug fixes as soon as a new version is released"
+      }
+    },
+    "system": {
+      "legend": "System",
+      "legendLabel": "Configure how this application integrates with the system",
+      "trayEnabled": {
+        "label": {
+          "mac": "Show menu bar icon",
+          "generic": "Show system tray icon"
+        },
+        "hint": {
+          "mac": "Shows a menu bar icon for quick access",
+          "generic": "Shows an icon in the system tray for quick access"
+        }
+      },
+      "minimiseToTray": {
+        "label": "Minimize to tray on close",
+        "hint": "Closing the window hides the app in the system tray instead of quitting"
+      },
+      "autoStart": {
+        "label": "Start at login",
+        "hint": "Open Nezzel when you log in to your computer"
+      },
+      "autoStartMinimised": {
+        "label": {
+          "mac": "Start hidden at login",
+          "windows": "Start minimized to tray at login",
+          "generic": "Start hidden at login (not recommended)"
+        },
+        "hint": {
+          "mac": "When the app starts at login, it won’t open a window. Use the menu bar or Dock icon to open it",
+          "windows": "When the app starts at login, it will start in the system tray without opening a window",
+          "generic": "When the app starts at login, it won’t open a window"
+        }
+      }
+    },
+    "notifications": {
+      "legend": "Notifications",
+      "legendLabel": "Configure when notifications are sent",
+      "behavior": {
+        "label": "Show notifications:",
+        "options": {
+          "always": "Always",
+          "onBackground": "When in the background",
+          "never": "Never"
+        },
+        "hint": "Tip: notifications can be useful when using the app with shortcuts"
+      },
+      "disabled": {
+        "label": "Enable/disable specific notifications",
+        "disabledScreenReader": "This option is disabled",
+        "kinds": {
+          "queueAdded": "Queue added",
+          "queueDownloading": "Queue downloading",
+          "queueFinished": "Queue finished",
+          "videoFinished": "Video finished",
+          "playlistFinished": "Playlist finished",
+          "downloadFailed": "Download failed",
+          "videoReady": "Video ready",
+          "playlistReady": "Playlist ready"
+        }
+      }
+    },
+    "toasts": {
+      "saved": "Settings saved!",
+      "reset": "Reset settings to defaults"
+    }
+  },
+  "updater": {
+    "available": "Update available",
+    "install": {
+      "title": "Install update",
+      "subtitle": "This will restart the app"
+    },
+    "downloading": "Downloading update…"
+  },
+  "install": {
+    "title": {
+      "installing": "Getting the download tools…",
+      "failed": "Couldn't get some download tools",
+      "installed": "Download tools are ready"
+    },
+    "subtitle": {
+      "installing": "We're getting everything ready",
+      "failed": "Some downloads may not work. Try again, or report the problem",
+      "installed": "Ready to download"
+    },
+    "stay": "Stay here"
+  },
+  "components": {
+    "base": {
+      "emptyState": {
+        "title": "Your queue is empty",
+        "subtitle": "Add some videos to get started"
+      },
+      "dragState": {
+        "title": "Drop to add to queue",
+        "subtitle": "Add to the queue by dragging videos or files with links"
+      },
+      "fileInput": {
+        "select": "Select file",
+        "placeholder": "Select a file…",
+        "invalid": "Invalid file",
+        "clear": "Clear file",
+        "recents": {
+          "clear": "Clear recent files",
+          "open": "Open recent selections",
+          "empty": "No recent selections"
+        }
+      },
+      "folderInput": {
+        "select": "Select folder",
+        "placeholder": "Select a folder…",
+        "invalid": "Invalid folder",
+        "clear": "Clear folder",
+        "recents": {
+          "clear": "Clear recent folders",
+          "open": "Open recent selections",
+          "empty": "No recent selections"
+        }
+      },
+      "secretInput": {
+        "hide": "Hide",
+        "show": "Show",
+        "clear": "Clear {label}"
+      },
+      "toolCard": {
+        "failed": "Couldn’t install this tool"
+      }
+    }
+  },
+  "errors": {
+    "runner": {
+      "loginConsentDeclined": {
+        "shortMessage": "Browser login not used",
+        "message": "You didn't allow the browser login. Try again to continue"
+      },
+      "fetchTimeout": {
+        "shortMessage": "The site took too long",
+        "message": "The site took too long to respond. Try again"
+      },
+      "loginConsentTimeout": {
+        "shortMessage": "The login request timed out",
+        "message": "Nobody answered the login request in time. Try again to continue"
+      },
+      "noMediaFound": {
+        "shortMessage": "Nothing to download on this page",
+        "message": "This page has no video, audio or photo to download. Open the post itself and copy its link"
+      },
+      "internal": {
+        "shortMessage": "Something went wrong in Nezzel",
+        "message": "Something went wrong in Nezzel while handling this download. Try again"
+      },
+      "signInRequired": {
+        "shortMessage": "Login needed",
+        "message": "This site only shows it to people who are logged in"
+      },
+      "membersOnly": {
+        "shortMessage": "Only for channel members",
+        "message": "This video is only available to channel members"
+      },
+      "geoBlocked": {
+        "shortMessage": "Not available in your country",
+        "message": "This content isn’t available in your region"
+      },
+      "accessForbidden403": {
+        "shortMessage": "The site didn't allow this download",
+        "message": "The site refused this download. The file may be private, or the link may have expired"
+      },
+      "notFound404": {
+        "shortMessage": "Not found",
+        "message": "Nothing is at this link anymore. Check the link, or whether it was removed"
+      },
+      "server5xx": {
+        "shortMessage": "The site is having trouble",
+        "message": "The site is having a temporary problem. Try again later"
+      },
+      "rateLimited429": {
+        "shortMessage": "Too many downloads from this site. Wait a little, then try again",
+        "message": "The site is limiting downloads for now. Wait a few minutes, then try again"
+      },
+      "noAudioTrack": {
+        "shortMessage": "This video has no sound to save as audio",
+        "message": "This video has no sound to save as audio. Download it as a video instead"
+      },
+      "requestedFormatUnavailable": {
+        "shortMessage": "Format unavailable",
+        "message": "The selected format isn’t available for this video"
+      },
+      "unableToExtractInitialData": {
+        "shortMessage": "Couldn't read this page",
+        "message": "Nezzel couldn't read this page. The site may have changed; updating the download tools often fixes it"
+      },
+      "unableToExtractIdOrInfo": {
+        "shortMessage": "Couldn't read this video's details",
+        "message": "Nezzel couldn't read this video's details. Try again, or update the download tools"
+      },
+      "nsigExtractionFailed": {
+        "shortMessage": "The site blocked the download",
+        "message": "The site changed how it protects its videos. Updating the download tools usually fixes this"
+      },
+      "drmProtected": {
+        "shortMessage": "Copy-protected video",
+        "message": "The site protects this video against copying, so Nezzel can't save it"
+      },
+      "embedOnly": {
+        "shortMessage": "Embed-only video",
+        "message": "This video can only be accessed through an embedded player"
+      },
+      "videoPasswordRequired": {
+        "shortMessage": "Video password missing or incorrect",
+        "message": "This video or album needs a password, or the password is wrong. Enter the password shared by its owner in Advanced settings and try again."
+      },
+      "mediaNotReady": {
+        "shortMessage": "Media is not ready yet",
+        "message": "The site is still preparing this media. Try again later."
+      },
+      "mediaUnavailable": {
+        "shortMessage": "Media unavailable",
+        "message": "The site isn't making this media available right now. Open the link on the site for more details."
+      },
+      "photosOnly": {
+        "shortMessage": "Photo post",
+        "message": "This post has photos, not a video"
+      },
+      "imageEngineUnavailable": {
+        "shortMessage": "Photo engine unavailable",
+        "message": "The photo engine is missing or could not be verified. Reinstall Nezzel and try again."
+      },
+      "imageSourceUnavailable": {
+        "shortMessage": "Couldn’t save this post",
+        "message": "The source did not provide the selected media, or the image data was incomplete. Try again."
+      },
+      "imageSelectionChanged": {
+        "shortMessage": "Choose the items again",
+        "message": "This post’s attachments changed. Read the link again and choose at least one item."
+      },
+      "imageFileConflict": {
+        "shortMessage": "File already exists",
+        "message": "A file with this name already exists, or the destination cannot create the file safely. Choose another folder or filename."
+      },
+      "imageHeaderAuthUnavailable": {
+        "shortMessage": "Custom image authentication headers unavailable",
+        "message": "For image downloads, use browser cookies instead of bearer tokens or custom headers."
+      },
+      "imageImpersonationUnavailable": {
+        "shortMessage": "Photo connection setting unavailable",
+        "message": "The photo engine cannot use the selected browser impersonation. Turn off impersonation in Advanced settings and retry."
+      },
+      "urlNotSupported": {
+        "shortMessage": "Nezzel can't download from this link yet",
+        "message": "Downloads from this link aren’t supported yet."
+      },
+      "urlUnsupported": {
+        "shortMessage": "Not a link Nezzel can open",
+        "message": "Nezzel doesn't recognize this link. Check that it was copied in full"
+      },
+      "unknownUrlType": {
+        "shortMessage": "Unknown link type",
+        "message": "The provided link uses an unsupported protocol"
+      },
+      "networkNameResolutionFailed": {
+        "shortMessage": "No internet connection",
+        "message": "Couldn't reach the site. Check your internet connection, then try again"
+      },
+      "unableToConnectToProxy": {
+        "shortMessage": "Proxy connection failed",
+        "message": "Unable to connect to the proxy. Check your proxy settings"
+      },
+      "signInRequiredForBotDetection": {
+        "shortMessage": "Login needed",
+        "message": "The site wants you logged in to prove you're not a robot"
+      },
+      "playlistPrivateOrMissing": {
+        "shortMessage": "Playlist unavailable",
+        "message": "This playlist is private or no longer exists"
+      },
+      "videoNotFoundOrPrivate": {
+        "shortMessage": "Removed or private",
+        "message": "This video was removed or made private"
+      },
+      "channelUnavailable": {
+        "shortMessage": "Channel unavailable",
+        "message": "The channel hosting this content is no longer accessible"
+      },
+      "ffmpegNotFound": {
+        "shortMessage": "ffmpeg not found",
+        "message": "Transcoding to mp3 or mp4 requires ffmpeg"
+      },
+      "ffmpegFailed": {
+        "shortMessage": "Couldn't finish the file",
+        "message": "The download finished, but Nezzel couldn't put the file together. Try again, or choose another format"
+      },
+      "rejectedByFilter": {
+        "shortMessage": "Filtered out",
+        "message": "Skipped by your link filters"
+      },
+      "cannotAllocateMemory": {
+        "shortMessage": "Not enough memory",
+        "message": "Your computer ran out of memory while preparing the file. Close other apps and try again"
+      },
+      "permissionDenied": {
+        "shortMessage": "Permission denied",
+        "message": "The app doesn’t have permission to access this file or folder"
+      },
+      "noWritePermission": {
+        "shortMessage": "Cannot write",
+        "message": "The destination path isn’t writable"
+      },
+      "windowsFileMissing": {
+        "shortMessage": "File missing",
+        "message": "The referenced file could not be found (WinError 2)"
+      },
+      "blockedGeneric": {
+        "shortMessage": "Video blocked",
+        "message": "This video is blocked and cannot be downloaded"
+      },
+      "copyrightClaimed": {
+        "shortMessage": "Copyright block",
+        "message": "The video was blocked due to a copyright claim"
+      },
+      "notPremieredYet": {
+        "shortMessage": "Not premiered yet",
+        "message": "This video isn’t available until its premiere begins"
+      },
+      "livestreamNotStarted": {
+        "shortMessage": "Livestream pending",
+        "message": "The live stream hasn't started yet. Try again once it's live"
+      },
+      "sslVerifyFailed": {
+        "shortMessage": "SSL failed",
+        "message": "The secure connection could not be verified. Check your certificates or date/time"
+      },
+      "sponsorBlockUnreachable": {
+        "shortMessage": "SponsorBlock offline",
+        "message": "Couldn’t connect to the SponsorBlock API for segment data"
+      },
+      "downloadRetryingFragment": {
+        "shortMessage": "Retrying fragment",
+        "message": "A fragment download failed and will be retried automatically"
+      },
+      "unknown": {
+        "shortMessage": "Couldn't download",
+        "hint": "Couldn't download. Try again, or open the details",
+        "message": "Nezzel couldn’t finish this download. Try again or open details for the engine error."
+      }
+    }
+  },
+  "about": {
+    "title": "About",
+    "credit": "Based on Open Video Downloader by jely2002 & contributors",
+    "poweredBy": "Powered by open source",
+    "viewLicenses": "View licenses",
+    "version": "Version: {version}",
+    "links": {
+      "website": "Website",
+      "github": "Source code",
+      "reportABug": "Report a bug"
+    },
+    "update": {
+      "check": "Check for updates",
+      "checking": "Checking…",
+      "latest": "You have the latest version",
+      "available": "A new version is available",
+      "failed": "Couldn't check for updates. Try again later"
+    }
+  },
+  "shell": {
+    "brand": "Nezzel",
+    "nav": {
+      "label": "Main",
+      "downloads": "Downloads",
+      "finished": "Completed",
+      "settings": "Settings",
+      "all": "All downloads",
+      "downloading": "Downloading",
+      "video": "Videos",
+      "audio": "Audio",
+      "photos": "Photos",
+      "active": "In progress",
+      "done": "Completed",
+      "failed": "Failed",
+      "files": "Files"
+    },
+    "watching": "Noticing copied links",
+    "watchingOff": "Copied links: off",
+    "skipToContent": "Skip to content",
+    "groups": {
+      "library": "Library",
+      "media": "Media"
+    },
+    "view": {
+      "title": "View",
+      "compact": "Compact rows",
+      "thumbnails": "Show thumbnails"
+    },
+    "sidebar": {
+      "show": "Show sidebar",
+      "hide": "Hide sidebar"
+    },
+    "status": {
+      "downloading": "{n} downloading | {n} downloading",
+      "ready": "Ready",
+      "openFolder": "Open the downloads folder",
+      "failed": "{n} failed | {n} failed",
+      "label": "Status",
+      "reading": "Reading {n} link… | Reading {n} links…"
+    },
+    "keys": {
+      "pasteMac": "⌘V",
+      "paste": "Ctrl+V"
+    }
+  },
+  "downloads": {
+    "title": "Downloads",
+    "field": {
+      "label": "Link to download",
+      "placeholder": "Paste a link",
+      "submit": "Download",
+      "more": "More ways to add links",
+      "importFile": "Add links from a file…",
+      "watchStart": "Notice copied links",
+      "watchStop": "Stop noticing copied links",
+      "filters": "Playlist filters…",
+      "tip": "Shift + Enter downloads straight away with your default choice",
+      "importFileHint": "A .txt or .csv file with one link per line",
+      "watch": "Pop up a card for copied links",
+      "watchHint": "Shows a small card when you copy a link, even over other apps",
+      "watchOnTip": "Copied-link card: on",
+      "watchOffTip": "Copied-link card: off",
+      "filtersHint": "Skip videos by size, date or title when adding many",
+      "filtersOn": "On: some videos will be skipped",
+      "pasteFirst": "Paste a link first"
+    },
+    "drop": "Drop to download",
+    "sections": {
+      "active": "In progress",
+      "finished": "Completed",
+      "failed": "Failed"
+    },
+    "seeAll": "See all ({n})",
+    "summary": {
+      "ready": "No links ready | 1 link ready | {n} links ready",
+      "downloadAll": "Download all"
+    },
+    "empty": {
+      "title": "Save videos, audio, photos and files from a link",
+      "body": "From YouTube, Instagram, TikTok, X and many more sites",
+      "cta": "Paste a link",
+      "tip": "Tip: copy a link anywhere and press Download, or drop a link on this window",
+      "filtered": "Nothing here yet",
+      "hintPaste": "Paste or drop a link anywhere in this window",
+      "hintQuick": "Quick download from any app, even your browser",
+      "hintCopied": "Copy a link and {brand} offers it right away"
+    },
+    "finished": {
+      "empty": "Finished downloads appear here",
+      "clear": "Clear list",
+      "clearFailed": "Clear failed"
+    },
+    "row": {
+      "downloadVideoInstead": "Download video instead",
+      "retryWithBest": "Retry with Best",
+      "reading": "Reading the link…",
+      "readingList": "Reading the playlist… {done} of {total}",
+      "ready": "Ready",
+      "options": "Options",
+      "download": "Download",
+      "pause": "Pause",
+      "resume": "Resume",
+      "paused": "Paused at {percent}",
+      "remove": "Remove",
+      "retry": "Try again",
+      "open": "Open",
+      "openFirst": "Open first",
+      "show": "Show in folder",
+      "details": "Details",
+      "more": "More actions",
+      "openPage": "Open the page",
+      "perDownload": "Settings for this download",
+      "saved": "Saved",
+      "items": "1 item | {n} items",
+      "photos": "1 photo | {n} photos",
+      "left": "{eta} left",
+      "noLocation": "Nezzel couldn't find where this file was saved",
+      "copyLink": "Copy link",
+      "linkCopied": "Link copied",
+      "copyFailed": "Couldn't copy the link",
+      "removeFromList": "Remove from list (keeps the file)",
+      "deleteFile": "Delete file…",
+      "deleteConfirm": {
+        "title": "Delete this file?",
+        "body": {
+          "trash": "“{name}” moves to the Trash, where you can still restore it",
+          "recycleBin": "“{name}” moves to the Recycle Bin, where you can still restore it"
+        },
+        "ok": {
+          "trash": "Move to Trash",
+          "recycleBin": "Move to Recycle Bin"
+        },
+        "cancel": "Cancel"
+      },
+      "deleted": {
+        "trash": "Moved to the Trash",
+        "recycleBin": "Moved to the Recycle Bin"
+      },
+      "deleteFailed": "Couldn't delete the file",
+      "deleteMissing": "The file was already moved or deleted, so it's off the list now",
+      "deleteRefused": {
+        "notOurs": "Nezzel only deletes files it saved itself. Delete it from the folder instead",
+        "changed": "The file changed after it was downloaded, so Nezzel left it alone",
+        "trashFailed": "Couldn't move the file to the Trash. Delete it from the folder instead"
+      },
+      "stillReading": "Still reading… {s} s",
+      "readingStuck": "This site is slow to answer. Retry or remove it",
+      "resuming": "Resuming…",
+      "cancel": "Cancel download"
+    },
+    "login": {
+      "needs": "This {site} post needs you to be logged in",
+      "needsGeneric": "This post needs you to be logged in",
+      "useFrom": "Use your login from",
+      "use": "Use it",
+      "notNow": "Not now",
+      "useBrowser": "Use {browser}",
+      "stillFailing": "Your {browser} login didn't work here. Open the site in {browser}, log in, then try again",
+      "privacy": "Nezzel reads that browser's login only for this download. It is never saved or sent anywhere but the site",
+      "keychain": "macOS may ask once to let Nezzel read the browser's login",
+      "tryAnother": "Try another browser",
+      "settings": "Login settings",
+      "refusedBrowser": "{site} didn't accept your {browser} login. Log in to {site} in {browser}, or try another browser",
+      "noBrowser": "Couldn't find a browser login that {site} accepts",
+      "turnedOff": "{site} needs you to be logged in. Browser logins are off in Login settings",
+      "thisSite": "this site",
+      "signedIn": "logged in to {host}",
+      "usingProfile": "Using {profile}",
+      "changeProfile": "Change profile",
+      "windowsAppBound": "Your browser on Windows locks its login while it's open. Close it and try again, or use Firefox",
+      "expired": "That login request expired. Try the link again",
+      "again": "Log in again",
+      "skipped": "You skipped the login, so {site} didn't allow this download",
+      "timedOut": "The login request for {site} timed out",
+      "profilesFailed": "Couldn't list your browser profiles. Try again",
+      "lookingForProfiles": "Looking for profiles…"
+    },
+    "list": {
+      "searchLabel": "Search downloads",
+      "searchPlaceholder": "Search by title or site",
+      "clearSearch": "Clear search",
+      "results": "1 result | {n} results",
+      "noMatch": "No downloads match “{query}”",
+      "clearFinished": "Remove from list",
+      "clearFinishedHint": "Files stay in your Downloads folder",
+      "cleared": "Removed 1 download from the list | Removed {n} downloads from the list",
+      "undo": "Undo",
+      "allCleared": "Completed downloads you removed from the list are under Completed"
+    },
+    "selection": {
+      "bar": "Selection actions",
+      "selectAll": "Select all ({n})",
+      "selectAllHint": "Select every row in this list",
+      "count": "1 selected | {n} selected",
+      "select": "Select {title}",
+      "clear": "Clear selection",
+      "download": "Download",
+      "pause": "Pause",
+      "resume": "Resume",
+      "retry": "Try again",
+      "remove": "Remove from list",
+      "deleteFiles": "Delete files…",
+      "deleteConfirm": {
+        "title": "Delete 1 file? | Delete {n} files?",
+        "body": {
+          "trash": "1 file moves to the Trash, where you can still restore it | {n} files move to the Trash, where you can still restore them",
+          "recycleBin": "1 file moves to the Recycle Bin, where you can still restore it | {n} files move to the Recycle Bin, where you can still restore them"
+        }
+      },
+      "deleteSomeFailed": "{n} file couldn't be deleted | {n} files couldn't be deleted"
+    },
+    "chips": {
+      "label": "Show",
+      "all": "All",
+      "active": "In progress",
+      "failed": "Failed",
+      "done": "Completed"
+    },
+    "announce": {
+      "done": "{title}: downloaded",
+      "failed": "{title}: failed"
+    }
+  },
+  "attachments": {
+    "title": "Items to save",
+    "selectAll": "Select all",
+    "selectedCount": "{selected} of {total}",
+    "photo": "Photo {number}",
+    "video": "Video {number}",
+    "chooseOne": "Select at least one item to download"
+  },
+  "sheet": {
+    "title": "Download options",
+    "close": "Close",
+    "choices": "How do you want to save it?",
+    "best": "Best quality",
+    "bestHint": "Video · up to {height}p",
+    "bestHintPlain": "Video",
+    "audio": "Audio only",
+    "audioHint": "Best sound",
+    "small": "Smaller file",
+    "smallHint": "Video · {height}p",
+    "custom": "Custom format",
+    "advanced": "All formats and extras",
+    "advancedHint": "Pick an exact format, codec or track",
+    "moreOptions": "Codecs and audio tracks…",
+    "perDownload": "Folder, subtitles and more for this download",
+    "remember": "Use this every time and skip this step",
+    "cancel": "Not now",
+    "download": "Download",
+    "reading": "Reading the link…",
+    "size": "About {size}",
+    "format": "Format",
+    "saveTo": "Save to",
+    "waitingFormats": "Waiting for formats…"
+  },
+  "prefs": {
+    "title": "Settings",
+    "tabs": {
+      "label": "Settings sections",
+      "general": "General",
+      "logins": "Logins",
+      "advanced": "Advanced"
+    },
+    "saved": "Saved",
+    "general": {
+      "folder": "Save to",
+      "folderDefault": "Downloads / Nezzel",
+      "change": "Change…",
+      "choice": "Default choice",
+      "choiceHint": "Used when you skip the options step or add several links",
+      "askEach": "Ask how to save each link",
+      "askEachHint": "Shows the options sheet after you paste a link",
+      "clip": "Suggest copied links",
+      "clipHint": "When you copy a video link, it appears in the link field, ready for one click. Checked on your computer only",
+      "language": "Language",
+      "theme": "Theme",
+      "tray": "Keep Nezzel running in the background",
+      "trayHint": "Downloads keep going when the window is closed",
+      "folderHint": "New downloads go here. Nezzel creates the folder if needed",
+      "card": "Pop up a card for copied links",
+      "cardHint": "Shows a small card over other apps when you copy a link, even when Nezzel is in the background. Nothing downloads until you choose",
+      "choose": "Choose…"
+    },
+    "logins": {
+      "note": "When a site needs a login, Nezzel uses a browser profile that is logged in to it. Your login is never saved or sent anywhere except that site",
+      "browser": "Use logins from",
+      "browserHint": "Automatic finds a logged-in profile when a site refuses. Change the profile on a download, or pick one browser for every site",
+      "none": "Don't use browser logins",
+      "file": "cookies.txt file",
+      "fileHint": "For sites your browsers can't share. Advanced",
+      "accounts": "Saved accounts",
+      "accountsHint": "Username and password logins, kept encrypted on this computer",
+      "never": "Never use my browser logins",
+      "automatic": "Automatic (recommended)"
+    },
+    "advanced": {
+      "note": "Everything here is optional. Nezzel works without touching it",
+      "downloads": "Downloads and formats",
+      "app": "App and notifications",
+      "network": "Network",
+      "system": "System and updates",
+      "about": "About",
+      "more": "More tools",
+      "location": "File names and folders",
+      "subtitles": "Subtitles",
+      "filters": "Link filters",
+      "reset": "Reset all settings"
+    },
+    "sections": {
+      "downloads": "Downloads",
+      "quick": "Quick download",
+      "appearance": "Appearance",
+      "otherLogins": "Other ways to log in"
+    },
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "adv": {
+      "files": {
+        "title": "Files",
+        "videoFormat": "Video file type",
+        "videoFormatHint": "MP4 plays everywhere. MKV keeps more audio and subtitle tracks",
+        "audioFormat": "Audio file type",
+        "audioFormatHint": "MP3 plays everywhere. Other types keep a little more quality",
+        "cover": "Add cover image",
+        "coverHint": "Puts the thumbnail inside the file, so music and video players show it",
+        "metadata": "Add title and artist",
+        "metadataHint": "Saves the title, channel or artist, and description inside the file",
+        "folders": "Folders and file names",
+        "foldersHint": "Separate folders for video and audio, and how files are named",
+        "subtitles": "Subtitles",
+        "subtitlesHint": "Download subtitles and choose their languages",
+        "filters": "Link filters",
+        "filtersHint": "Skip videos by size, date or title when you add many links",
+        "saveCover": "Save cover as a separate image",
+        "saveCoverHint": "Keeps the thumbnail as an image file next to the download",
+        "keepVideo": "Keep video as the site sends it",
+        "keepOriginalCodec": "Keep original codec",
+        "keepOriginalCodecHint": "Faster, but some MP4 videos may not open in QuickTime",
+        "keepVideoHint": "Skips converting the video file. Faster, but the file type may differ from your choice above",
+        "keepAudio": "Keep audio as the site sends it",
+        "keepAudioHint": "Skips converting the audio file. Faster, but you may get M4A or Opus instead of MP3",
+        "videoAfter": "After a video downloads",
+        "videoAfterHint": "Optional extra step. Most people leave this off",
+        "videoAfterOptions": {
+          "none": "Do nothing",
+          "fps30": "Convert to 30 frames per second (slow)",
+          "mp42": "Make MP4 play on older devices",
+          "custom": "Custom ffmpeg command"
+        },
+        "audioAfter": "After audio downloads",
+        "audioAfterHint": "Optional extra step for audio files",
+        "customMode": "When to run the custom command",
+        "customModeHint": "“While copying” is fast. “While converting” rebuilds the video and is slow",
+        "customModeOptions": {
+          "remux": "While copying (fast)",
+          "reencode": "While converting (slow)"
+        },
+        "ffmpegArgs": "ffmpeg arguments",
+        "ffmpegArgsHint": "For experts. Separate arguments with spaces",
+        "keepConflict": "This step has to convert the video. Turn off “Keep video as the site sends it” to use it",
+        "slowWarning": "This step rebuilds the whole video. It can take a long time"
+      },
+      "keys": {
+        "title": "Keyboard shortcuts",
+        "anywhere": "Anywhere on your computer",
+        "inside": "Inside Nezzel",
+        "globalOn": "Use shortcuts anywhere",
+        "globalOnHint": "Lets the Quick download shortcut work while you are in another app, such as your browser",
+        "quick": "Quick download",
+        "defaultIs": "Default: {keys}",
+        "paste": "Paste a link",
+        "pasteHint": "Puts a copied link into Nezzel. This one is fixed",
+        "downloadAll": "Download everything waiting",
+        "addAndDownload": "Add and download now",
+        "addAndDownloadHint": "Downloads the copied link right away. Default: {keys}",
+        "resetAll": "Reset all shortcuts"
+      },
+      "net": {
+        "logins": "Logins",
+        "loginsHint": "Use your browser login for sites that need an account",
+        "proxy": "Use a proxy",
+        "proxyHint": "Only if a site is blocked in your country or network. Your VPN app usually does this already",
+        "proxyAddress": "Proxy address",
+        "proxyExample": "For example socks5://127.0.0.1:1080 or http://proxy.example.com:8080",
+        "proxyInvalid": "Use the form scheme://host:port, for example socks5://127.0.0.1:1080 (http, https, socks4 or socks5)",
+        "impersonate": "Look like a browser",
+        "impersonateHint": "Some sites block apps that don’t look like a browser. Leave this off unless a site refuses",
+        "impersonateOff": "Off (recommended)",
+        "impersonateAny": "Any browser"
+      },
+      "perf": {
+        "parallel": "Downloads at the same time",
+        "parallelHint": "More is faster on a good connection, but uses more of your computer",
+        "pieces": "Pieces per download",
+        "piecesHint": "Downloads parts of one file in parallel. 1 to 4 is enough for most connections",
+        "split": "Split playlists",
+        "splitHint": "Treats each video of a small playlist as its own download, so you can pick formats one by one",
+        "size": "Show file sizes right away",
+        "sizeHint": "Looks up sizes as soon as a link is added. Uses a little more data",
+        "aria2": "Faster direct-file downloads (aria2)",
+        "aria2Hint": "Uses aria2 for plain file links. Leave on unless downloads fail"
+      },
+      "sb": {
+        "note": "YouTube only. Uses community data to skip or mark sponsor messages, intros and reminders to subscribe",
+        "remove": "Remove sponsor segments",
+        "removeHint": "Cuts the parts you choose out of the downloaded video",
+        "choose": "Segments",
+        "chooseButton": "Choose segments…",
+        "summary": "{removed} removed · {marked} marked as chapters",
+        "removeGroup": "Remove from the video",
+        "markGroup": "Mark as chapters",
+        "precise": "Precise cuts",
+        "preciseHint": "Slower. Turn on only if cut points look wrong",
+        "server": "SponsorBlock server",
+        "serverHint": "Leave as is unless you run your own server"
+      },
+      "app": {
+        "title": "App",
+        "notify": "Notifications",
+        "notifyHint": "When Nezzel tells you a download finished or failed",
+        "updateApp": "Update Nezzel automatically",
+        "updateAppHint": "Get fixes and new features when a new version is out",
+        "updateTools": "Update download tools automatically",
+        "updateToolsHint": "Keeps the download tools up to date, so sites keep working",
+        "closeToTray": "Keep running when the window is closed",
+        "closeToTrayHint": "Closing the window hides Nezzel instead of quitting. Needs “Keep Nezzel running in the background” in General",
+        "notifyWhich": "Which notifications"
+      },
+      "dev": {
+        "title": "Developer options",
+        "extractor": "Extractor arguments (yt-dlp)",
+        "extractorHint": "For troubleshooting. Leave empty unless someone tells you what to put",
+        "whatsThis": "What’s this?"
+      }
+    }
+  },
+  "capture": {
+    "noFormats": "Open Options to review this link",
+    "views": "{count} views",
+    "photos": "1 photo | {n} photos",
+    "best": "Best: {quality}",
+    "audio": "Audio",
+    "closeSymbol": "×",
+    "quickBar": "Quick download",
+    "copiedLink": "Copied link",
+    "dismiss": "Dismiss",
+    "url": "Video or audio link",
+    "downloadBest": "Download best",
+    "options": "Options",
+    "loading": "Reading the link…",
+    "formats": "Available formats",
+    "automationHint": "To read your browser tab, macOS may ask to let Nezzel control your browser. If you decline, Nezzel uses the clipboard",
+    "readingBrowser": "Reading the active browser tab…",
+    "failed": "Couldn't read this link. Open Options to try again",
+    "unsupported": "This site isn't supported yet",
+    "watchLabel": "Offer copied links",
+    "watchHint": "Show a small card when you copy a link from a supported site. Nothing downloads until you choose it",
+    "shortcutLabel": "Quick download shortcut",
+    "shortcutHint": "Opens the Quick download bar from any app",
+    "shortcutFailed": "This shortcut could not be registered. Choose another combination; Paste link remains available in the tray",
+    "placeholder": "Paste a video, audio or photo link",
+    "emptyHint": "Copy a link in your browser, or paste one here",
+    "escCloses": "to close",
+    "stillReading": "Still reading this page…",
+    "slowHint": "This site is slow. You can start the download now; Nezzel keeps reading in the list",
+    "actionFailed": "Couldn't start the download. Try again",
+    "starting": "Starting…",
+    "feedPage": "This is a feed, not a post. Open one post, then copy its link"
+  },
+  "shortcut": {
+    "press": "Press new shortcut…",
+    "recordingMac": "Hold ⌘ or ⌥, then press a key. Esc cancels, ⌫ turns it off",
+    "recordingPc": "Hold Ctrl or Alt, then press a key. Esc cancels, Backspace turns it off",
+    "none": "Off",
+    "reset": "Reset to default",
+    "change": "Click to change",
+    "saved": "Saved",
+    "cleared": "Shortcut turned off",
+    "needsModifierMac": "Use ⌘ or ⌥ together with a key",
+    "needsModifierPc": "Use Ctrl or Alt together with a key",
+    "taken": "Another app is using this shortcut. Try another",
+    "wayland": "Shortcuts from other apps don’t work in Wayland sessions. Sign in with an X11 session, or add a system shortcut that runs {command}",
+    "usingFallback": "{wanted} is taken on this computer, so Quick download uses {active}. Record another to change it",
+    "reservedMac": "macOS uses this shortcut. Try another",
+    "reservedSystem": "Your system uses this shortcut. Try another",
+    "builtIn": "Nezzel already uses this shortcut. Try another",
+    "usedFor": "Already used for “{action}”"
+  },
+  "perDownload": {
+    "tabsLabel": "Options for this download",
+    "advanced": "Advanced",
+    "tabs": {
+      "output": "Files"
+    },
+    "quality": {
+      "type": "What to save",
+      "quality": "Quality",
+      "qualityHint": "Higher quality means a bigger file",
+      "audioTrackHint": "Pick a language when the video has dubbed audio",
+      "codecHint": "Change only if the file won’t play on your device"
+    },
+    "output": {
+      "partTitle": "Part of the video",
+      "partBy": "Choose the part by",
+      "partByHint": "Save the whole video or only a part",
+      "byTime": "Start and stop time",
+      "byChapter": "Chapter",
+      "wholeVideo": "Whole video",
+      "fileName": "Video file name pattern",
+      "fileNameHint": "Uses yt-dlp fields such as %(title)s",
+      "audioFileName": "Audio file name pattern",
+      "reverse": "Number playlist from the end",
+      "reverseHint": "The last video in the playlist gets number 1",
+      "safeNames": "Simple file names",
+      "safeNamesHint": "Replaces spaces and symbols such as & for older systems",
+      "precise": "Precise cuts",
+      "preciseHint": "Slower, turn on only if cut points look wrong"
+    },
+    "subtitles": {
+      "empty": "This video has no subtitles",
+      "languages": "Languages",
+      "all": "All languages",
+      "allHint": "Every subtitle this video offers",
+      "selected": "None selected | {n} selected | {n} selected",
+      "creator": "From the creator",
+      "auto": "Auto-generated",
+      "noneCreator": "No subtitles from the creator",
+      "noneAuto": "No auto-generated subtitles",
+      "file": "Subtitle file",
+      "embed": "Add subtitles to the video file",
+      "embedHint": "Works with MP4, MKV and WebM",
+      "format": "File type",
+      "formatHint": "If the site doesn’t offer it, Nezzel picks the closest one"
+    },
+    "network": {
+      "note": "Changes here apply to this download only",
+      "headers": "Extra request headers",
+      "headersHint": "One per line, written as Name: value"
+    }
+  },
+  "folders": {
+    "where": "Where files go",
+    "names": "File names",
+    "video": "Video folder",
+    "audio": "Audio folder",
+    "typeHint": "Leave on “Same folder” to use Save to",
+    "same": "Same folder",
+    "videoSub": "Video subfolders",
+    "audioSub": "Audio subfolders",
+    "subPattern": "Subfolder pattern",
+    "videoNames": "Video file names",
+    "audioNames": "Audio file names",
+    "namePattern": "File name pattern",
+    "example": "For example {path}"
+  },
+  "accounts": {
+    "browserTitle": "Browser logins",
+    "browserHint": "Some browsers can’t share their logins",
+    "alwaysHint": "Uses them for every site without asking first",
+    "fileHint": "For sites your browsers can’t share. Export one with a browser extension",
+    "noFile": "No file",
+    "saved": "Saved accounts and tokens"
+  },
+  "files": {
+    "file": "File",
+    "category": {
+      "document": "Document",
+      "spreadsheet": "Spreadsheet",
+      "presentation": "Presentation",
+      "archive": "Archive",
+      "installer": "Installer",
+      "diskImage": "Disk image",
+      "data": "Data file",
+      "other": "File"
+    },
+    "withSize": "{category} · {size}",
+    "type": "Type",
+    "size": "Size",
+    "savedTo": "Saved to",
+    "source": "Source"
+  },
+  "feedback": {
+    "invalidLink": "That doesn't look like a link",
+    "addFailed": "Couldn't add the link. Try again",
+    "clipboardFailed": "Couldn't read the clipboard",
+    "fileMissing": "File not found",
+    "folderFailed": "Couldn't open the downloads folder",
+    "saveFailed": "Couldn't save settings. Your changes are still here",
+    "updateDownloadFailed": "Couldn't download the update",
+    "updateInstallFailed": "Couldn't install the update",
+    "toolsCheckFailed": "Couldn't check the download tools",
+    "started": "Started {n}",
+    "paused": "Paused {n}",
+    "retrying": "Retrying {n}",
+    "batchFailed": "1 action failed | {n} actions failed",
+    "removed": "Removed {n} from the list",
+    "downloadFailed": "Couldn't start the download",
+    "pauseFailed": "Couldn't pause the download",
+    "settingFailed": "Couldn't save that setting. It's back to how it was",
+    "folderPickFailed": "Couldn't open the folder picker"
+  },
+  "datePicker": {
+    "placeholder": "Pick a date",
+    "clear": "Clear date",
+    "prevMonth": "Previous month",
+    "nextMonth": "Next month",
+    "month": "Month",
+    "year": "Year"
+  },
+  "welcome": {
+    "title": "Save videos, audio, photos and files from any link",
+    "lead": "Copy a link anywhere and a small card offers to save it, even with this window closed",
+    "leadFocus": "Copy a link anywhere, then switch back to Nezzel and a small card offers to save it",
+    "card": {
+      "label": "Show a card when I copy a link",
+      "help": "Nezzel checks copied links it can save and never stores what you copy",
+      "helpFocus": "On this desktop the card shows when you switch back to Nezzel after copying. Nezzel never stores what you copy"
+    },
+    "start": {
+      "label": "Start with my computer",
+      "help": "Opens hidden in the {place} when you sign in"
+    },
+    "place": {
+      "mac": "menu bar",
+      "windows": "tray, by the clock",
+      "linux": "top bar"
+    },
+    "privacy": "No account needed and no ads. You can turn reports off anytime",
+    "getStarted": "Get started",
+    "later": "Change these anytime in Settings",
+    "steps": {
+      "copy": "Copy a link",
+      "card": "The card pops up",
+      "save": "Click Save"
+    },
+    "try": {
+      "label": "Try it: copy this link",
+      "off": "Turn on the card to try it",
+      "copy": "Copy",
+      "copied": "Copied",
+      "failed": "Couldn’t copy the link"
+    },
+    "shortcut": {
+      "label": "Quick download from any app",
+      "help": "Copy a link anywhere, then press {keys}",
+      "taken": "Shortcut taken by another app, pick your own",
+      "skip": "Skip",
+      "later": "Set a shortcut anytime in Settings"
+    },
+    "replay": "Replay",
+    "demoAlt": "Demo: a link is copied in the browser, the Nezzel card pops up by its icon, and Save puts the video in {folder}",
+    "demo": {
+      "videoTitle": "How to make bread at home",
+      "channel": "Mariem’s Kitchen",
+      "meta": "YouTube · 12:04",
+      "quality": "Video · 1080p",
+      "save": "Save",
+      "saved": "Saved to {folder}",
+      "copied": "Copied",
+      "file": "File",
+      "edit": "Edit",
+      "view": "View",
+      "clock": "Tue 9:41",
+      "clockGnome": "Nov 4  9:41",
+      "activities": "Activities"
+    }
+  },
+  "closeNote": {
+    "title": "Nezzel is still running",
+    "body": "Copied links still bring up the card, and this icon opens Nezzel again",
+    "hintWindows": "It sits under {chev} by the clock. Drag it onto the taskbar to keep it in view",
+    "hintLinux": "No icon in your top bar? Open Nezzel from Activities",
+    "quit": "Quit Nezzel",
+    "gotIt": "Got it"
+  },
+  "report": {
+    "title": "Report a problem",
+    "open": "Report a problem",
+    "aboutHelp": "Tell us what went wrong. We add the technical details",
+    "rowAction": "Report a problem",
+    "downloadTitle": "Report this failed download",
+    "lead": "Tell us what happened, if you like. We add the technical details so we can fix it",
+    "noteLabel": "What went wrong (optional)",
+    "notePlaceholder": "For example: the video saved without sound",
+    "includeLink": "Include the link",
+    "includeLinkHelp": "Helps us reproduce the problem. Unchecked, we only get the site",
+    "never": "Never includes your files, folders, cookies or account names",
+    "cancel": "Cancel",
+    "send": "Send report",
+    "sending": "Sending…",
+    "sent": "Thanks, your report was sent",
+    "sendFailed": "Couldn't send the report",
+    "copyDetails": "Copy details",
+    "copied": "Details copied",
+    "copyFailed": "Couldn't copy the details",
+    "crashTitle": "Nezzel closed unexpectedly last time",
+    "crashSent": "Nezzel closed unexpectedly last time. A report was sent so we can fix it",
+    "sendCrash": "Send report",
+    "setting": {
+      "label": "Send crash and error reports",
+      "help": "Helps us fix bugs. Sends the app version, your system, the error and the site, never your files, cookies or account names",
+      "welcomeHelp": "Helps us fix bugs. Never your files or accounts"
+    },
+    "notice": {
+      "text": "Crash and error reports are now on. They help us fix bugs and never include your files or accounts",
+      "action": "Settings"
+    }
+  }
+}

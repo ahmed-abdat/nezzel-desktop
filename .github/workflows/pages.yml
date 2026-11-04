@@ -1,0 +1,85 @@
+name: Build manifest and deploy pages
+
+on:
+  push:
+    branches: [release]
+    paths:
+      - 'docs/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.nvmrc'
+      - '.github/workflows/pages.yml'
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    # Off until #12 (signed tool manifest) sets the PAGES_ENABLED repo variable and signing secrets.
+    if: github.repository == 'ahmed-abdat/nezzel-desktop' && vars.PAGES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout release branch for manifest
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: release
+          path: release
+
+      - name: Checkout main branch for docs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: main
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: release/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: release/.nvmrc
+          cache: 'pnpm'
+          cache-dependency-path: release/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: release
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate manifest
+        working-directory: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm run manifest:gen
+
+      - name: Sign manifest
+        working-directory: release
+        run: pnpm run manifest:sign
+        env:
+          ED25519_PRIV_KEY_B64: ${{ secrets.ED25519_PRIV_KEY_B64 }}
+
+      - name: Verify manifest
+        working-directory: release
+        run: pnpm run manifest:verify
+        env:
+          ED25519_PUB_KEY_HEX: ${{ secrets.ED25519_PUB_KEY_HEX }}
+
+      - name: Copy manifest into main/docs
+        run: |
+          mkdir -p main/docs/manifest
+          cp -R release/docs/manifest/* main/docs/manifest/
+
+      - name: Upload docs as Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: main/docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

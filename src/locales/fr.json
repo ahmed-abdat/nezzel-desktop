@@ -1,0 +1,1988 @@
+{
+  "common": {
+    "download": "Télécharger",
+    "save": "Enregistrer",
+    "later": "Plus tard",
+    "load": "Charger",
+    "install": "Installer",
+    "percentage": "{percent}%",
+    "add": "Ajouter",
+    "back": "Retour",
+    "continue": "Continuer",
+    "retry": "Réessayer",
+    "enable": "Activer",
+    "pleaseWait": "Veuillez patienter…",
+    "loading": "Chargement",
+    "emptySearch": "Aucun résultat trouvé",
+    "parenthesis": "({content})",
+    "divide": "{left} / {right}",
+    "video": "vidéo",
+    "unknown": "inconnu",
+    "confirm": "Confirmer",
+    "best": "Meilleure",
+    "resume": "Reprendre",
+    "urlImport": {
+      "added": "Lien ajouté à la liste | {n} liens ajoutés à la liste",
+      "partial": "{added} liens ajoutés. {skipped} lignes ignorées, ce ne sont pas des liens",
+      "noneFound": "Aucun lien valide trouvé dans l’entrée ou le fichier",
+      "readError": "Impossible de lire ce fichier",
+      "unsupportedType": "Seuls les fichiers .txt et .csv contenant des liens peuvent être importés",
+      "reading": "Lecture du fichier…"
+    },
+    "close": "Fermer"
+  },
+  "layout": {
+    "header": {
+      "placeholder": "Entrez l'URL d'une vidéo/playlist pour l'ajouter à la file d'attente",
+      "nav": {
+        "settings": "Paramètres de l'application",
+        "inputFilters": "Filtres"
+      },
+      "watchClipboardPlaceholder": "Surveillance du presse-papiers : les liens copiés sont ajoutés à la file d’attente",
+      "actions": {
+        "more": "Plus d’actions d’ajout",
+        "watchClipboardStart": "Surveiller le presse-papiers",
+        "watchClipboardStop": "Arrêter la surveillance du presse-papiers",
+        "importFile": "Importer des liens",
+        "inputFilters": "Filtres"
+      }
+    },
+    "footer": {
+      "progress": {
+        "downloading": "Téléchargement de la file d'attente - {done} sur {total} terminé",
+        "completed": "Téléchargement terminé – {n} élément téléchargé. | Téléchargement terminé – {n} éléments téléchargés",
+        "ready": "Prêt à télécharger ! {n} élément en file d'attente. | Prêt à télécharger ! {n} éléments en file d'attente"
+      },
+      "nav": {
+        "downloadLocation": "Ouvrir l'emplacement des téléchargement",
+        "login": {
+          "screenReader": {
+            "on": "Modifier la connexion (connecté)",
+            "off": "Modifier la connexion (non connecté)"
+          },
+          "tooltip": {
+            "on": "Modifier la connexion",
+            "off": "Se connecter"
+          }
+        },
+        "subtitles": {
+          "screenReader": {
+            "on": "Modifier les sous-titres (activés)",
+            "off": "Modifier les sous-titres (désactivés)"
+          },
+          "tooltip": "Sous-titres"
+        }
+      },
+      "format": {
+        "trackSelect": {
+          "screenReader": "Sélectionner la piste pour toutes les vidéos"
+        },
+        "formatSelect": {
+          "noFormats": "Aucun format",
+          "placeholder": "Sélectionner un format",
+          "screenReader": "Sélectionner le format pour toutes les vidéos"
+        }
+      },
+      "queue": {
+        "empty": "Vider la file d'attente",
+        "resume": "Reprendre tout",
+        "pause": "Tout mettre en pause",
+        "clearSuccessful": "Supprimer les téléchargements réussis",
+        "clearErrored": "Supprimer les échoués",
+        "clearPending": "Supprimer les en attente",
+        "cancelDownloading": "Annuler les téléchargements",
+        "more": "Plus d’actions de file d’attente"
+      }
+    }
+  },
+  "auth": {
+    "title": "Authentification",
+    "cookies": {
+      "legend": "Cookies",
+      "legendBadge": "Recommandé",
+      "legendLabel": "Utiliser des sessions connectées depuis un fichier cookies ou importer depuis votre navigateur",
+      "file": {
+        "label": "Charger les cookies depuis un fichier cookies.txt",
+        "hint": "Pour exporter vos cookies vers un fichier {link}",
+        "hintLink": "voir le guide"
+      },
+      "browser": {
+        "label": "Charger automatiquement les cookies depuis un navigateur",
+        "placeholder": "Ne pas charger les cookies depuis un navigateur",
+        "hint": "Certains navigateurs peuvent ne pas supporter le chargement des cookies. Voir la {link}",
+        "hintLink": "liste des navigateurs compatibles"
+      },
+      "automatic": "Automatique (utiliser un profil connecté)",
+      "alwaysUseBrowserLogins": "Toujours utiliser mes connexions du navigateur"
+    },
+    "credentials": {
+      "title": "Méthodes avancées",
+      "description": "Utilisez des méthodes comme l'authentification basique, tokens bearer, headers, mot de passe vidéo, etc.",
+      "labels": {
+        "username": "Nom d'utilisateur",
+        "password": "Mot de passe",
+        "token": "Token",
+        "headers": "En-têtes"
+      },
+      "basicAuth": {
+        "legend": "Authentification basique",
+        "legendLabel": "Utilisé pour les sites avec authentification simple"
+      },
+      "videoPassword": {
+        "legend": "Mot de passe vidéo",
+        "legendLabel": "Fournir un mot de passe pour accéder aux vidéos protégées"
+      },
+      "bearerToken": {
+        "legend": "Token bearer",
+        "legendLabel": "Fournir un token bearer pour accéder aux ressources privées"
+      },
+      "customHeaders": {
+        "legend": "Headers personnalisés",
+        "legendBadge": "Avancé",
+        "legendLabel": "Un par ligne : CHAMP:VALEUR",
+        "placeholder": "X-Api-Key:…"
+      }
+    },
+    "init": {
+      "title": "Les comptes enregistrés sont désactivés",
+      "description": "Activez-les pour chiffrer mots de passe et jetons avec le trousseau du système",
+      "hint": "Le stockage de secrets utilise le trousseau de votre système, un mot de passe peut être demandé",
+      "error": {
+        "title": "Impossible d'activer le stockage de secrets",
+        "description": "Une erreur s'est produite lors de l'activation du stockage de secrets, veuillez réessayer",
+        "hint": "Erreur : {error}",
+        "unknown": "Erreur inconnue"
+      },
+      "toasts": {
+        "error": "Impossible d'initialiser le stockage de secrets : {error}"
+      }
+    },
+    "toasts": {
+      "error": "Impossible d’enregistrer les connexions : {error}",
+      "saved": "Connexions enregistrées"
+    },
+    "login": {
+      "needed": "Cette publication sur {site} nécessite une connexion",
+      "useBrowser": "Utiliser {browser} ({profile})",
+      "notNow": "Pas maintenant",
+      "exhausted": "Aucune connexion du navigateur n’a fonctionné. Connectez-vous au site dans votre navigateur et réessayez"
+    }
+  },
+  "media": {
+    "view": {
+      "tabs": {
+        "metadata": "Métadonnées",
+        "logs": "Journaux"
+      },
+      "thumbnailAlt": "Miniature pour {title}",
+      "metadata": {
+        "uploader": "Téléchargeur",
+        "extractor": "Extracteur",
+        "link": "Lien",
+        "chapters": "Chapitres",
+        "description": "Description"
+      },
+      "stats": {
+        "title": "Statistiques de la vidéo",
+        "views": "Vues",
+        "likes": "J'aime",
+        "dislikes": "Je n'aime pas",
+        "comments": "Commentaires",
+        "rating": "Note",
+        "duration": "Durée"
+      },
+      "logs": {
+        "failure": "Échec",
+        "errors": {
+          "count": "Erreurs ({count})",
+          "empty": "Aucune erreur trouvée"
+        },
+        "warnings": {
+          "count": "Avertissements ({count})",
+          "empty": "Aucun avertissement trouvé"
+        },
+        "all": {
+          "title": "Tous les journaux",
+          "empty": "Aucun journal trouvé"
+        },
+        "toasts": {
+          "reported": "Problème signalé, merci",
+          "error": "Impossible d'envoyer le signalement"
+        },
+        "skipped": {
+          "count": "Éléments ignorés ({count})",
+          "empty": "Aucun élément n’a été ignoré par les filtres",
+          "items": "{count} élément | {count} éléments"
+        }
+      }
+    },
+    "preferences": {
+      "badges": {
+        "override": "Remplacement"
+      },
+      "labels": {
+        "quality": "Choisissez les préférences de format, de codec et de piste",
+        "network": "Configurez le proxy, l’usurpation et les en-têtes de requête. Remplace les paramètres par défaut de l’application pour ce téléchargement",
+        "output": "Configurez le conteneur, la conversion et les modèles de nom de fichier. Remplace les paramètres par défaut de l’application pour ce téléchargement",
+        "headersOverride": "Une entrée par ligne : CHAMP:VALEUR. Remplace les en-têtes globaux pour ce téléchargement",
+        "subtitles": "Choisissez les sous-titres pour ce téléchargement"
+      },
+      "hints": {
+        "format": "Choisissez la qualité vidéo ou audio. Une qualité plus élevée signifie généralement des fichiers plus volumineux et des téléchargements plus longs",
+        "encodings": "Choisissez les codecs préférés. Utile pour la compatibilité de lecture ou pour conserver la qualité d’origine",
+        "tracks": "Choisissez des variantes de langue ou de canaux lorsqu’elles sont disponibles, par exemple un doublage"
+      },
+      "tabs": {
+        "quality": "Qualité",
+        "network": "Réseau",
+        "subtitles": "Sous-titres"
+      },
+      "subtitles": {
+        "empty": "Aucun sous-titre trouvé pour ce téléchargement",
+        "languages": {
+          "legend": "Langues disponibles",
+          "hint": "Seuls ces sous-titres peuvent être téléchargés pour cet élément",
+          "manual": "Fournis par le créateur",
+          "auto": "Générés automatiquement",
+          "noneManual": "Aucun sous-titre du créateur trouvé",
+          "noneAuto": "Aucun sous-titre automatique trouvé"
+        }
+      }
+    },
+    "steps": {
+      "fetch": {
+        "progress": "{percentage}% — {done} sur {total}",
+        "progressLabel": "Récupération des métadonnées…"
+      },
+      "configure": {
+        "format": {
+          "trackSelect": {
+            "screenReader": "Sélectionner la piste à télécharger"
+          },
+          "formatSelect": {
+            "noFormats": "Aucun format",
+            "placeholder": "Sélectionner un format",
+            "screenReader": "Sélectionner le format de la piste"
+          }
+        },
+        "encodings": {
+          "audioSelect": {
+            "noFormats": "Aucun codec audio",
+            "placeholder": "Codec audio",
+            "screenReader": "Sélectionner le codec audio"
+          },
+          "videoSelect": {
+            "noFormats": "Aucun codec vidéo",
+            "placeholder": "Codec vidéo",
+            "screenReader": "Sélectionner le codec vidéo"
+          }
+        },
+        "tracks": {
+          "availableInResolutions": "Disponible en",
+          "unavailableForSelectedResolution": "Indisponible pour la résolution sélectionnée",
+          "audioSelect": {
+            "noFormats": "Aucune piste audio",
+            "placeholder": "Piste audio",
+            "screenReader": "Sélectionner la piste audio"
+          },
+          "videoSelect": {
+            "noFormats": "Aucune piste vidéo",
+            "placeholder": "Piste vidéo",
+            "screenReader": "Sélectionner la piste vidéo"
+          }
+        },
+        "metadata": {
+          "duration": "Durée : {duration}",
+          "size": "Taille",
+          "sizeInfo": "La quantité de données qui sera téléchargée.\nCe n’est pas la taille finale du fichier",
+          "items": "Éléments : {amount} {failedCount}",
+          "failedCount": "({amount} échoués)",
+          "skippedCount": "({amount} ignorés)",
+          "failedAndSkippedCount": "({failed} en échec, {skipped} ignorés)"
+        },
+        "trackTypes": {
+          "both": "Vidéo + Audio",
+          "audio": "Audio",
+          "video": "Vidéo"
+        }
+      },
+      "download": {
+        "progress": "Téléchargement de {category}… — {percentage}%",
+        "progressList": "Téléchargement… {percentage}% — {done} sur {total}",
+        "indeterminate": "{status}…",
+        "category": {
+          "video": "vidéo",
+          "audio": "audio",
+          "subtitles": "sous-titres",
+          "thumbnail": "miniature",
+          "metadata": "métadonnées",
+          "other": "autre"
+        },
+        "status": {
+          "initializing": "Initialisation",
+          "downloading": "Téléchargement",
+          "merging": "Fusion",
+          "remuxing": "Remuxage",
+          "reencoding": "Réencodage",
+          "finalizing": "Nettoyage"
+        },
+        "metadata": {
+          "eta": "Temps restant : {eta}",
+          "speed": "Vitesse : {speed}"
+        }
+      },
+      "paused": {
+        "progress": "Téléchargement en pause — {percentage}%",
+        "progressList": "Téléchargement en pause — {percentage}% — {done} sur {total}",
+        "indeterminate": "Téléchargement en pause",
+        "metadata": {
+          "eta": "Restant : {eta}",
+          "etaItems": "Restant : {n} élément | Restant : {n} éléments"
+        }
+      },
+      "done": {
+        "complete": "Téléchargement terminé — 100%",
+        "showFolder": "Afficher dans le dossier",
+        "open": "Ouvrir le fichier",
+        "openFirst": "Ouvrir le premier fichier",
+        "undeterminedLocation": "Impossible de déterminer l'emplacement de téléchargement pour cet élément"
+      },
+      "error": {
+        "errorPrefix": "Erreur - {message}",
+        "report": "Signaler",
+        "showFull": "Voir logs",
+        "signIn": "Se connecter",
+        "filters": "Modifier les filtres"
+      }
+    },
+    "card": {
+      "actions": {
+        "remove": "Supprimer",
+        "externalUrl": "Voir sur l'URL externe",
+        "retry": "Réessayer le téléchargement",
+        "download": "Télécharger individuellement",
+        "preferences": "Préférences de téléchargement",
+        "pause": "Mettre en pause le téléchargement",
+        "resume": "Reprendre le téléchargement",
+        "metadata": "Afficher les métadonnées"
+      },
+      "toasts": {
+        "retry": "Nouvel essai du téléchargement",
+        "retryError": "Impossible de réessayer le téléchargement",
+        "applyFailed": "Impossible d’appliquer cette sélection. Réessayez"
+      }
+    },
+    "detail": {
+      "failed": "Ce téléchargement n’a pas abouti",
+      "useLogin": "Utiliser la connexion de mon navigateur",
+      "copyLink": "Copier le lien",
+      "stats": "Popularité",
+      "technical": "Détails techniques",
+      "noLog": "Pas encore de sortie du moteur",
+      "copyDetails": "Copier les détails",
+      "copied": "Copié"
+    }
+  },
+  "subtitles": {
+    "title": "Sous-titres",
+    "options": {
+      "enable": {
+        "legend": "Téléchargement des sous-titres",
+        "legendLabel": "Choisissez les paramètres de sous-titres par défaut",
+        "label": "Activer les sous-titres",
+        "hint": "Télécharger les sous-titres lorsqu’ils sont disponibles"
+      },
+      "autoGenerated": {
+        "label": "Inclure les sous-titres générés automatiquement",
+        "hint": "Télécharger aussi les sous-titres automatiques lorsqu’ils sont disponibles"
+      },
+      "format": {
+        "legend": "Format préféré",
+        "legendLabel": "Sélectionnez votre format de sous-titre préféré. Si non disponible, le format suivant sera utilisé",
+        "label": "Format"
+      },
+      "embed": {
+        "label": "Ajouter une piste de sous-titres",
+        "hint": "Ajoute des sous-titres au fichier vidéo. Fonctionne avec les formats MP4, MKV et WebM"
+      },
+      "languages": {
+        "legend": "Langues",
+        "legendLabel": "Choisissez les langues de sous-titres préférées",
+        "downloadAll": "Télécharger tous les sous-titres disponibles",
+        "search": "Rechercher des langues",
+        "searchPlaceholder": "Rechercher par nom de langue",
+        "suggested": "Suggestions pour vous",
+        "all": "Toutes les langues",
+        "noResult": "Aucune langue ne correspond à \"{query}\"",
+        "selected": "Sélectionné",
+        "allSelected": "Tous les sous-titres disponibles",
+        "searchHint": "Astuce : utilisez la recherche pour filtrer rapidement. Les langues sélectionnées restent surlignées",
+        "none": "Aucune"
+      }
+    },
+    "toasts": {
+      "saved": "Réglages des sous-titres enregistrés",
+      "error": "Impossible d'enregistrer les sous-titres. {error}"
+    },
+    "formats": {
+      "srt": "SubRip (.srt)",
+      "vtt": "WebVTT (.vtt)",
+      "ass": "Advanced SubStation Alpha (.ass)",
+      "ttml": "Timed Text Markup (.ttml)",
+      "json3": "JSON (.json)"
+    },
+    "defaults": {
+      "legend": "Sous-titres par défaut",
+      "hint": "Utilisé lorsqu’une vidéo a des sous-titres"
+    }
+  },
+  "location": {
+    "title": "Emplacement de téléchargement",
+    "downloadDir": {
+      "label": "Emplacement de téléchargement",
+      "hint": "Cliquez dans le champ pour sélectionner où les vidéos seront téléchargées"
+    },
+    "directory": {
+      "legend": "Organiser par",
+      "legendLabel": "Sélectionnez comment les téléchargements sont organisés en dossiers",
+      "videoDir": {
+        "label": "Emplacement de téléchargement",
+        "hint": "Remplace l’emplacement de téléchargement global pour les vidéos"
+      },
+      "audioDir": {
+        "label": "Emplacement de téléchargement",
+        "hint": "Remplace l’emplacement de téléchargement global lors du téléchargement audio"
+      },
+      "directoryPreset": {
+        "label": "Organiser les téléchargements par",
+        "exampleLabel": "Exemple de sortie",
+        "options": {
+          "none": "Aucun sous-dossier",
+          "playlist": "Playlist",
+          "channel": "Chaîne",
+          "channelPlaylist": "Chaîne → playlist",
+          "yearMonth": "Année / mois",
+          "artistAlbum": "Artiste → album",
+          "custom": "Personnalisé"
+        },
+        "examples": {
+          "playlist": "Ma playlist/",
+          "channel": "MaChaîne/",
+          "channelPlaylist": "MaChaîne/Ma playlist/",
+          "yearMonth": "2025/03/",
+          "artistAlbum": "Nom de l’artiste/Nom de l’album/"
+        }
+      },
+      "outputFormat": {
+        "label": "Format du dossier"
+      }
+    },
+    "filename": {
+      "legend": "Format du nom de fichier",
+      "legendLabel": "Sélectionnez le nom que porteront les fichiers téléchargés",
+      "formatPreset": {
+        "label": "Préréglage du nom",
+        "exampleLabel": "Exemple de sortie",
+        "options": {
+          "titleQuality": "Titre + qualité",
+          "titleOnly": "Titre seul",
+          "titleQualityPlaylist": "Playlist + titre + qualité",
+          "custom": "Personnalisé"
+        },
+        "examples": {
+          "video": {
+            "titleQuality": "Ma vidéo-(1080p30).mp4",
+            "titleOnly": "Ma vidéo.mp4",
+            "titleQualityPlaylist": "03-Ma vidéo-(1080p30).mkv"
+          },
+          "audio": {
+            "titleQuality": "Mon audio-(320k).mp3",
+            "titleOnly": "Mon audio.mp3",
+            "titleQualityPlaylist": "03-Mon audio-(320k).mp3"
+          }
+        },
+        "restrictFilenames": {
+          "label": "Restriction des noms de fichiers",
+          "hint": "Remplace les espaces par des traits de soulignement et supprime les caractères spéciaux tels que «&» des noms de fichiers"
+        }
+      },
+      "outputFormat": {
+        "label": "Format du nom de fichier"
+      },
+      "reversePlaylistNumbering": {
+        "label": "Numérotation inversée de la playlist",
+        "hint": "Numérote les éléments de la playlist depuis la fin plutôt que depuis le début"
+      }
+    },
+    "toasts": {
+      "saved": "Dossiers et noms de fichiers enregistrés",
+      "error": "Impossible d’enregistrer les dossiers et noms de fichiers"
+    }
+  },
+  "settings": {
+    "title": "Paramètres",
+    "reset": {
+      "label": "Réinitialiser",
+      "confirm": "Cliquez encore"
+    },
+    "tabs": {
+      "downloads": "Téléch.",
+      "app": "Appli",
+      "network": "Réseau",
+      "system": "Système",
+      "about": "Infos"
+    },
+    "performance": {
+      "legend": "Performance",
+      "legendLabel": "Configurez l’utilisation des ressources système",
+      "maxConcurrency": {
+        "label": "Tâches simultanées max :"
+      },
+      "splitPlaylistThreshold": {
+        "label": "Diviser les playlists en vidéos séparées lorsque :",
+        "options": {
+          "never": "Ne jamais diviser",
+          "lessThan": "Moins de {number} vidéos"
+        }
+      },
+      "autoLoadSize": {
+        "label": "Charger automatiquement la taille de la vidéo :"
+      },
+      "concurrentFragments": "Fragments parallèles (1–16)",
+      "aria2Enabled": "Accélérer les fichiers directs avec aria2",
+      "aria2Missing": "aria2 est indisponible sur cet appareil"
+    },
+    "input": {
+      "legend": "Entrée",
+      "legendLabel": "Choisissez comment démarrer le téléchargement avec OVD",
+      "autoFillClipboard": {
+        "label": "Remplir automatiquement les liens copiés :",
+        "hint": "Détecte les liens copiés pour pouvoir les télécharger d’un clic"
+      },
+      "preferVideoInMixedLinks": {
+        "label": "Préférer la vidéo seule pour les liens de playlist :",
+        "hint": "Si un lien contient vidéo + playlist, ne télécharger que la vidéo"
+      },
+      "globalShortcuts": {
+        "label": "Activer les raccourcis :",
+        "add_hint": "Ajouter des vidéos à la file d’attente avec :",
+        "download_hint": "Télécharger la file d’attente avec :",
+        "instant_hint": "Ajouter et télécharger immédiatement avec :"
+      },
+      "authentication": {
+        "label": "Se connecter pour télécharger les vidéos privées :",
+        "link": "Configurer l’authentification"
+      }
+    },
+    "output": {
+      "legend": "Sortie",
+      "legendLabel": "Configurer le type de fichiers téléchargés",
+      "addThumbnail": {
+        "label": "Ajouter l’image de couverture :",
+        "hint": "Incorpore la miniature dans le fichier pour les lecteurs"
+      },
+      "saveThumbnail": {
+        "label": "Enregistrer la miniature :",
+        "hint": "Télécharge la meilleure miniature disponible à côté du fichier multimédia"
+      },
+      "addMetadata": {
+        "label": "Ajouter titre & artiste :",
+        "hint": "Enregistre les métadonnées comme le titre, l’uploader/artiste et la description"
+      },
+      "partialDownload": {
+        "legend": "Téléchargement partiel",
+        "hint": "Utilisez des horodatages ou des chapitres pour ne télécharger que des extraits",
+        "use": "Utiliser",
+        "useTimes": "Horodatages",
+        "useChapter": "Chapitres",
+        "chapter": "Chapitre",
+        "startAt": "Début",
+        "stopAt": "Fin",
+        "invalidHint": "Les horodatages invalides seront ignorés",
+        "allChapters": "Tous les chapitres",
+        "errors": {
+          "invalid": "Saisissez une heure valide",
+          "beforeStart": "L'heure de fin doit être après l'heure de début",
+          "exceedsDuration": "L'horodatage ne peut pas dépasser la durée de la vidéo"
+        }
+      },
+      "location": {
+        "label": "Emplacement de téléchargement et noms de fichiers:",
+        "link": "Configurer les emplacements de téléchargement"
+      },
+      "subtitles": {
+        "label": "Ajouter des sous-titres :",
+        "link": "Configurer les sous-titres"
+      },
+      "keepOriginalStreams": {
+        "label": "Garder les flux d'origine",
+        "hint": "Évite les changements de conteneur et le réencodage, sauf si un post-traitement l’exige"
+      },
+      "postprocess": {
+        "label": "Post-traitement vidéo :",
+        "hint": "S’exécute une fois le téléchargement terminé",
+        "reencodeWarning": "Cette option réencode et peut prendre du temps",
+        "keepOriginalStreamsConflict": "Cette option nécessite un réencodage. Désactivez « Garder les flux d'origine » pour l’utiliser",
+        "mp42RequiresMp4": "Cette option nécessite une sortie MP4",
+        "options": {
+          "none": "Aucun",
+          "fps30": "Réencoder en 30 ips",
+          "mp42": "Définir la marque MP4 sur mp42",
+          "custom": "Personnalisé"
+        }
+      },
+      "postprocessMode": {
+        "label": "Mode de post-traitement personnalisé :",
+        "hint": "Choisissez si les arguments ffmpeg personnalisés s’exécutent pendant le remuxage ou le réencodage",
+        "options": {
+          "remux": "Exécuter pendant le remuxage",
+          "reencode": "Exécuter pendant le réencodage"
+        }
+      },
+      "postprocessArgs": {
+        "label": "Arguments ffmpeg avancés :",
+        "hint": "Réservé aux utilisateurs avancés. Séparez les arguments par des espaces ; les guillemets sont conservés"
+      },
+      "tabs": {
+        "audio": {
+          "screenreader": "Paramètres audio",
+          "label": "Audio",
+          "format": {
+            "label": "Format audio :",
+            "hint": "Choisissez le format audio préféré",
+            "options": {
+              "mp3": "MP3 (recommandé)",
+              "m4a": "M4A",
+              "ogg": "OGG",
+              "aac": "AAC",
+              "opus": "Opus",
+              "wav": "WAV",
+              "flac": "FLAC"
+            }
+          },
+          "postprocess": {
+            "label": "Post-traitement audio :",
+            "options": {
+              "none": "Aucun",
+              "custom": "Personnalisé"
+            }
+          }
+        },
+        "video": {
+          "screenreader": "Paramètres vidéo",
+          "label": "Vidéo",
+          "container": {
+            "label": "Format vidéo :",
+            "hint": "Choisissez le format vidéo préféré",
+            "options": {
+              "mp4": "MP4",
+              "mkv": "MKV"
+            }
+          }
+        }
+      },
+      "preciseCuts": {
+        "label": "Découpe précise :",
+        "hint": "Découpe à des images exactes plutôt qu’aux images clés voisines. Très lent.\nÀ activer uniquement si les découpes normales sont incorrectes, corrompues ou produisent des segments noirs/manquants"
+      }
+    },
+    "appearance": {
+      "legend": "Apparence",
+      "legendLabel": "Configurer l’aspect et le ressenti de l’application",
+      "theme": {
+        "label": "Thème :",
+        "options": {
+          "system": "Système ({theme})",
+          "light": "Clair",
+          "dark": "Sombre"
+        }
+      },
+      "language": {
+        "label": "Langue",
+        "options": {
+          "system": "Système ({language})"
+        }
+      },
+      "expandedOptions": {
+        "label": "Sélecteur supplémentaire :",
+        "hint": "Choisissez quel sélecteur supplémentaire est affiché avant le téléchargement",
+        "options": {
+          "none": "Aucun",
+          "encodings": "Encodages",
+          "tracks": "Pistes"
+        }
+      }
+    },
+    "network": {
+      "legend": "Réseau",
+      "legendLabel": "Configurer comment l’application se connecte à Internet",
+      "enableProxy": {
+        "label": "Se connecter via un proxy :"
+      },
+      "proxy": {
+        "label": "Configuration du proxy :"
+      },
+      "impersonate": {
+        "label": "Impersonation :",
+        "hint": "Simuler un OS ou navigateur pour éviter le fingerprinting",
+        "options": {
+          "none": "Ne pas simuler",
+          "any": "Simuler un client aléatoire"
+        }
+      },
+      "extractorArgs": {
+        "label": "Arguments d’extracteur :",
+        "hint": "Personnalisez les arguments d’extracteur pour yt-dlp. Un argument par ligne",
+        "placeholder": "youtube:player_js_variant=main",
+        "flagWarning": "Saisissez uniquement la valeur. L’application ajoute --extractor-args automatiquement"
+      }
+    },
+    "sponsorBlock": {
+      "legend": "SponsorBlock",
+      "legendLabel": "Supprimer ou marquer des parties d’une vidéo",
+      "removeParts": {
+        "label": "Parties à supprimer",
+        "placeholder": "Sélectionnez 1 ou plusieurs parties à supprimer de la vidéo"
+      },
+      "markParts": {
+        "label": "Parties à marquer",
+        "placeholder": "Sélectionnez 1 ou plusieurs parties à marquer avec un chapitre"
+      },
+      "apiUrl": {
+        "label": "URL de l’API"
+      },
+      "parts": {
+        "sponsor": {
+          "label": "Sponsor",
+          "description": "Promotion payante d’un produit ou service par le créateur ou tiers"
+        },
+        "selfpromo": {
+          "label": "Autopromo / Non payé",
+          "description": "Promotion par le créateur de produits/services/channels (non payé)"
+        },
+        "interaction": {
+          "label": "Rappel d’interaction",
+          "description": "Rappels pour liker/s’abonner/suivre ou interagir avec le créateur"
+        },
+        "intro": {
+          "label": "Intro / Interlude",
+          "description": "Animation d’intro, interlude ou pause non liée au contenu au début"
+        },
+        "outro": {
+          "label": "Outro / Cartes de fin / Crédits",
+          "description": "Cartes de fin, crédits ou segment final près de la fin"
+        },
+        "hook": {
+          "label": "Intro / Salutations",
+          "description": "Bandes-annonces narrées pour la vidéo à venir, salutations et conclusions"
+        },
+        "music_offtopic": {
+          "label": "Section non musicale",
+          "description": "Passages parlés ou distractions dans les vidéos musicales"
+        },
+        "preview": {
+          "label": "Preview / Récap",
+          "description": "Aperçu du contenu à venir ou récapitulatif des segments précédents"
+        },
+        "filler": {
+          "label": "Filler / Digressions",
+          "description": "Digressions, blagues ou scènes non essentielles au contenu principal"
+        },
+        "chapter": {
+          "label": "Chapitre",
+          "description": "Marque un chapitre/section de la vidéo (utilisé avec type d’action chapitre)"
+        }
+      },
+      "preciseCuts": {
+        "label": "Découpe précise :",
+        "hint": "Force SponsorBlock et les téléchargements partiels à découper sur des images exactes. Très lent.\nÀ activer uniquement si les découpes normales sont incorrectes, corrompues ou produisent des segments noirs/manquants"
+      }
+    },
+    "update": {
+      "legend": "Mises à jour",
+      "legendLabel": "Choisissez quelles parties de l’app se mettent à jour automatiquement",
+      "updateBinaries": {
+        "label": "Mettre à jour automatiquement les outils :",
+        "hint": "OVD utilise des outils comme yt-dlp et ffmpeg. Activez pour les garder à jour"
+      },
+      "updateApp": {
+        "label": "Mettre à jour automatiquement l’app :",
+        "hint": "Activez pour recevoir les nouveautés et correctifs dès qu’une nouvelle version sort"
+      }
+    },
+    "system": {
+      "legend": "Système",
+      "legendLabel": "Configurer la manière dont cette application s’intègre au système",
+      "trayEnabled": {
+        "label": {
+          "mac": "Afficher l’icône dans la barre de menus",
+          "generic": "Afficher l’icône dans la zone de notification"
+        },
+        "hint": {
+          "mac": "Affiche une icône dans la barre de menus pour un accès rapide",
+          "generic": "Affiche une icône dans la zone de notification pour un accès rapide"
+        }
+      },
+      "minimiseToTray": {
+        "label": "Réduire dans la zone de notification à la fermeture",
+        "hint": "Fermer la fenêtre masque l’application dans la zone de notification au lieu de la quitter"
+      },
+      "autoStart": {
+        "label": "Démarrer à la connexion",
+        "hint": "Ouvrir Nezzel à l'ouverture de votre session"
+      },
+      "autoStartMinimised": {
+        "label": {
+          "mac": "Démarrer masqué à la connexion",
+          "windows": "Démarrer réduit dans la zone de notification à la connexion",
+          "generic": "Démarrer masqué à la connexion (non recommandé)"
+        },
+        "hint": {
+          "mac": "Lorsque l’application démarre à la connexion, aucune fenêtre ne s’ouvre. Utilisez l’icône de la barre de menus ou du Dock pour l’ouvrir",
+          "windows": "Lorsque l’application démarre à la connexion, elle se lance dans la zone de notification sans ouvrir de fenêtre",
+          "generic": "Lorsque l’application démarre à la connexion, aucune fenêtre ne s’ouvre"
+        }
+      }
+    },
+    "notifications": {
+      "legend": "Notifications",
+      "legendLabel": "Configurer quand les notifications sont envoyées",
+      "behavior": {
+        "label": "Afficher les notifications :",
+        "options": {
+          "always": "Toujours",
+          "onBackground": "En arrière-plan",
+          "never": "Jamais"
+        },
+        "hint": "Astuce : les notifications sont utiles lors de l’utilisation de raccourcis"
+      },
+      "disabled": {
+        "label": "Activer/désactiver des notifications spécifiques",
+        "disabledScreenReader": "Cette option est désactivée",
+        "kinds": {
+          "queueAdded": "File ajoutée",
+          "queueDownloading": "Téléchargement de la file",
+          "queueFinished": "File terminée",
+          "videoFinished": "Vidéo terminée",
+          "playlistFinished": "Playlist terminée",
+          "downloadFailed": "Échec du téléchargement",
+          "videoReady": "Vidéo prête",
+          "playlistReady": "Playlist prête"
+        }
+      }
+    },
+    "toasts": {
+      "saved": "Paramètres enregistrés !",
+      "reset": "Paramètres réinitialisés par défaut"
+    }
+  },
+  "updater": {
+    "available": "Mise à jour disponible",
+    "install": {
+      "title": "Installer la mise à jour",
+      "subtitle": "Cela redémarrera l’application"
+    },
+    "downloading": "Téléchargement de la mise à jour…"
+  },
+  "install": {
+    "title": {
+      "installing": "Préparation des outils de téléchargement…",
+      "failed": "Impossible de préparer certains outils de téléchargement",
+      "installed": "Les outils de téléchargement sont prêts"
+    },
+    "subtitle": {
+      "installing": "Préparation en cours…",
+      "failed": "Certains téléchargements risquent de ne pas marcher. Réessayez ou signalez le problème",
+      "installed": "Prêt à télécharger"
+    },
+    "stay": "Rester ici"
+  },
+  "components": {
+    "base": {
+      "emptyState": {
+        "title": "Votre file d'attente est vide",
+        "subtitle": "Ajoutez des vidéos pour commencer"
+      },
+      "dragState": {
+        "title": "Déposez pour ajouter à la file d'attente",
+        "subtitle": "Ajoutez à la file d'attente en glissant les vidéos"
+      },
+      "fileInput": {
+        "select": "Sélectionner un fichier",
+        "placeholder": "Sélectionnez un fichier…",
+        "invalid": "Fichier non valide",
+        "clear": "Effacer le fichier",
+        "recents": {
+          "clear": "Effacer les fichiers récents",
+          "open": "Ouvrir les sélections récentes",
+          "empty": "Aucune sélection récente"
+        }
+      },
+      "folderInput": {
+        "select": "Sélectionner un dossier",
+        "placeholder": "Sélectionnez un dossier…",
+        "invalid": "Dossier non valide",
+        "clear": "Effacer le dossier",
+        "recents": {
+          "clear": "Effacer les dossiers récents",
+          "open": "Ouvrir les sélections récentes",
+          "empty": "Aucune sélection récente"
+        }
+      },
+      "secretInput": {
+        "hide": "Masquer",
+        "show": "Afficher",
+        "clear": "Effacer {label}"
+      },
+      "toolCard": {
+        "failed": "Impossible d’installer cet outil"
+      }
+    }
+  },
+  "errors": {
+    "runner": {
+      "loginConsentDeclined": {
+        "shortMessage": "Connexion du navigateur non utilisée",
+        "message": "Vous n'avez pas autorisé la connexion du navigateur. Réessayez pour continuer"
+      },
+      "fetchTimeout": {
+        "shortMessage": "Le site a mis trop de temps à répondre",
+        "message": "Le site a mis trop de temps à répondre. Réessayez"
+      },
+      "loginConsentTimeout": {
+        "shortMessage": "La demande de connexion a expiré",
+        "message": "La demande de connexion est restée sans réponse. Réessayez pour continuer"
+      },
+      "noMediaFound": {
+        "shortMessage": "Rien à télécharger sur cette page",
+        "message": "Cette page ne contient ni vidéo, ni audio, ni photo. Ouvrez la publication elle-même et copiez son lien"
+      },
+      "internal": {
+        "shortMessage": "Un problème est survenu dans Nezzel",
+        "message": "Un problème est survenu dans Nezzel pendant ce téléchargement. Réessayez"
+      },
+      "signInRequired": {
+        "shortMessage": "Connexion requise",
+        "message": "Ce site ne l'affiche qu'aux personnes connectées"
+      },
+      "membersOnly": {
+        "shortMessage": "Réservé aux membres de la chaîne",
+        "message": "Cette vidéo est uniquement disponible pour les membres du channel"
+      },
+      "geoBlocked": {
+        "shortMessage": "Indisponible dans votre pays",
+        "message": "Ce contenu n’est pas disponible dans votre région"
+      },
+      "accessForbidden403": {
+        "shortMessage": "Le site n'a pas autorisé ce téléchargement",
+        "message": "Le site a refusé ce téléchargement. Le fichier est peut-être privé, ou le lien a expiré"
+      },
+      "notFound404": {
+        "shortMessage": "Introuvable",
+        "message": "Il n'y a plus rien à ce lien. Vérifiez le lien, ou s'il a été supprimé"
+      },
+      "server5xx": {
+        "shortMessage": "Le site rencontre un problème",
+        "message": "Le site a un problème temporaire. Réessayez plus tard"
+      },
+      "rateLimited429": {
+        "shortMessage": "Trop de téléchargements depuis ce site. Patientez un peu, puis réessayez",
+        "message": "Le site limite les téléchargements pour l'instant. Patientez quelques minutes, puis réessayez"
+      },
+      "noAudioTrack": {
+        "shortMessage": "Cette vidéo n'a pas de son à enregistrer en audio",
+        "message": "Cette vidéo n'a pas de son à enregistrer en audio. Téléchargez-la plutôt en vidéo"
+      },
+      "requestedFormatUnavailable": {
+        "shortMessage": "Format indisponible",
+        "message": "Le format sélectionné n’est pas disponible pour cette vidéo"
+      },
+      "unableToExtractInitialData": {
+        "shortMessage": "Impossible de lire cette page",
+        "message": "Nezzel n'a pas pu lire cette page. Le site a peut-être changé ; mettre à jour les outils de téléchargement règle souvent le problème"
+      },
+      "unableToExtractIdOrInfo": {
+        "shortMessage": "Impossible de lire les détails de cette vidéo",
+        "message": "Nezzel n'a pas pu lire les détails de cette vidéo. Réessayez ou mettez à jour les outils de téléchargement"
+      },
+      "nsigExtractionFailed": {
+        "shortMessage": "Le site a bloqué le téléchargement",
+        "message": "Le site a changé la protection de ses vidéos. Mettre à jour les outils de téléchargement règle généralement le problème"
+      },
+      "drmProtected": {
+        "shortMessage": "Vidéo protégée contre la copie",
+        "message": "Le site protège cette vidéo contre la copie, Nezzel ne peut donc pas l'enregistrer"
+      },
+      "embedOnly": {
+        "shortMessage": "Vidéo intégrée uniquement",
+        "message": "Cette vidéo est accessible uniquement via un lecteur intégré"
+      },
+      "videoPasswordRequired": {
+        "shortMessage": "Mot de passe vidéo manquant ou incorrect",
+        "message": "Cette vidéo ou cet album nécessite un mot de passe, ou celui saisi est incorrect. Saisissez celui fourni par son propriétaire dans les paramètres avancés, puis réessayez."
+      },
+      "mediaNotReady": {
+        "shortMessage": "Média pas encore prêt",
+        "message": "Le site prépare encore ce média. Réessayez plus tard."
+      },
+      "mediaUnavailable": {
+        "shortMessage": "Média indisponible",
+        "message": "Le site ne permet pas d’accéder à ce média pour le moment. Ouvrez le lien sur le site pour en savoir plus."
+      },
+      "photosOnly": {
+        "shortMessage": "Publication photo",
+        "message": "Cette publication contient des photos, pas une vidéo"
+      },
+      "imageEngineUnavailable": {
+        "shortMessage": "Moteur photo indisponible",
+        "message": "Le moteur photo est absent ou n’a pas pu être vérifié. Réinstallez Nezzel puis réessayez."
+      },
+      "imageSourceUnavailable": {
+        "shortMessage": "Impossible d’enregistrer cette publication",
+        "message": "La source n’a pas fourni les médias sélectionnés, ou les données de l’image étaient incomplètes. Réessayez."
+      },
+      "imageSelectionChanged": {
+        "shortMessage": "Sélectionnez à nouveau les éléments",
+        "message": "Les pièces jointes de cette publication ont changé. Relisez le lien et sélectionnez au moins un élément."
+      },
+      "imageFileConflict": {
+        "shortMessage": "Le fichier existe déjà",
+        "message": "Un fichier porte déjà ce nom, ou la destination ne peut pas le créer en toute sécurité. Choisissez un autre dossier ou nom de fichier."
+      },
+      "imageHeaderAuthUnavailable": {
+        "shortMessage": "En-têtes d’authentification personnalisés indisponibles pour les images",
+        "message": "Pour télécharger des images, utilisez les cookies du navigateur plutôt que des jetons d’accès ou des en-têtes personnalisés."
+      },
+      "imageImpersonationUnavailable": {
+        "shortMessage": "Paramètre de connexion photo indisponible",
+        "message": "Le moteur photo ne peut pas utiliser l’émulation de navigateur choisie. Désactivez-la dans les réglages avancés puis réessayez."
+      },
+      "urlNotSupported": {
+        "shortMessage": "Nezzel ne peut pas encore télécharger depuis ce lien",
+        "message": "Le téléchargement depuis ce lien n’est pas encore pris en charge."
+      },
+      "urlUnsupported": {
+        "shortMessage": "Ce n'est pas un lien que Nezzel peut ouvrir",
+        "message": "Nezzel ne reconnaît pas ce lien. Vérifiez qu'il a été copié en entier"
+      },
+      "unknownUrlType": {
+        "shortMessage": "Type d’URL inconnu",
+        "message": "Le protocole de l’URL fourni n’est pas supporté"
+      },
+      "networkNameResolutionFailed": {
+        "shortMessage": "Pas de connexion Internet",
+        "message": "Impossible de joindre le site. Vérifiez votre connexion Internet, puis réessayez"
+      },
+      "unableToConnectToProxy": {
+        "shortMessage": "Échec de connexion au proxy",
+        "message": "Impossible de se connecter au proxy. Vérifiez les paramètres du proxy"
+      },
+      "signInRequiredForBotDetection": {
+        "shortMessage": "Connexion requise",
+        "message": "Le site demande une connexion pour vérifier que vous n'êtes pas un robot"
+      },
+      "playlistPrivateOrMissing": {
+        "shortMessage": "Playlist indisponible",
+        "message": "Cette playlist est privée ou n’existe plus"
+      },
+      "videoNotFoundOrPrivate": {
+        "shortMessage": "Supprimée ou privée",
+        "message": "Cette vidéo a été supprimée ou rendue privée"
+      },
+      "channelUnavailable": {
+        "shortMessage": "Chaîne indisponible",
+        "message": "La chaîne hébergeant ce contenu n’est plus accessible"
+      },
+      "ffmpegNotFound": {
+        "shortMessage": "ffmpeg introuvable",
+        "message": "La conversion en mp3 ou mp4 nécessite ffmpeg"
+      },
+      "ffmpegFailed": {
+        "shortMessage": "Impossible de finaliser le fichier",
+        "message": "Le téléchargement est terminé, mais Nezzel n'a pas pu assembler le fichier. Réessayez ou choisissez un autre format"
+      },
+      "cannotAllocateMemory": {
+        "shortMessage": "Mémoire insuffisante",
+        "message": "Votre ordinateur a manqué de mémoire en préparant le fichier. Fermez d'autres apps et réessayez"
+      },
+      "permissionDenied": {
+        "shortMessage": "Permission refusée",
+        "message": "L’application n’a pas la permission d’accéder à ce fichier ou dossier"
+      },
+      "noWritePermission": {
+        "shortMessage": "Impossible d’écrire",
+        "message": "Le chemin de destination n’est pas accessible en écriture"
+      },
+      "windowsFileMissing": {
+        "shortMessage": "Fichier manquant",
+        "message": "Le fichier référencé est introuvable (WinError 2)"
+      },
+      "blockedGeneric": {
+        "shortMessage": "Vidéo bloquée",
+        "message": "Cette vidéo est bloquée et ne peut pas être téléchargée"
+      },
+      "copyrightClaimed": {
+        "shortMessage": "Blocage copyright",
+        "message": "La vidéo a été bloquée pour cause de copyright"
+      },
+      "notPremieredYet": {
+        "shortMessage": "Pas encore diffusée",
+        "message": "Cette vidéo n’est pas disponible avant sa première"
+      },
+      "livestreamNotStarted": {
+        "shortMessage": "Live non commencé",
+        "message": "Le direct n'a pas encore commencé. Réessayez quand il sera en cours"
+      },
+      "sslVerifyFailed": {
+        "shortMessage": "SSL échoué",
+        "message": "La connexion sécurisée n’a pas pu être vérifiée. Vérifiez vos certificats ou la date/heure"
+      },
+      "sponsorBlockUnreachable": {
+        "shortMessage": "SponsorBlock hors ligne",
+        "message": "Impossible de se connecter à l’API SponsorBlock pour les segments"
+      },
+      "downloadRetryingFragment": {
+        "shortMessage": "Nouvel essai fragment",
+        "message": "Un fragment a échoué et sera automatiquement retéléchargé"
+      },
+      "unknown": {
+        "shortMessage": "Téléchargement impossible",
+        "hint": "Téléchargement impossible. Réessayez ou ouvrez les détails",
+        "message": "Nezzel n’a pas pu terminer ce téléchargement. Réessayez ou ouvrez les détails pour consulter l’erreur du moteur."
+      },
+      "rejectedByFilter": {
+        "shortMessage": "Filtré",
+        "message": "Ignoré par vos filtres de liens"
+      }
+    }
+  },
+  "about": {
+    "title": "À propos",
+    "credit": "Fait avec ❤ par jely2002 & les contributeurs",
+    "poweredBy": "Propulsé par open source",
+    "viewLicenses": "Voir les licences",
+    "version": "Version : {version}",
+    "links": {
+      "github": "GitHub",
+      "wiki": "Wiki",
+      "reportABug": "Signaler un bug"
+    },
+    "update": {
+      "check": "Rechercher des mises à jour",
+      "checking": "Vérification…",
+      "latest": "Vous avez la dernière version",
+      "available": "Une nouvelle version est disponible",
+      "failed": "Impossible de vérifier les mises à jour. Réessayez plus tard"
+    }
+  },
+  "inputFilters": {
+    "title": "Filtres d’entrée",
+    "filesize": {
+      "legend": "Taille du fichier",
+      "hint": "Conserver uniquement les éléments plus grands ou plus petits que la taille choisie"
+    },
+    "dates": {
+      "legend": "Dates d’envoi",
+      "hint": "Conserver uniquement les éléments envoyés à, avant ou après une date"
+    },
+    "advanced": {
+      "legend": "Filtres avancés",
+      "hint": "Ce sont des filtres yt-dlp bruts destinés à un usage avancé"
+    },
+    "fields": {
+      "minSize": {
+        "label": "Taille minimale du fichier"
+      },
+      "maxSize": {
+        "label": "Taille maximale du fichier"
+      },
+      "size": {
+        "valuePlaceholder": "50",
+        "unitPlaceholder": "Unité"
+      },
+      "date": {
+        "modeLabel": "Règle de correspondance",
+        "clearMode": "Désactivé",
+        "hint": "Choisissez d’abord la règle de date, puis la date",
+        "mode": {
+          "exact": "À la date",
+          "before": "Le ou avant le",
+          "after": "Le ou après le"
+        },
+        "activeLabel": {
+          "exact": "Vidéos mises en ligne à cette date",
+          "before": "Vidéos mises en ligne à cette date ou avant",
+          "after": "Vidéos mises en ligne à cette date ou après"
+        },
+        "presetsLabel": "Raccourcis",
+        "presets": {
+          "today": "Aujourd’hui",
+          "yesterday": "Hier",
+          "last7Days": "7 derniers jours",
+          "last30Days": "30 derniers jours"
+        }
+      },
+      "matchFilters": {
+        "label": "Filtres de correspondance",
+        "placeholder": "!is_live & view_count >=? 10000",
+        "hint": "Exemples : !is_live, duration >? 600, like_count >=? 100"
+      },
+      "breakMatchFilters": {
+        "label": "Filtres d’arrêt",
+        "placeholder": "duration >? 3600",
+        "hint": "Arrêter l’analyse du lien actuel lorsqu’un élément ne correspond pas à ce filtre"
+      }
+    },
+    "playlistSelection": {
+      "title": "Choisir les éléments de la playlist",
+      "description": "Sélectionnez les éléments à télécharger",
+      "selectionSummary": "{count} élément sélectionné sur {total} | {count} éléments sélectionnés sur {total}",
+      "selectionSummaryAll": "Tous les éléments sont sélectionnés | Les {count} éléments sont sélectionnés",
+      "advancedButton": "Avancé",
+      "simpleButton": "Réinitialiser",
+      "advancedTitle": "Sélection avancée de playlist",
+      "advancedHint": "Sélectionnez plusieurs éléments, des nombres négatifs et plusieurs plages",
+      "advancedDescription": "Sélection actuelle",
+      "advancedEmpty": "Aucune sélection avancée n’est encore configurée",
+      "addSingle": "Ajouter un élément",
+      "addRange": "Ajouter une plage",
+      "applyFull": "Télécharger tous les éléments",
+      "applySelection": "Télécharger les éléments sélectionnés",
+      "useAdvanced": "Utiliser la sélection avancée",
+      "noMatches": "Cette plage ne correspond à aucun élément de la playlist",
+      "row": {
+        "single": "Unique",
+        "range": "Plage"
+      },
+      "remove": "Supprimer",
+      "fields": {
+        "advancedLabel": "Avancé",
+        "index": "Élément",
+        "indexPlaceholder": "1 ou -1",
+        "start": "Début",
+        "startPlaceholder": "1",
+        "end": "Fin",
+        "endPlaceholder": "10",
+        "input": "Éléments"
+      },
+      "errors": {
+        "playlistIndex": "Utilisez un nombre entier autre que 0. Les nombres négatifs comptent depuis la fin",
+        "playlistRangeBounds": "Renseignez le début et la fin. Les nombres négatifs comptent depuis la fin"
+      }
+    },
+    "toasts": {
+      "saved": "Filtres de liens enregistrés",
+      "error": "Impossible d’enregistrer les filtres de liens : {error}"
+    }
+  },
+  "shell": {
+    "brand": "Nezzel",
+    "nav": {
+      "label": "Principal",
+      "downloads": "Téléchargements",
+      "finished": "Terminés",
+      "settings": "Réglages",
+      "all": "Tous",
+      "downloading": "En cours",
+      "video": "Vidéos",
+      "audio": "Audio",
+      "photos": "Photos",
+      "active": "En cours",
+      "done": "Terminés",
+      "failed": "Échoués",
+      "files": "Fichiers"
+    },
+    "watching": "Liens copiés détectés",
+    "watchingOff": "Liens copiés : désactivé",
+    "skipToContent": "Aller au contenu",
+    "groups": {
+      "library": "Bibliothèque",
+      "media": "Médias"
+    },
+    "view": {
+      "title": "Affichage",
+      "compact": "Lignes compactes",
+      "thumbnails": "Afficher les miniatures"
+    },
+    "sidebar": {
+      "show": "Afficher la barre latérale",
+      "hide": "Masquer la barre latérale"
+    },
+    "status": {
+      "downloading": "{n} en cours | {n} en cours",
+      "ready": "Prêt",
+      "openFolder": "Ouvrir le dossier des téléchargements",
+      "failed": "{n} en échec | {n} en échec",
+      "label": "État",
+      "reading": "Lecture de {n} lien… | Lecture de {n} liens…"
+    },
+    "keys": {
+      "pasteMac": "⌘V",
+      "paste": "Ctrl+V"
+    }
+  },
+  "downloads": {
+    "title": "Téléchargements",
+    "field": {
+      "label": "Lien à télécharger",
+      "placeholder": "Collez un lien",
+      "submit": "Télécharger",
+      "more": "Autres façons d'ajouter des liens",
+      "importFile": "Ajouter des liens depuis un fichier…",
+      "watchStart": "Détecter les liens copiés",
+      "watchStop": "Ne plus détecter les liens copiés",
+      "filters": "Filtres de playlist…",
+      "tip": "Maj + Entrée télécharge tout de suite avec votre choix par défaut",
+      "importFileHint": "Un fichier .txt ou .csv avec un lien par ligne",
+      "watch": "Carte pour les liens copiés",
+      "watchHint": "Affiche une petite carte quand vous copiez un lien, même par-dessus les autres apps",
+      "watchOnTip": "Carte des liens copiés : activée",
+      "watchOffTip": "Carte des liens copiés : désactivée",
+      "filtersHint": "Ignorer des vidéos selon la taille, la date ou le titre",
+      "filtersOn": "Actifs : certaines vidéos seront ignorées",
+      "pasteFirst": "Collez d’abord un lien"
+    },
+    "drop": "Déposez pour télécharger",
+    "sections": {
+      "active": "En cours",
+      "finished": "Terminés",
+      "failed": "Échoués"
+    },
+    "seeAll": "Tout voir ({n})",
+    "summary": {
+      "ready": "Aucun lien prêt | 1 lien prêt | {n} liens prêts",
+      "downloadAll": "Tout télécharger"
+    },
+    "empty": {
+      "title": "Enregistrez vidéos, audio, photos et fichiers depuis un lien",
+      "body": "Depuis YouTube, Instagram, TikTok, X et bien d’autres sites",
+      "cta": "Coller un lien",
+      "tip": "Astuce : copiez un lien n’importe où et appuyez sur Télécharger, ou déposez un lien sur cette fenêtre",
+      "filtered": "Rien ici pour l’instant",
+      "hintPaste": "Collez ou déposez un lien n’importe où dans cette fenêtre",
+      "hintQuick": "Téléchargez vite depuis n’importe quelle app, même le navigateur",
+      "hintCopied": "Copiez un lien et {brand} vous le propose aussitôt"
+    },
+    "finished": {
+      "empty": "Les téléchargements terminés apparaissent ici",
+      "clear": "Vider la liste",
+      "clearFailed": "Retirer les échecs"
+    },
+    "row": {
+      "downloadVideoInstead": "Télécharger la vidéo à la place",
+      "retryWithBest": "Réessayer avec la meilleure qualité",
+      "reading": "Lecture du lien…",
+      "readingList": "Lecture de la playlist… {done} sur {total}",
+      "ready": "Prêt",
+      "options": "Options",
+      "download": "Télécharger",
+      "pause": "Pause",
+      "resume": "Reprendre",
+      "paused": "En pause à {percent}",
+      "remove": "Retirer",
+      "retry": "Réessayer",
+      "open": "Ouvrir",
+      "openFirst": "Ouvrir le premier",
+      "show": "Afficher dans le dossier",
+      "details": "Détails",
+      "more": "Plus d'actions",
+      "openPage": "Ouvrir la page",
+      "perDownload": "Réglages de ce téléchargement",
+      "saved": "Enregistré",
+      "items": "1 élément | {n} éléments",
+      "photos": "1 photo | {n} photos",
+      "left": "{eta} restantes",
+      "noLocation": "Nezzel ne trouve pas où ce fichier a été enregistré",
+      "copyLink": "Copier le lien",
+      "linkCopied": "Lien copié",
+      "copyFailed": "Impossible de copier le lien",
+      "removeFromList": "Retirer de la liste (garde le fichier)",
+      "deleteFile": "Supprimer le fichier…",
+      "deleteConfirm": {
+        "title": "Supprimer ce fichier ?",
+        "body": {
+          "trash": "« {name} » ira dans la Corbeille, d’où vous pourrez encore le restaurer",
+          "recycleBin": "« {name} » ira dans la Corbeille, d’où vous pourrez encore le restaurer"
+        },
+        "ok": {
+          "trash": "Mettre à la Corbeille",
+          "recycleBin": "Mettre à la Corbeille"
+        },
+        "cancel": "Annuler"
+      },
+      "deleted": {
+        "trash": "Mis à la Corbeille",
+        "recycleBin": "Mis à la Corbeille"
+      },
+      "deleteFailed": "Impossible de supprimer le fichier",
+      "deleteMissing": "Le fichier a déjà été déplacé ou supprimé : il est retiré de la liste",
+      "deleteRefused": {
+        "notOurs": "Nezzel ne supprime que les fichiers qu'il a enregistrés. Supprimez-le depuis le dossier",
+        "changed": "Le fichier a changé après le téléchargement : Nezzel n'y touche pas",
+        "trashFailed": "Impossible de mettre le fichier à la corbeille. Supprimez-le depuis le dossier"
+      },
+      "stillReading": "Lecture en cours… {s} s",
+      "readingStuck": "Ce site met du temps à répondre. Réessayez ou retirez-le",
+      "resuming": "Reprise…",
+      "cancel": "Annuler le téléchargement"
+    },
+    "login": {
+      "needs": "Cette publication {site} nécessite que vous soyez connecté",
+      "needsGeneric": "Cette publication nécessite que vous soyez connecté",
+      "useFrom": "Utiliser la connexion de",
+      "use": "L'utiliser",
+      "notNow": "Pas maintenant",
+      "useBrowser": "Utiliser {browser}",
+      "stillFailing": "La connexion de {browser} n'a pas suffi. Ouvrez le site dans {browser}, connectez-vous, puis réessayez",
+      "privacy": "Nezzel lit la connexion de ce navigateur pour ce téléchargement seulement. Elle n'est jamais enregistrée ni envoyée ailleurs qu'au site",
+      "keychain": "macOS peut demander une fois l'autorisation de lire la connexion du navigateur",
+      "tryAnother": "Essayer un autre navigateur",
+      "settings": "Réglages de connexion",
+      "refusedBrowser": "{site} n'a pas accepté votre connexion {browser}. Connectez-vous à {site} dans {browser}, ou essayez un autre navigateur",
+      "noBrowser": "Aucune connexion de navigateur acceptée par {site} n'a été trouvée",
+      "turnedOff": "{site} nécessite une connexion. Les connexions du navigateur sont désactivées dans les réglages de connexion",
+      "thisSite": "ce site",
+      "signedIn": "connecté à {host}",
+      "usingProfile": "Avec {profile}",
+      "changeProfile": "Changer de profil",
+      "windowsAppBound": "Votre navigateur sous Windows verrouille sa connexion tant qu'il est ouvert. Fermez-le et réessayez, ou utilisez Firefox",
+      "expired": "Cette demande de connexion a expiré. Réessayez le lien",
+      "again": "Se reconnecter",
+      "skipped": "Vous avez passé la connexion, {site} n’a donc pas autorisé ce téléchargement",
+      "timedOut": "La demande de connexion à {site} a expiré",
+      "profilesFailed": "Impossible de lister les profils du navigateur. Réessayez",
+      "lookingForProfiles": "Recherche des profils…"
+    },
+    "list": {
+      "searchLabel": "Rechercher dans les téléchargements",
+      "searchPlaceholder": "Rechercher par titre ou site",
+      "clearSearch": "Effacer la recherche",
+      "results": "1 résultat | {n} résultats",
+      "noMatch": "Aucun téléchargement ne correspond à « {query} »",
+      "clearFinished": "Retirer de la liste",
+      "clearFinishedHint": "Les fichiers restent dans votre dossier de téléchargements",
+      "cleared": "1 téléchargement retiré de la liste | {n} téléchargements retirés de la liste",
+      "undo": "Annuler",
+      "allCleared": "Les téléchargements terminés retirés de la liste sont dans Terminés"
+    },
+    "selection": {
+      "bar": "Actions sur la sélection",
+      "selectAll": "Tout sélectionner ({n})",
+      "selectAllHint": "Sélectionner toutes les lignes de cette liste",
+      "count": "1 sélectionné | {n} sélectionnés",
+      "select": "Sélectionner {title}",
+      "clear": "Désélectionner tout",
+      "download": "Télécharger",
+      "pause": "Mettre en pause",
+      "resume": "Reprendre",
+      "retry": "Réessayer",
+      "remove": "Retirer de la liste",
+      "deleteFiles": "Supprimer les fichiers…",
+      "deleteConfirm": {
+        "title": "Supprimer 1 fichier ? | Supprimer {n} fichiers ?",
+        "body": {
+          "trash": "1 fichier ira dans la Corbeille, d’où vous pourrez encore le restaurer | {n} fichiers iront dans la Corbeille, d’où vous pourrez encore les restaurer",
+          "recycleBin": "1 fichier ira dans la Corbeille, d’où vous pourrez encore le restaurer | {n} fichiers iront dans la Corbeille, d’où vous pourrez encore les restaurer"
+        }
+      },
+      "deleteSomeFailed": "{n} fichier n'a pas pu être supprimé | {n} fichiers n'ont pas pu être supprimés"
+    },
+    "chips": {
+      "label": "Afficher",
+      "all": "Tout",
+      "active": "En cours",
+      "failed": "Échoués",
+      "done": "Terminés"
+    },
+    "announce": {
+      "done": "{title} : téléchargé",
+      "failed": "{title} : échec"
+    }
+  },
+  "attachments": {
+    "title": "Éléments à enregistrer",
+    "selectAll": "Tout sélectionner",
+    "selectedCount": "{selected} sur {total}",
+    "photo": "Photo {number}",
+    "video": "Vidéo {number}",
+    "chooseOne": "Sélectionnez au moins un élément à télécharger"
+  },
+  "sheet": {
+    "title": "Options de téléchargement",
+    "close": "Fermer",
+    "choices": "Comment voulez-vous l'enregistrer ?",
+    "best": "Meilleure qualité",
+    "bestHint": "Vidéo · jusqu'à {height}p",
+    "bestHintPlain": "Vidéo",
+    "audio": "Audio seul",
+    "audioHint": "Meilleur son",
+    "small": "Fichier plus léger",
+    "smallHint": "Vidéo · {height}p",
+    "custom": "Format personnalisé",
+    "advanced": "Tous les formats et options",
+    "advancedHint": "Choisissez un format, un codec ou une piste précis",
+    "moreOptions": "Codecs et pistes audio…",
+    "perDownload": "Dossier, sous-titres et plus pour ce téléchargement",
+    "remember": "Toujours utiliser ce choix et passer cette étape",
+    "cancel": "Pas maintenant",
+    "download": "Télécharger",
+    "reading": "Lecture du lien…",
+    "size": "Environ {size}",
+    "format": "Format",
+    "saveTo": "Enregistrer dans",
+    "waitingFormats": "En attente des formats…"
+  },
+  "prefs": {
+    "title": "Réglages",
+    "tabs": {
+      "label": "Sections des réglages",
+      "general": "Général",
+      "logins": "Connexions",
+      "advanced": "Avancé"
+    },
+    "saved": "Enregistré",
+    "general": {
+      "folder": "Enregistrer dans",
+      "folderDefault": "Téléchargements / Nezzel",
+      "change": "Changer…",
+      "choice": "Choix par défaut",
+      "choiceHint": "Utilisé quand vous passez l'étape des options ou ajoutez plusieurs liens",
+      "askEach": "Demander pour chaque lien",
+      "askEachHint": "Affiche le panneau d'options après avoir collé un lien",
+      "clip": "Proposer les liens copiés",
+      "clipHint": "Quand vous copiez un lien vidéo, il apparaît dans le champ de lien, prêt en un clic. Vérifié uniquement sur votre ordinateur",
+      "language": "Langue",
+      "theme": "Thème",
+      "tray": "Garder Nezzel en arrière-plan",
+      "trayHint": "Les téléchargements continuent fenêtre fermée",
+      "folderHint": "Les nouveaux téléchargements vont ici. Nezzel crée le dossier si besoin",
+      "card": "Carte pour les liens copiés",
+      "cardHint": "Affiche une petite carte par-dessus les autres apps quand vous copiez un lien, même si Nezzel est en arrière-plan. Rien ne se télécharge sans votre choix",
+      "choose": "Choisir…"
+    },
+    "logins": {
+      "note": "Quand un site exige une connexion, Nezzel utilise un profil de navigateur connecté à ce site. Votre connexion n'est jamais conservée ni envoyée ailleurs qu'à ce site",
+      "browser": "Utiliser les connexions de",
+      "browserHint": "Le mode automatique trouve un profil connecté quand un site refuse. Changez de profil depuis un téléchargement, ou choisissez un navigateur pour tous les sites",
+      "none": "Ne pas utiliser les connexions du navigateur",
+      "file": "Fichier cookies.txt",
+      "fileHint": "Pour les sites que vos navigateurs ne peuvent pas partager. Avancé",
+      "accounts": "Comptes enregistrés",
+      "accountsHint": "Identifiant et mot de passe, chiffrés sur cet ordinateur",
+      "never": "Ne jamais utiliser les connexions de mon navigateur",
+      "automatic": "Automatique (recommandé)"
+    },
+    "advanced": {
+      "note": "Tout est facultatif ici. Nezzel fonctionne sans y toucher",
+      "downloads": "Téléchargements et formats",
+      "app": "Application et notifications",
+      "network": "Réseau",
+      "system": "Système et mises à jour",
+      "about": "À propos",
+      "more": "Autres outils",
+      "location": "Noms de fichiers et dossiers",
+      "subtitles": "Sous-titres",
+      "filters": "Filtres de liens",
+      "reset": "Réinitialiser tous les réglages"
+    },
+    "sections": {
+      "downloads": "Téléchargements",
+      "quick": "Téléchargement rapide",
+      "appearance": "Apparence",
+      "otherLogins": "Autres façons de se connecter"
+    },
+    "showMore": "Afficher plus",
+    "showLess": "Afficher moins",
+    "adv": {
+      "files": {
+        "title": "Fichiers",
+        "videoFormat": "Type de fichier vidéo",
+        "videoFormatHint": "Le MP4 se lit partout. Le MKV garde plus de pistes audio et de sous-titres",
+        "audioFormat": "Type de fichier audio",
+        "audioFormatHint": "Le MP3 se lit partout. Les autres types gardent un peu plus de qualité",
+        "cover": "Ajouter la pochette",
+        "coverHint": "Place la miniature dans le fichier pour que les lecteurs l’affichent",
+        "metadata": "Ajouter le titre et l’artiste",
+        "metadataHint": "Enregistre le titre, la chaîne ou l’artiste et la description dans le fichier",
+        "folders": "Dossiers et noms de fichiers",
+        "foldersHint": "Dossiers séparés pour la vidéo et l’audio, et nommage des fichiers",
+        "subtitles": "Sous-titres",
+        "subtitlesHint": "Télécharger les sous-titres et choisir leurs langues",
+        "filters": "Filtres de liens",
+        "filtersHint": "Ignorer des vidéos selon la taille, la date ou le titre quand vous ajoutez beaucoup de liens",
+        "saveCover": "Enregistrer la pochette à part",
+        "saveCoverHint": "Garde la miniature comme image à côté du téléchargement",
+        "keepVideo": "Garder la vidéo telle que le site l’envoie",
+        "keepOriginalCodec": "Conserver le codec d’origine",
+        "keepOriginalCodecHint": "Plus rapide, mais certaines vidéos MP4 peuvent ne pas s’ouvrir dans QuickTime",
+        "keepVideoHint": "Pas de conversion du fichier vidéo. Plus rapide, mais le type peut différer de votre choix ci-dessus",
+        "keepAudio": "Garder l’audio tel que le site l’envoie",
+        "keepAudioHint": "Pas de conversion du fichier audio. Plus rapide, mais vous pouvez obtenir du M4A ou de l’Opus au lieu du MP3",
+        "videoAfter": "Après le téléchargement d’une vidéo",
+        "videoAfterHint": "Étape facultative. La plupart des gens la laissent désactivée",
+        "videoAfterOptions": {
+          "none": "Rien",
+          "fps30": "Convertir en 30 images par seconde (lent)",
+          "mp42": "Rendre le MP4 lisible sur les anciens appareils",
+          "custom": "Commande ffmpeg personnalisée"
+        },
+        "audioAfter": "Après le téléchargement de l’audio",
+        "audioAfterHint": "Étape facultative pour les fichiers audio",
+        "customMode": "Quand lancer la commande",
+        "customModeHint": "« Pendant la copie » est rapide. « Pendant la conversion » reconstruit la vidéo et est lent",
+        "customModeOptions": {
+          "remux": "Pendant la copie (rapide)",
+          "reencode": "Pendant la conversion (lent)"
+        },
+        "ffmpegArgs": "Arguments ffmpeg",
+        "ffmpegArgsHint": "Pour les experts. Séparez les arguments par des espaces",
+        "keepConflict": "Cette étape doit convertir la vidéo. Désactivez « Garder la vidéo telle que le site l’envoie » pour l’utiliser",
+        "slowWarning": "Cette étape reconstruit toute la vidéo. Cela peut être long"
+      },
+      "keys": {
+        "title": "Raccourcis clavier",
+        "anywhere": "Partout sur votre ordinateur",
+        "inside": "Dans Nezzel",
+        "globalOn": "Raccourcis partout",
+        "globalOnHint": "Le raccourci Téléchargement rapide fonctionne même dans une autre app, comme votre navigateur",
+        "quick": "Téléchargement rapide",
+        "defaultIs": "Par défaut : {keys}",
+        "paste": "Coller un lien",
+        "pasteHint": "Place un lien copié dans Nezzel. Ce raccourci est fixe",
+        "downloadAll": "Télécharger tout ce qui attend",
+        "addAndDownload": "Ajouter et télécharger maintenant",
+        "addAndDownloadHint": "Télécharge tout de suite le lien copié. Par défaut : {keys}",
+        "resetAll": "Réinitialiser les raccourcis"
+      },
+      "net": {
+        "logins": "Connexions",
+        "loginsHint": "Utiliser la connexion de votre navigateur pour les sites qui demandent un compte",
+        "proxy": "Utiliser un proxy",
+        "proxyHint": "Seulement si un site est bloqué dans votre pays ou votre réseau. Votre app VPN le fait souvent déjà",
+        "proxyAddress": "Adresse du proxy",
+        "proxyExample": "Par exemple socks5://127.0.0.1:1080 ou http://proxy.example.com:8080",
+        "proxyInvalid": "Utilisez la forme schéma://hôte:port, par exemple socks5://127.0.0.1:1080 (http, https, socks4 ou socks5)",
+        "impersonate": "Se présenter comme un navigateur",
+        "impersonateHint": "Certains sites bloquent les apps qui ne ressemblent pas à un navigateur. Laissez désactivé sauf si un site refuse",
+        "impersonateOff": "Désactivé (recommandé)",
+        "impersonateAny": "N’importe quel navigateur"
+      },
+      "perf": {
+        "parallel": "Téléchargements simultanés",
+        "parallelHint": "Plus est plus rapide avec une bonne connexion, mais sollicite davantage votre ordinateur",
+        "pieces": "Morceaux par téléchargement",
+        "piecesHint": "Télécharge plusieurs parties d’un fichier en parallèle. 1 à 4 suffit pour la plupart des connexions",
+        "split": "Séparer les playlists",
+        "splitHint": "Traite chaque vidéo d’une petite playlist comme un téléchargement à part, pour choisir le format de chacune",
+        "size": "Afficher la taille tout de suite",
+        "sizeHint": "Récupère la taille dès qu’un lien est ajouté. Utilise un peu plus de données",
+        "aria2": "Accélérer les fichiers directs (aria2)",
+        "aria2Hint": "Utilise aria2 pour les liens de fichiers simples. Laissez activé sauf en cas d’échec"
+      },
+      "sb": {
+        "note": "YouTube uniquement. Utilise des données communautaires pour sauter ou marquer les messages de sponsors, les intros et les rappels d’abonnement",
+        "remove": "Retirer les passages sponsorisés",
+        "removeHint": "Coupe de la vidéo téléchargée les passages choisis",
+        "choose": "Passages",
+        "chooseButton": "Choisir les passages…",
+        "summary": "{removed} retirés · {marked} marqués en chapitres",
+        "removeGroup": "Retirer de la vidéo",
+        "markGroup": "Marquer en chapitres",
+        "precise": "Coupes précises",
+        "preciseHint": "Plus lent. N’activez que si les coupes tombent mal",
+        "server": "Serveur SponsorBlock",
+        "serverHint": "Ne changez rien, sauf si vous avez votre propre serveur"
+      },
+      "app": {
+        "title": "Application",
+        "notify": "Notifications",
+        "notifyHint": "Quand Nezzel vous prévient qu’un téléchargement est terminé ou a échoué",
+        "updateApp": "Mettre à jour Nezzel automatiquement",
+        "updateAppHint": "Recevez les correctifs et nouveautés dès qu’une version sort",
+        "updateTools": "Mettre à jour les outils automatiquement",
+        "updateToolsHint": "Garde les outils de téléchargement à jour pour que les sites continuent de marcher",
+        "closeToTray": "Continuer quand la fenêtre est fermée",
+        "closeToTrayHint": "Fermer la fenêtre masque Nezzel au lieu de le quitter. Nécessite « Garder Nezzel en arrière-plan » dans Général",
+        "notifyWhich": "Quelles notifications"
+      },
+      "dev": {
+        "title": "Options développeur",
+        "extractor": "Arguments d’extracteur (yt-dlp)",
+        "extractorHint": "Pour le dépannage. Laissez vide sauf si quelqu’un vous dit quoi mettre",
+        "whatsThis": "Qu’est-ce que c’est ?"
+      }
+    }
+  },
+  "capture": {
+    "noFormats": "Ouvrez les options pour examiner ce lien",
+    "views": "{count} vues",
+    "photos": "1 photo | {n} photos",
+    "best": "Meilleure : {quality}",
+    "audio": "Audio",
+    "closeSymbol": "×",
+    "quickBar": "Téléchargement rapide",
+    "copiedLink": "Lien copié",
+    "dismiss": "Fermer",
+    "url": "Lien vidéo ou audio",
+    "downloadBest": "Meilleure qualité",
+    "options": "Options",
+    "loading": "Lecture du lien…",
+    "formats": "Formats disponibles",
+    "automationHint": "Pour lire l’onglet du navigateur, macOS peut demander d’autoriser Nezzel à contrôler votre navigateur. En cas de refus, Nezzel utilise le presse-papiers",
+    "readingBrowser": "Lecture de l’onglet actif…",
+    "failed": "Impossible de lire ce lien. Ouvrez les options pour réessayer",
+    "unsupported": "Ce site n'est pas encore pris en charge",
+    "watchLabel": "Proposer les liens copiés",
+    "watchHint": "Afficher une petite carte pour un lien copié depuis un site pris en charge. Aucun téléchargement sans votre choix",
+    "shortcutLabel": "Raccourci du téléchargement rapide",
+    "shortcutHint": "Ouvre la barre Téléchargement rapide depuis n’importe quelle app",
+    "shortcutFailed": "Impossible d’enregistrer ce raccourci. Choisissez une autre combinaison ; Coller le lien reste disponible dans le menu",
+    "placeholder": "Collez un lien vidéo, audio ou photo",
+    "emptyHint": "Copiez un lien dans votre navigateur, ou collez-le ici",
+    "escCloses": "pour fermer",
+    "stillReading": "Lecture de la page en cours…",
+    "slowHint": "Ce site est lent. Vous pouvez lancer le téléchargement ; Nezzel continue la lecture dans la liste",
+    "actionFailed": "Impossible de lancer le téléchargement. Réessayez",
+    "starting": "Démarrage…",
+    "feedPage": "C'est un fil, pas une publication. Ouvrez une publication, puis copiez son lien"
+  },
+  "shortcut": {
+    "press": "Appuyez sur le nouveau raccourci…",
+    "recordingMac": "Maintenez ⌘ ou ⌥, puis appuyez sur une touche. Échap annule, ⌫ désactive",
+    "recordingPc": "Maintenez Ctrl ou Alt, puis appuyez sur une touche. Échap annule, Retour arrière désactive",
+    "none": "Désactivé",
+    "reset": "Rétablir par défaut",
+    "change": "Cliquer pour modifier",
+    "saved": "Enregistré",
+    "cleared": "Raccourci désactivé",
+    "needsModifierMac": "Utilisez ⌘ ou ⌥ avec une touche",
+    "needsModifierPc": "Utilisez Ctrl ou Alt avec une touche",
+    "taken": "Une autre app utilise ce raccourci. Essayez-en un autre",
+    "wayland": "Les raccourcis depuis d’autres apps ne marchent pas en session Wayland. Ouvrez une session X11, ou ajoutez un raccourci système qui lance {command}",
+    "usingFallback": "{wanted} est déjà pris sur cet ordinateur, le téléchargement rapide utilise donc {active}. Enregistrez-en un autre pour le changer",
+    "reservedMac": "macOS utilise ce raccourci. Essayez-en un autre",
+    "reservedSystem": "Votre système utilise ce raccourci. Essayez-en un autre",
+    "builtIn": "Nezzel utilise déjà ce raccourci. Essayez-en un autre",
+    "usedFor": "Déjà utilisé pour « {action} »"
+  },
+  "perDownload": {
+    "tabsLabel": "Options de ce téléchargement",
+    "advanced": "Avancé",
+    "tabs": {
+      "output": "Fichiers"
+    },
+    "quality": {
+      "type": "Quoi enregistrer",
+      "quality": "Qualité",
+      "qualityHint": "Une qualité plus haute donne un fichier plus lourd",
+      "audioTrackHint": "Choisissez une langue si la vidéo a un doublage",
+      "codecHint": "À changer seulement si le fichier ne se lit pas sur votre appareil"
+    },
+    "output": {
+      "partTitle": "Partie de la vidéo",
+      "partBy": "Choisir la partie par",
+      "partByHint": "Enregistrez toute la vidéo ou seulement une partie",
+      "byTime": "Heure de début et de fin",
+      "byChapter": "Chapitre",
+      "wholeVideo": "Vidéo entière",
+      "fileName": "Modèle du nom de fichier vidéo",
+      "fileNameHint": "Utilise les champs yt-dlp comme %(title)s",
+      "audioFileName": "Modèle du nom de fichier audio",
+      "reverse": "Numéroter la playlist depuis la fin",
+      "reverseHint": "La dernière vidéo de la playlist reçoit le numéro 1",
+      "safeNames": "Noms de fichiers simples",
+      "safeNamesHint": "Remplace les espaces et les symboles comme & pour les anciens systèmes",
+      "precise": "Découpe précise",
+      "preciseHint": "Plus lent, à activer seulement si les coupes tombent mal"
+    },
+    "subtitles": {
+      "empty": "Cette vidéo n’a pas de sous-titres",
+      "languages": "Langues",
+      "all": "Toutes les langues",
+      "allHint": "Tous les sous-titres proposés par cette vidéo",
+      "selected": "Aucune sélection | {n} sélectionnée | {n} sélectionnées",
+      "creator": "Du créateur",
+      "auto": "Générés automatiquement",
+      "noneCreator": "Aucun sous-titre du créateur",
+      "noneAuto": "Aucun sous-titre généré automatiquement",
+      "file": "Fichier de sous-titres",
+      "embed": "Ajouter les sous-titres au fichier vidéo",
+      "embedHint": "Fonctionne avec MP4, MKV et WebM",
+      "format": "Type de fichier",
+      "formatHint": "Si le site ne le propose pas, Nezzel prend le plus proche"
+    },
+    "network": {
+      "note": "Ces changements ne concernent que ce téléchargement",
+      "headers": "En-têtes de requête supplémentaires",
+      "headersHint": "Un par ligne, sous la forme Name: value"
+    }
+  },
+  "folders": {
+    "where": "Emplacement des fichiers",
+    "names": "Noms de fichiers",
+    "video": "Dossier vidéo",
+    "audio": "Dossier audio",
+    "typeHint": "Laissez « Même dossier » pour utiliser Enregistrer dans",
+    "same": "Même dossier",
+    "videoSub": "Sous-dossiers vidéo",
+    "audioSub": "Sous-dossiers audio",
+    "subPattern": "Modèle de sous-dossier",
+    "videoNames": "Noms des fichiers vidéo",
+    "audioNames": "Noms des fichiers audio",
+    "namePattern": "Modèle de nom de fichier",
+    "example": "Par exemple {path}"
+  },
+  "accounts": {
+    "browserTitle": "Connexions du navigateur",
+    "browserHint": "Certains navigateurs ne partagent pas leurs connexions",
+    "alwaysHint": "Les utilise pour tous les sites sans demander",
+    "fileHint": "Pour les sites que vos navigateurs ne partagent pas. Exportez-le avec une extension de navigateur",
+    "noFile": "Aucun fichier",
+    "saved": "Comptes et jetons enregistrés"
+  },
+  "files": {
+    "file": "Fichier",
+    "category": {
+      "document": "Document",
+      "spreadsheet": "Tableur",
+      "presentation": "Présentation",
+      "archive": "Archive",
+      "installer": "Installateur",
+      "diskImage": "Image disque",
+      "data": "Fichier de données",
+      "other": "Fichier"
+    },
+    "withSize": "{category} · {size}",
+    "type": "Type",
+    "size": "Taille",
+    "savedTo": "Enregistré dans",
+    "source": "Source"
+  },
+  "feedback": {
+    "invalidLink": "Cela ne ressemble pas à un lien",
+    "addFailed": "Impossible d’ajouter le lien. Réessayez",
+    "clipboardFailed": "Impossible de lire le presse-papiers",
+    "fileMissing": "Fichier introuvable",
+    "folderFailed": "Impossible d’ouvrir le dossier des téléchargements",
+    "saveFailed": "Impossible d’enregistrer les réglages. Vos modifications sont conservées",
+    "updateDownloadFailed": "Impossible de télécharger la mise à jour",
+    "updateInstallFailed": "Impossible d’installer la mise à jour",
+    "toolsCheckFailed": "Impossible de vérifier les outils de téléchargement",
+    "started": "{n} téléchargements lancés",
+    "paused": "{n} téléchargements en pause",
+    "retrying": "{n} nouvelles tentatives lancées",
+    "batchFailed": "1 action a échoué | {n} actions ont échoué",
+    "removed": "{n} éléments retirés de la liste",
+    "downloadFailed": "Impossible de lancer le téléchargement",
+    "pauseFailed": "Impossible de mettre le téléchargement en pause",
+    "settingFailed": "Impossible d’enregistrer ce réglage. Il est revenu à sa valeur précédente",
+    "folderPickFailed": "Impossible d’ouvrir le sélecteur de dossier"
+  },
+  "datePicker": {
+    "placeholder": "Choisir une date",
+    "clear": "Effacer la date",
+    "prevMonth": "Mois précédent",
+    "nextMonth": "Mois suivant",
+    "month": "Mois",
+    "year": "Année"
+  },
+  "welcome": {
+    "title": "Enregistrez vidéos, sons, photos et fichiers",
+    "lead": "Copiez un lien n’importe où : une petite carte propose de l’enregistrer, même fenêtre fermée",
+    "leadFocus": "Copiez un lien n’importe où, revenez dans Nezzel et une petite carte propose de l’enregistrer",
+    "card": {
+      "label": "Afficher une carte quand je copie un lien",
+      "help": "Nezzel repère les liens qu’il sait enregistrer et ne garde rien de ce que vous copiez",
+      "helpFocus": "Sur ce bureau, la carte s’affiche quand vous revenez dans Nezzel après la copie. Nezzel ne garde rien de ce que vous copiez"
+    },
+    "start": {
+      "label": "Lancer avec mon ordinateur",
+      "help": "S’ouvre en arrière-plan dans {place} à la connexion"
+    },
+    "place": {
+      "mac": "la barre des menus",
+      "windows": "la zone de notification",
+      "linux": "la barre du haut"
+    },
+    "privacy": "Aucun compte ni publicité. Vous pouvez désactiver les rapports à tout moment",
+    "getStarted": "Commencer",
+    "later": "Modifiable ensuite dans les Réglages",
+    "steps": {
+      "copy": "Copiez un lien",
+      "card": "La carte apparaît",
+      "save": "Enregistrez"
+    },
+    "try": {
+      "label": "Essayez : copiez ce lien",
+      "off": "Activez la carte pour essayer",
+      "copy": "Copier",
+      "copied": "Copié",
+      "failed": "Impossible de copier le lien"
+    },
+    "shortcut": {
+      "label": "Téléchargement rapide depuis n’importe quelle app",
+      "help": "Copiez un lien n’importe où, puis appuyez sur {keys}",
+      "taken": "Raccourci déjà pris par une autre app, choisissez le vôtre",
+      "skip": "Passer",
+      "later": "Définissez un raccourci à tout moment dans les Réglages"
+    },
+    "replay": "Revoir",
+    "demoAlt": "Démo : un lien est copié dans le navigateur, la carte Nezzel apparaît près de son icône, et Enregistrer place la vidéo dans {folder}",
+    "demo": {
+      "videoTitle": "Faire son pain à la maison",
+      "channel": "La cuisine de Mariem",
+      "meta": "YouTube · 12:04",
+      "quality": "Vidéo · 1080p",
+      "save": "Enregistrer",
+      "saved": "Dans {folder}",
+      "copied": "Copié",
+      "file": "Fichier",
+      "edit": "Édition",
+      "view": "Présentation",
+      "clock": "mar. 9:41",
+      "clockGnome": "4 nov.  9:41",
+      "activities": "Activités"
+    }
+  },
+  "closeNote": {
+    "title": "Nezzel tourne toujours",
+    "body": "La carte s’affiche toujours quand vous copiez un lien, et cette icône rouvre Nezzel",
+    "hintWindows": "Elle est sous {chev} près de l’horloge. Glissez-la dans la barre des tâches pour la garder visible",
+    "hintLinux": "Pas d’icône dans la barre du haut ? Ouvrez Nezzel depuis Activités",
+    "quit": "Quitter Nezzel",
+    "gotIt": "Compris"
+  },
+  "report": {
+    "title": "Signaler un problème",
+    "open": "Signaler un problème",
+    "aboutHelp": "Dites-nous ce qui ne va pas. Nous ajoutons les détails techniques",
+    "rowAction": "Signaler un problème",
+    "downloadTitle": "Signaler ce téléchargement échoué",
+    "lead": "Dites-nous ce qui s'est passé si vous le souhaitez. Nous ajoutons les détails techniques pour le corriger",
+    "noteLabel": "Ce qui ne va pas (facultatif)",
+    "notePlaceholder": "Par exemple : la vidéo a été enregistrée sans le son",
+    "includeLink": "Inclure le lien",
+    "includeLinkHelp": "Nous aide à reproduire le problème. Décoché, nous ne recevons que le site",
+    "never": "N'inclut jamais vos fichiers, dossiers, cookies ni noms de compte",
+    "cancel": "Annuler",
+    "send": "Envoyer le rapport",
+    "sending": "Envoi…",
+    "sent": "Merci, votre rapport a été envoyé",
+    "sendFailed": "Impossible d'envoyer le rapport",
+    "copyDetails": "Copier les détails",
+    "copied": "Détails copiés",
+    "copyFailed": "Impossible de copier les détails",
+    "crashTitle": "Nezzel s'est fermé de façon inattendue la dernière fois",
+    "crashSent": "Nezzel s'est fermé de façon inattendue la dernière fois. Un rapport a été envoyé pour corriger cela",
+    "sendCrash": "Envoyer le rapport",
+    "setting": {
+      "label": "Envoyer les rapports de plantage et d'erreur",
+      "help": "Nous aide à corriger les bugs. Envoie la version de l'app, votre système, l'erreur et le site, jamais vos fichiers, cookies ni noms de compte",
+      "welcomeHelp": "Nous aide à corriger les bugs. Jamais vos fichiers ni vos comptes"
+    },
+    "notice": {
+      "text": "Les rapports de plantage et d'erreur sont désormais activés. Ils nous aident à corriger les bugs et n'incluent jamais vos fichiers ni vos comptes",
+      "action": "Réglages"
+    }
+  }
+}

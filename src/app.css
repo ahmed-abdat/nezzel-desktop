@@ -1,0 +1,474 @@
+@import "tailwindcss";
+@import "./assets/fonts/fonts.css";
+@import "tw-animate-css";
+@plugin "daisyui" {
+    logs: false;
+    exclude: properties;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Nezzel design tokens. ONE place for colour, type, space, radius, depth, motion.
+   Reasons for every value: DESIGN.md. Colour family: the Android app's teal scheme.
+   `--nz-*` are ours; the daisyUI `--color-*` names are mapped onto them so the few
+   power-user screens still built from daisyUI parts match the rest of the app.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+@plugin "daisyui/theme" {
+    name: light;
+    default: true;
+    prefersdark: false;
+    color-scheme: light;
+
+    /* Rail: deep teal ink, the brand anchor. */
+    --nz-rail: #00352E;
+    --nz-rail-ink: #D3ECE6;
+    --nz-rail-muted: #8DB8AF;
+    --nz-rail-hover: rgb(255 255 255 / 0.07);
+    --nz-rail-active: #A6F1E1;
+    --nz-rail-active-ink: #00201B;
+
+    /* Content surfaces. */
+    --nz-page: #F4FAF7;
+    --nz-raised: #FFFFFF;
+    --nz-sunken: #E9F1EE;
+    --nz-line: #D8E3DF;
+    --nz-line-strong: #B9C7C2;
+    --nz-ink: #161D1B;
+    --nz-muted: #56625E;
+
+    /* Brand action. */
+    --nz-primary: #006B5E;
+    --nz-primary-hover: #005A4F;
+    --nz-on-primary: #FFFFFF;
+    --nz-primary-soft: #D2EFE8;
+    --nz-wash: rgb(0 107 94 / 0.075);
+
+    /* "Needs you" (amber) and "failed" (red). Soft ground + ink pairs, AA on each other. */
+    --nz-amber-soft: #FDF0DA;
+    --nz-amber-ink: #63430C;
+    --nz-amber: #B07A1F;
+    --nz-danger-soft: #FCE8E5;
+    --nz-danger-ink: #8C1D18;
+    --nz-danger: #BA1A1A;
+
+    --nz-scrim: rgb(9 20 18 / 0.32);
+    --nz-shadow-sheet: 0 -12px 40px rgb(0 30 25 / 0.14), 0 -1px 0 rgb(0 30 25 / 0.04);
+    --nz-shadow-float: 0 10px 30px rgb(0 30 25 / 0.16), 0 1px 3px rgb(0 30 25 / 0.08);
+    --nz-focus: #006B5E;
+
+    /* shadcn-vue tokens (C2 "native library", owner-approved prototype 2026-11-02). */
+    --background: #FAFCFB;
+    --foreground: #0E1614;
+    --card: #FFFFFF;
+    --popover: #FFFFFF;
+    --muted: #F1F5F4;
+    --muted-foreground: #5C6966;
+    --accent: #ECF3F1;
+    --nz-border: #E2E9E7;
+    --hairline: #E6ECEA;
+    --input: #D9E2DF;
+    --ring: #006B5E;
+    --primary: #006B5E;
+    --primary-hover: #005C51;
+    --primary-foreground: #FFFFFF;
+    --primary-soft: #E3F4F0;
+    --primary-soft-foreground: #00514A;
+    --amber-soft: #FEF5E6;
+    --amber-border: #F4DDB0;
+    --amber-foreground: #6B4A10;
+    --destructive: #C42B1C;
+    --destructive-soft: #FDEEEC;
+    --destructive-border: #F5CFC9;
+    --destructive-foreground: #8C1D18;
+    --sidebar: #F1F4F3;
+    --scrim: rgb(8 14 13 / 0.4);
+    --nz-shadow-xs: 0 1px 2px rgb(14 22 20 / 0.05);
+    --nz-shadow-lg: 0 24px 48px -12px rgb(14 22 20 / 0.22), 0 0 0 1px rgb(14 22 20 / 0.04);
+
+    /* daisyUI mapping */
+    --color-base-100: #FFFFFF;
+    --color-base-200: #F4FAF7;
+    --color-base-300: #D8E3DF;
+    --color-base-content: #161D1B;
+    --color-primary: #006B5E;
+    --color-primary-content: #FFFFFF;
+    --color-secondary: #4A635E;
+    --color-secondary-content: #FFFFFF;
+    --color-accent: #7A5520;
+    --color-accent-content: #FFFFFF;
+    --color-neutral: #E9F1EE;
+    --color-neutral-content: #161D1B;
+    --color-info: #2E6A8E;
+    --color-info-content: #FFFFFF;
+    --color-success: #2E7D4F;
+    --color-success-content: #FFFFFF;
+    --color-warning: #E5A13A;
+    --color-warning-content: #2A1800;
+    --color-error: #BA1A1A;
+    --color-error-content: #FFFFFF;
+    --radius-selector: 0.5rem;
+    --radius-field: 0.5rem;
+    --radius-box: 0.75rem;
+    --size-selector: 0.25rem;
+    --size-field: 0.25rem;
+    --border: 1px;
+    --depth: 0;
+    --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+    name: dark;
+    prefersdark: true;
+    color-scheme: dark;
+
+    --nz-rail: #062C27;
+    --nz-rail-ink: #CFE9E2;
+    --nz-rail-muted: #86AFA6;
+    --nz-rail-hover: rgb(255 255 255 / 0.06);
+    --nz-rail-active: #A6F1E1;
+    --nz-rail-active-ink: #00201B;
+
+    --nz-page: #0D1412;
+    --nz-raised: #151C1A;
+    --nz-sunken: #1A2220;
+    --nz-line: #26302D;
+    --nz-line-strong: #3A4643;
+    --nz-ink: #DDE5E2;
+    --nz-muted: #98A6A1;
+
+    --nz-primary: #7FD6C4;
+    --nz-primary-hover: #9BE3D3;
+    --nz-on-primary: #00332C;
+    --nz-primary-soft: #133B35;
+    --nz-wash: rgb(127 214 196 / 0.07);
+
+    --nz-amber-soft: #352610;
+    --nz-amber-ink: #F6D7A6;
+    --nz-amber: #E2AE5C;
+    --nz-danger-soft: #3A1714;
+    --nz-danger-ink: #FFC3BB;
+    --nz-danger: #FFB4AB;
+
+    --nz-scrim: rgb(0 0 0 / 0.5);
+    --nz-shadow-sheet: 0 -12px 40px rgb(0 0 0 / 0.45), 0 -1px 0 rgb(255 255 255 / 0.04);
+    --nz-shadow-float: 0 10px 30px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.3);
+    --nz-focus: #7FD6C4;
+
+    /* shadcn-vue tokens, dark. */
+    --background: #0A0F0E;
+    --foreground: #E7EEEC;
+    --card: #111816;
+    --popover: #141C1A;
+    --muted: #18211F;
+    --muted-foreground: #92A19D;
+    --accent: #1C2624;
+    --nz-border: #222D2A;
+    --hairline: #1E2826;
+    --input: #2A3633;
+    --ring: #4FD8C2;
+    --primary: #4FD8C2;
+    --primary-hover: #6FE3D0;
+    --primary-foreground: #00201B;
+    --primary-soft: #0F2A26;
+    --primary-soft-foreground: #8DEBDB;
+    --amber-soft: #2A1F0E;
+    --amber-border: #4A3716;
+    --amber-foreground: #F6D49A;
+    --destructive: #FF8A7E;
+    --destructive-soft: #2B1311;
+    --destructive-border: #4C211D;
+    --destructive-foreground: #FFB4AB;
+    --sidebar: #0D1312;
+    --scrim: rgb(0 0 0 / 0.55);
+    --nz-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+    --nz-shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.05);
+
+    --color-base-100: #151C1A;
+    --color-base-200: #0D1412;
+    --color-base-300: #26302D;
+    --color-base-content: #DDE5E2;
+    --color-primary: #7FD6C4;
+    --color-primary-content: #00332C;
+    --color-secondary: #B1CCC5;
+    --color-secondary-content: #1C3530;
+    --color-accent: #ECBF83;
+    --color-accent-content: #432C00;
+    --color-neutral: #1A2220;
+    --color-neutral-content: #DDE5E2;
+    --color-info: #8ECDF0;
+    --color-info-content: #00344C;
+    --color-success: #8BD6A3;
+    --color-success-content: #00391C;
+    --color-warning: #ECBF83;
+    --color-warning-content: #432C00;
+    --color-error: #FFB4AB;
+    --color-error-content: #690005;
+    --radius-selector: 0.5rem;
+    --radius-field: 0.5rem;
+    --radius-box: 0.75rem;
+    --size-selector: 0.25rem;
+    --size-field: 0.25rem;
+    --border: 1px;
+    --depth: 0;
+    --noise: 0;
+}
+
+/* Tailwind `dark:` follows the app theme: forced dark, or system dark when no theme is forced. */
+@custom-variant dark {
+    &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
+    @media (prefers-color-scheme: dark) { &:where(body:not([data-theme]) *) { @slot; } }
+}
+
+@theme inline {
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-popover: var(--popover);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-border: var(--nz-border);
+    --color-hairline: var(--hairline);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+    --color-primary: var(--primary);
+    --color-primary-hover: var(--primary-hover);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary-soft: var(--primary-soft);
+    --color-primary-soft-foreground: var(--primary-soft-foreground);
+    --color-amber-soft: var(--amber-soft);
+    --color-amber-border: var(--amber-border);
+    --color-amber-foreground: var(--amber-foreground);
+    --color-destructive: var(--destructive);
+    --color-destructive-soft: var(--destructive-soft);
+    --color-destructive-border: var(--destructive-border);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-sidebar: var(--sidebar);
+    --shadow-xs: var(--nz-shadow-xs);
+    --shadow-lg: var(--nz-shadow-lg);
+}
+
+/* Theme-independent tokens. */
+:root {
+    /* Type scale (Latin). Arabic overrides below: same roles, one step more air. */
+    --nz-fs-caption: 0.75rem;   /* 12 */
+    --nz-fs-meta: 0.8125rem;    /* 13 */
+    --nz-fs-body: 0.875rem;     /* 14 */
+    --nz-fs-title: 0.9375rem;   /* 15 row titles */
+    --nz-fs-heading: 1.125rem;  /* 18 page headings */
+    --nz-fs-display: 1.375rem;  /* 22 empty state */
+    --nz-lh-body: 1.45;
+    --nz-lh-tight: 1.25;
+
+    /* Radius: controls < surfaces < sheet. */
+    --nz-r-control: 0.5rem;   /* 8 */
+    --nz-r-surface: 0.75rem;  /* 12 */
+    --nz-r-sheet: 1.25rem;    /* 20 */
+
+    /* Motion: short, decelerating; off under reduced motion. */
+    --nz-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --nz-dur-fast: 120ms;
+    --nz-dur: 180ms;
+    --nz-dur-sheet: 260ms;
+
+    --nz-rail-width: 13.5rem;
+}
+
+[dir="rtl"] {
+    --nz-fs-caption: 0.8125rem;
+    --nz-fs-meta: 0.875rem;
+    --nz-fs-body: 0.9375rem;
+    --nz-fs-title: 1rem;
+    --nz-fs-heading: 1.25rem;
+    --nz-fs-display: 1.5rem;
+    --nz-lh-body: 1.7;
+    --nz-lh-tight: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --nz-dur-fast: 0ms;
+        --nz-dur: 0ms;
+        --nz-dur-sheet: 0ms;
+    }
+}
+
+@theme {
+    --font-sans: "Inter", "IBM Plex Sans Arabic", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-arabic: "IBM Plex Sans Arabic", "Inter", ui-sans-serif, system-ui, sans-serif;
+
+    --color-nz-rail: var(--nz-rail);
+    --color-nz-rail-ink: var(--nz-rail-ink);
+    --color-nz-rail-muted: var(--nz-rail-muted);
+    --color-nz-rail-hover: var(--nz-rail-hover);
+    --color-nz-rail-active: var(--nz-rail-active);
+    --color-nz-rail-active-ink: var(--nz-rail-active-ink);
+    --color-nz-page: var(--nz-page);
+    --color-nz-raised: var(--nz-raised);
+    --color-nz-sunken: var(--nz-sunken);
+    --color-nz-line: var(--nz-line);
+    --color-nz-line-strong: var(--nz-line-strong);
+    --color-nz-ink: var(--nz-ink);
+    --color-nz-muted: var(--nz-muted);
+    --color-nz-primary: var(--nz-primary);
+    --color-nz-primary-hover: var(--nz-primary-hover);
+    --color-nz-on-primary: var(--nz-on-primary);
+    --color-nz-primary-soft: var(--nz-primary-soft);
+    --color-nz-amber-soft: var(--nz-amber-soft);
+    --color-nz-amber-ink: var(--nz-amber-ink);
+    --color-nz-amber: var(--nz-amber);
+    --color-nz-danger-soft: var(--nz-danger-soft);
+    --color-nz-danger-ink: var(--nz-danger-ink);
+    --color-nz-danger: var(--nz-danger);
+
+    --text-nz-caption: var(--nz-fs-caption);
+    --text-nz-meta: var(--nz-fs-meta);
+    --text-nz-body: var(--nz-fs-body);
+    --text-nz-title: var(--nz-fs-title);
+    --text-nz-heading: var(--nz-fs-heading);
+    --text-nz-display: var(--nz-fs-display);
+
+    --radius-nz-control: var(--nz-r-control);
+    --radius-nz-surface: var(--nz-r-surface);
+    --radius-nz-sheet: var(--nz-r-sheet);
+
+    --ease-nz: var(--nz-ease);
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+
+html, body, #app {
+    height: 100%;
+}
+
+/* Capture panels: the native window is transparent; the panel draws its own rounded surface. */
+html.nz-capture, html.nz-capture body, html.nz-capture #app {
+    background: transparent;
+}
+
+body {
+    background: var(--nz-page);
+    color: var(--nz-ink);
+    font-size: var(--nz-fs-body);
+    line-height: var(--nz-lh-body);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Arabic: its own face first, never tracked (breaks the cursive joins). */
+[dir="rtl"] body {
+    font-family: var(--font-arabic);
+    letter-spacing: 0;
+}
+
+::selection {
+    background: color-mix(in oklab, var(--nz-primary) 28%, transparent);
+    color: var(--nz-ink);
+}
+
+/* In the base layer so a component's own focus style (outline-none + ring/background) wins. */
+@layer base {
+    :focus-visible {
+        outline: 2px solid var(--nz-focus);
+        outline-offset: 2px;
+    }
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--nz-line-strong) transparent;
+}
+
+input, textarea {
+    caret-color: var(--nz-primary);
+}
+
+a {
+    text-underline-offset: 0.2em;
+}
+
+/* daisyUI's join sets corners with the physical border-radius shorthand; map its vars to
+   logical corners so joined groups mirror in RTL (power-user screens still use join). */
+[dir="rtl"] .join-item {
+    border-radius: 0;
+    border-start-start-radius: var(--join-ss);
+    border-start-end-radius: var(--join-se);
+    border-end-end-radius: var(--join-ee);
+    border-end-start-radius: var(--join-es);
+}
+
+/* Progress fills tinted toward the surface so labels stay readable (daisyUI progress, power screens). */
+.progress.progress-primary { color: color-mix(in oklab, var(--color-primary) 40%, var(--color-base-100)); }
+.progress.progress-warning { color: color-mix(in oklab, var(--color-warning) 55%, var(--color-base-100)); }
+.progress.progress-error { color: color-mix(in oklab, var(--color-error) 35%, var(--color-base-100)); }
+
+/* Quiet secondary daisyUI button, used by the remaining power-user screens. */
+.btn.btn-subtle {
+    --btn-color: var(--nz-sunken);
+    --btn-fg: var(--nz-ink);
+    --btn-border: var(--nz-line);
+    --btn-shadow: none;
+}
+
+::-ms-reveal {
+    display: none;
+}
+
+input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Meta-line separator: a drawn dot, outside every bidi run, so it never doubles or drifts in RTL. */
+.nz-sep {
+    display: inline-block;
+    width: 3px;
+    height: 3px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.55;
+    align-self: center;
+    flex-shrink: 0;
+}
+
+/* Bidi helper: Latin runs (sizes, codecs, URLs) inside Arabic sentences. */
+.nz-ltr {
+    direction: ltr;
+    unicode-bidi: isolate;
+}
+
+/* Modal scrim. ::backdrop does not see the theme's custom properties, so --scrim's values are spelled out here. */
+dialog::backdrop { background-color: rgb(8 14 13 / 0.4); }
+@media (prefers-color-scheme: dark) { body:not([data-theme]) dialog::backdrop { background-color: rgb(0 0 0 / 0.55); } }
+[data-theme="dark"] dialog::backdrop { background-color: rgb(0 0 0 / 0.55); }
+
+/* Power-user screens still built from daisyUI parts (Advanced settings, per-download settings,
+   link filters): give their controls the same field language as the Nz components. */
+.select, .input, .textarea {
+    background-color: var(--nz-sunken);
+    border-color: var(--nz-line);
+    color: var(--nz-ink);
+    font-size: var(--nz-fs-body);
+    box-shadow: none;
+}
+.select:hover, .input:hover, .textarea:hover { border-color: var(--nz-line-strong); }
+.select:focus, .select:focus-within, .input:focus, .input:focus-within, .textarea:focus {
+    outline: 2px solid color-mix(in oklab, var(--nz-primary) 40%, transparent);
+    outline-offset: 0;
+    border-color: var(--nz-primary);
+}
+.select-primary { border-color: var(--nz-line); }
+.toggle:checked { --input-color: var(--nz-primary); background-color: var(--nz-primary); border-color: var(--nz-primary); color: var(--nz-on-primary); }
+.checkbox:checked, .radio:checked { --input-color: var(--nz-primary); }
+.tabs-box { background: var(--nz-sunken); border: 1px solid var(--nz-line); border-radius: calc(var(--nz-r-control) + 0.1875rem); box-shadow: none; }
+.tabs-box .tab { border-radius: var(--nz-r-control); font-weight: 600; font-size: var(--nz-fs-meta); color: var(--nz-muted); }
+.tabs-box .tab-active, .tabs-box .tab:is(input:checked) { background: var(--nz-raised); color: var(--nz-ink); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); border: 0; }
+.fieldset-legend, .label { color: var(--nz-muted); }
+.collapse { border-radius: var(--nz-r-surface); border-color: var(--nz-line); }

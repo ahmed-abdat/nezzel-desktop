@@ -1,0 +1,74 @@
+{
+  "tray": {
+    "pasteLink": "Paste link",
+    "activeDownloads": "Active downloads: {n}",
+    "quit": "Quit",
+    "showOrHide": "Show/Hide Window",
+    "addToQueue": "Add from clipboard",
+    "addAndDownload": "Add and download from clipboard",
+    "downloadQueue": "Download queue",
+    "shortcuts": {
+      "ctrlShiftV": "Ctrl + Shift + V",
+      "ctrlShiftD": "Ctrl + Shift + D",
+      "ctrlShiftEnter": "Ctrl + Shift + Enter",
+      "altShiftV": "Alt + Shift + V",
+      "altShiftD": "Alt + Shift + D",
+      "altShiftEnter": "Alt + Shift + Enter"
+    }
+  },
+  "notifications": {
+    "queueAdded": {
+      "title": "Added to queue",
+      "body": "{title}"
+    },
+    "queueDownloading": {
+      "title": "Downloading queue",
+      "body": "Downloading {n} item | Downloading {n} items"
+    },
+    "queueFinished": {
+      "title": "Queue finished",
+      "body": "Finished downloading {n} item | Finished downloading {n} items"
+    },
+    "videoFinished": {
+      "title": "Saved",
+      "body": "{title}"
+    },
+    "playlistFinished": {
+      "title": "Playlist finished",
+      "body": "{title}"
+    },
+    "videoReady": {
+      "title": "Ready to download",
+      "body": "{title}"
+    },
+    "playlistReady": {
+      "title": "Playlist ready to download",
+      "body": "{title} | {title} ({n} item) | {title} ({n} items)"
+    },
+    "downloadFailed": {
+      "title": "Download failed",
+      "body": "{title}\n{message}"
+    }
+  },
+  "resolve": {
+    "photosOnly": "This post has photos, not a video. Photo downloads are coming soon."
+  },
+  "files": {
+    "errors": {
+      "fileNotPublic": "This file isn't shared publicly. Ask the owner to share it with anyone who has the link.",
+      "fileRateLimited": "This site is limiting downloads right now. Try again later.",
+      "fileCancelled": "Download paused.",
+      "fileAddressRefused": "This file link cannot be reached safely. Use a public HTTP or HTTPS link.",
+      "fileNetwork": "The download was interrupted. Try resuming it, or copy a fresh link.",
+      "fileEncoding": "The server changed how it sends this file. Try another download link.",
+      "fileState": "The saved download could not be verified. Choose another folder to start again.",
+      "fileBusy": "This file is already downloading. Wait for it to finish.",
+      "fileIo": "The file could not be saved. Check the folder and available space, then try again.",
+      "fileChanged": "The file changed on the server. Try the download again.",
+      "fileNotFile": "The site sent a page instead of the file. Copy a fresh direct download link.",
+      "fileEmpty": "The server sent an empty file. Try another download link.",
+      "fileSpace": "There is not enough space for this file. Free some space or choose another folder.",
+      "fileProxy": "File downloads cannot use this proxy safely yet. Turn off the proxy to download this file."
+    }
+  }
+}

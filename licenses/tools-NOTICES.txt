@@ -1,0 +1,36 @@
+NEZZEL INSTALLER TOOLS
+
+The installer ships separate, unlinked executable programs. Pinned versions,
+asset URLs and SHA-256 values: src-tauri/src/binaries/manifest.json.
+Build recipe: scripts/fetch-tools.py. App-data updates/repairs keep their own
+verified copies; the installed tool directory is never modified at runtime.
+
+FFmpeg / ffprobe
+All pinned builds use GPLv3 (--enable-gpl --enable-version3), without
+--enable-nonfree. They are GPL builds, not LGPL-only builds.
+macOS ARM64 / Intel: FFmpeg 9.0.2, built and signed by Martin Riedl.
+Build/distribution: https://ffmpeg.martin-riedl.de/
+Linux x64 / ARM64 and Windows x64 / ARM64: N-128280-ga88838af48 from
+https://github.com/yt-dlp/FFmpeg-Builds/releases/tag/autobuild-2026-11-01-19-06
+Build recipes: https://github.com/yt-dlp/FFmpeg-Builds
+GPL source is available from the upstream release/source links:
+https://github.com/FFmpeg/FFmpeg/tree/n9.0.2
+https://github.com/FFmpeg/FFmpeg/tree/a88838af48
+Corresponding GPL source and build information for the shipped binaries
+accompany Nezzel releases. The per-platform version, URL and SHA-256 are
+recorded in the manifest. scripts/ffmpeg-COPYING.GPLv3 is reproduced below.
+The former nonfree macOS ARM64 hashes remain explicitly rejected by the fetcher.
+
+Deno v2.9.8
+Copyright 2018-2026 the Deno authors. MIT; scripts/deno-LICENSE included below.
+Corresponding source: https://github.com/denoland/deno/tree/v2.9.8
+Third-party source/credits: https://github.com/denoland/deno/tree/v2.9.8/third_party
+
+The yt-dlp source uses the Unlicense, but the pinned PyInstaller onedir release
+contains GPLv3+ components and the combined executable is GPL-3.0-or-later.
+Corresponding source: https://github.com/yt-dlp/yt-dlp/tree/2026.10.26
+Build recipe: that tag's bundle/pyinstaller.py and pinned dependency lock files.
+The bundled Python runtime and other component licences are reproduced in
+scripts/yt-dlp-bundled-NOTICES.txt and in the onedir _internal/THIRD_PARTY_LICENSES.txt.
+See the upstream release README licensing section; do not label the complete
+bundled executable as Unlicense-only.

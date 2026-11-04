@@ -1,0 +1,10 @@
+{
+  "aarch64-apple-darwin": {
+    "sha256": "41ff8e6794e5120bd6857b20d9d78e7ffb3ed703a9cee4ea3fdf58850407cab5",
+    "recipe": "1.37.0 native AppleTLS, system-only dynamic dependencies; rebuilt artifacts may differ with compiler/debug paths"
+  },
+  "x86_64-pc-windows-msvc": {
+    "sha256": "be2099c214f63a3cb4954b09a0becd6e2e34660b886d4c898d260febfe9d70c2",
+    "recipe": "Unmodified official 1.37.0 win-64bit-build1 zip"
+  }
+}

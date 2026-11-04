@@ -1,0 +1,74 @@
+{
+  "tray": {
+    "pasteLink": "لصق الرابط",
+    "activeDownloads": "التنزيلات النشطة: {n}",
+    "quit": "إنهاء",
+    "showOrHide": "إظهار/إخفاء النافذة",
+    "addToQueue": "إضافة من الحافظة",
+    "addAndDownload": "إضافة وتنزيل من الحافظة",
+    "downloadQueue": "تنزيل قائمة الانتظار",
+    "shortcuts": {
+      "ctrlShiftV": "Ctrl + Shift + V",
+      "ctrlShiftD": "Ctrl + Shift + D",
+      "ctrlShiftEnter": "Ctrl + Shift + Enter",
+      "altShiftV": "Alt + Shift + V",
+      "altShiftD": "Alt + Shift + D",
+      "altShiftEnter": "Alt + Shift + Enter"
+    }
+  },
+  "notifications": {
+    "queueAdded": {
+      "title": "تمت الإضافة إلى قائمة الانتظار",
+      "body": "{title}"
+    },
+    "queueDownloading": {
+      "title": "جارٍ تنزيل قائمة الانتظار",
+      "body": "جارٍ تنزيل {n} عنصر | جارٍ تنزيل {n} عناصر"
+    },
+    "queueFinished": {
+      "title": "اكتملت قائمة الانتظار",
+      "body": "اكتمل تنزيل {n} عنصر | اكتمل تنزيل {n} عناصر"
+    },
+    "videoFinished": {
+      "title": "تم الحفظ",
+      "body": "{title}"
+    },
+    "playlistFinished": {
+      "title": "اكتملت قائمة التشغيل",
+      "body": "{title}"
+    },
+    "videoReady": {
+      "title": "جاهز للتنزيل",
+      "body": "{title}"
+    },
+    "playlistReady": {
+      "title": "قائمة التشغيل جاهزة للتنزيل",
+      "body": "{title} | {title} ({n} عنصر) | {title} ({n} عناصر)"
+    },
+    "downloadFailed": {
+      "title": "فشل التنزيل",
+      "body": "{title}\n{message}"
+    }
+  },
+  "resolve": {
+    "photosOnly": "يحتوي هذا المنشور على صور وليس فيديو. تنزيل الصور سيتوفر قريبًا."
+  },
+  "files": {
+    "errors": {
+      "fileNotPublic": "هذا الملف غير متاح للعامة. اطلب من مالكه إتاحته لكل من لديه الرابط.",
+      "fileRateLimited": "يحد هذا الموقع من التنزيلات حاليا. حاول مرة أخرى لاحقا.",
+      "fileCancelled": "تم إيقاف التنزيل مؤقتا.",
+      "fileAddressRefused": "لا يمكن الوصول إلى رابط الملف بأمان. استخدم رابط HTTP أو HTTPS عاما.",
+      "fileNetwork": "انقطع التنزيل. حاول استئنافه أو انسخ رابطا جديدا.",
+      "fileEncoding": "غيّر الخادم طريقة إرسال الملف. جرّب رابط تنزيل آخر.",
+      "fileState": "تعذر التحقق من التنزيل المحفوظ. اختر مجلدا آخر للبدء من جديد.",
+      "fileBusy": "هذا الملف قيد التنزيل بالفعل. انتظر حتى يكتمل.",
+      "fileIo": "تعذر حفظ الملف. تحقق من المجلد والمساحة المتاحة ثم أعد المحاولة.",
+      "fileChanged": "تغيّر الملف على الخادم. أعد محاولة التنزيل.",
+      "fileNotFile": "أرسل الموقع صفحة بدلا من الملف. انسخ رابط تنزيل مباشر جديدا.",
+      "fileEmpty": "أرسل الخادم ملفا فارغا. جرّب رابط تنزيل آخر.",
+      "fileSpace": "لا توجد مساحة كافية لهذا الملف. وفر مساحة أو اختر مجلدا آخر.",
+      "fileProxy": "لا يمكن تنزيل الملفات عبر هذا الوكيل بأمان بعد. عطّل الوكيل لتنزيل هذا الملف."
+    }
+  }
+}

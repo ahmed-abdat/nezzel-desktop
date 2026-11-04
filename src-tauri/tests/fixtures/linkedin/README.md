@@ -1,0 +1,1 @@
+Sanitized Android LinkedInPostAttachmentParser fixtures: discussion-forum-post.html copied from engine/src/test/resources/linkedin; multi/share/overflow preserve shapes from LinkedInParserTest, LinkedInSharePostTest and LinkedInOverflowGridTest. No personal media or live tokens. Android rejects document-only posts.

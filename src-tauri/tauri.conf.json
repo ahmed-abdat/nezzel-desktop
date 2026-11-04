@@ -1,0 +1,109 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nezzel",
+  "mainBinaryName": "nezzel",
+  "version": "0.1.0-beta.1",
+  "identifier": "dev.ahmed.nezzel",
+  "build": {
+    "beforeDevCommand": "python3 scripts/fetch-aria2.py && python3 scripts/fetch-gallery-dl.py --allow-unavailable && python3 scripts/fetch-tools.py && pnpm run build:isolation && pnpm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "python3 scripts/fetch-aria2.py && python3 scripts/fetch-gallery-dl.py && python3 scripts/fetch-tools.py && pnpm run build && pnpm run licenses",
+    "frontendDist": "../dist",
+    "beforeBundleCommand": "python3 scripts/fetch-tools.py --sign-macos"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "create": false,
+        "title": "Nezzel",
+        "width": 800,
+        "minWidth": 750,
+        "height": 900,
+        "minHeight": 650,
+        "visible": false,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "capabilities": [
+        "default",
+        "capture"
+      ],
+      "pattern": {
+        "use": "isolation",
+        "options": {
+          "dir": "../dist-isolation"
+        }
+      },
+      "csp": {
+        "default-src": "'self' asset:",
+        "connect-src": "ipc: http://ipc.localhost https://*.sentry.io",
+        "img-src": "'self' asset: http://asset.localhost blob: data: http: https:",
+        "style-src": "'self'",
+        "font-src": "'self'",
+        "frame-ancestors": "'none'"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "externalBin": ["binaries/aria2c", "binaries/gallery-dl", "binaries/ffmpeg", "binaries/ffprobe", "binaries/deno"],
+    "createUpdaterArtifacts": true,
+    "targets": [
+      "nsis",
+      "app",
+      "dmg",
+      "appimage",
+      "deb",
+      "rpm"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../licenses/3rdpartylicenses.txt": "licenses/3rdpartylicenses.txt",
+      "binaries/gallery-dl.sha256": "gallery-dl.sha256",
+      "binaries/tools/yt-dlp/": "tools/yt-dlp/"
+    },
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "signingIdentity": "Developer ID Application",
+      "bundleVersion": "0.1.0"
+    },
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": true,
+        "languages": [
+          "English",
+          "Spanish",
+          "Italian",
+          "Dutch",
+          "French",
+          "German",
+          "Norwegian",
+          "Russian",
+          "PortugueseBR",
+          "TradChinese",
+          "Turkish",
+          "Arabic"
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzRTUyQzRBMTlBRDg3RDcKUldUWGg2MFpTaXpsODM4ejZQRDM0KzdyV3JYbTF0Nml1RWs5K09qQy8zM0hmc1hqS08wbHN0NTAK",
+      "endpoints": [
+        "https://github.com/ahmed-abdat/nezzel-desktop/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

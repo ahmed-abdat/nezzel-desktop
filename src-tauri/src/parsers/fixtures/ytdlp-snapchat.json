@@ -1,0 +1,38 @@
+{
+  "id": "W7_EDlXWTBiXAEEniNoMPwAAYb3pqZHN1Ymh6AZxxsFmSAZxxr_5ZAAAAAQ-1",
+  "title": "2.0K likes, 102 comments, and 83 shares | NASA Artemis II Mission Update: Crew Briefing & Launch Preparations | NASA (@nasa) | Posted Feb 18, 2026 | Spotlight (1)",
+  "ext": "IRZXSOY",
+  "url": "https://cf-st.sc-cdn.net/d/rxepOVMdmmdoTHgttL0hu.27.IRZXSOY?signature=fixture",
+  "thumbnails": [
+    {
+      "url": "https://cf-st.sc-cdn.net/d/rxepOVMdmmdoTHgttL0hu.256.IRZXSOY?signature=fixture",
+      "id": "0"
+    }
+  ],
+  "formats": [
+    {
+      "url": "https://cf-st.sc-cdn.net/d/rxepOVMdmmdoTHgttL0hu.27.IRZXSOY?signature=fixture",
+      "vcodec": null,
+      "ext": "IRZXSOY",
+      "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-us,en;q=0.5",
+        "Sec-Fetch-Mode": "navigate",
+        "Referer": "https://www.snapchat.com/@nasa/spotlight/W7_EDlXWTBiXAEEniNoMPwAAYb3pqZHN1Ymh6AZxxsFmSAZxxr_5ZAAAAAQ"
+      },
+      "protocol": "https",
+      "video_ext": "IRZXSOY",
+      "audio_ext": "none",
+      "vbr": null,
+      "abr": null,
+      "tbr": null,
+      "resolution": null,
+      "dynamic_range": "SDR",
+      "aspect_ratio": null,
+      "filesize_approx": null,
+      "format_id": "0",
+      "format": "0 - unknown"
+    }
+  ]
+}

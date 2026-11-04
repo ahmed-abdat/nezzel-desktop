@@ -1,0 +1,22 @@
+name: 'Distribute'
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  distribute-windows:
+    # Re-enable after Nezzel has its own winget ID and publishing credentials.
+    if: ${{ vars.NEZZEL_STORE_PUBLISH_ENABLED == 'true' }}
+    runs-on: windows-latest
+    steps:
+      - run: echo "winget publishing awaits Nezzel store setup"
+
+  distribute-linux:
+    # Re-enable after Nezzel has its own snap ID and publishing credentials.
+    if: ${{ vars.NEZZEL_STORE_PUBLISH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "snap publishing awaits Nezzel store setup"

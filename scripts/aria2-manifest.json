@@ -1,0 +1,23 @@
+{
+  "version": "1.37.0",
+  "license": "GPL-2.0-or-later",
+  "project": "https://aria2.github.io/",
+  "source": {
+    "url": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.xz",
+    "sha256": "60a420ad7085eb616cb6e2bdf0a7206d68ff3d37fb5a956dc44242eb2f79b66b"
+  },
+  "win64": {
+    "url": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
+    "sha256": "67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288"
+  },
+  "targets": {
+    "aarch64-apple-darwin": "native-appletls",
+    "x86_64-apple-darwin": "native-appletls",
+    "x86_64-pc-windows-msvc": "official-win64",
+    "x86_64-unknown-linux-gnu": "native-static-openssl",
+    "aarch64-unknown-linux-gnu": "native-static-openssl"
+  },
+  "unavailable": {
+    "aarch64-pc-windows-msvc": "No official Windows ARM64 release; requires a separately provisioned LLVM-MinGW toolchain. The build writes a disabled sidecar stub and uses native yt-dlp downloads."
+  }
+}

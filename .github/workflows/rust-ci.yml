@@ -1,0 +1,174 @@
+name: CI Rust
+
+on:
+  schedule:
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/rust-ci.yml'
+      - '.github/actions/install-tauri-deps/**'
+      - 'src-tauri/**'
+      - 'scripts/*gallery*'
+      - 'scripts/*tools*'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.nvmrc'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/rust-ci.yml'
+      - '.github/actions/install-tauri-deps/**'
+      - 'src-tauri/**'
+      - 'scripts/*gallery*'
+      - 'scripts/*tools*'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.nvmrc'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: 'Lint'
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      TAURI_SKIP_UPDATE_CHECK: 1
+      CARGO_TARGET_DIR: src-tauri/target
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js for isolation build
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Build isolation frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build:isolation
+
+      - name: Install system dependencies for Tauri
+        uses: ./.github/actions/install-tauri-deps
+
+      - name: Cache Rust registry
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.toml') }}
+
+      - name: Cache Rust build artifacts
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: src-tauri/target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-
+
+      - name: Set up Rust toolchain (1.99.1 + Clippy)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.99.1
+          components: clippy,rustfmt
+
+      - name: Prepare pinned installer tools
+        run: python3 scripts/test_fetch_tools.py && python3 scripts/fetch-aria2.py && python3 scripts/fetch-gallery-dl.py && python3 scripts/fetch-tools.py
+
+      - name: Run clippy
+        run: cargo clippy --manifest-path=src-tauri/Cargo.toml --all-features --all-targets -- -D warnings
+
+      - name: Run cargo fmt
+        run: cargo fmt --manifest-path=src-tauri/Cargo.toml --all -- --check
+
+  unit-tests:
+    name: 'Unit Tests'
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      TAURI_SKIP_UPDATE_CHECK: 1
+      CARGO_TARGET_DIR: src-tauri/target
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js for isolation build
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Build isolation frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build:isolation
+
+      - name: Install system dependencies for Tauri
+        uses: ./.github/actions/install-tauri-deps
+
+      - name: Cache Rust registry
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.toml') }}
+
+      - name: Cache Rust build artifacts
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: src-tauri/target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-
+
+      - name: Set up Rust toolchain (1.99.1 + LLVM tools)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.99.1
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Prepare pinned installer tools
+        run: python3 scripts/test_fetch_tools.py && python3 scripts/fetch-aria2.py && python3 scripts/fetch-gallery-dl.py && python3 scripts/fetch-tools.py
+
+      - name: Generate Rust coverage
+        run: |
+          mkdir -p coverage/rust
+          cargo llvm-cov --manifest-path=src-tauri/Cargo.toml --lcov --output-path=coverage/rust/lcov.info --remap-path-prefix --all-features --all-targets
+
+      - name: Nightly real-engine cookie contract (loopback only)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          YTDLP_TEST_BIN: ${{ runner.temp }}/login-engines/bin/yt-dlp
+          GALLERY_TEST_BIN: ${{ runner.temp }}/login-engines/bin/gallery-dl
+        run: |
+          python3 -m venv "$RUNNER_TEMP/login-engines"
+          "$RUNNER_TEMP/login-engines/bin/pip" install 'yt-dlp==2026.08.19' 'gallery-dl==1.32.19'
+          cargo test --manifest-path=src-tauri/Cargo.toml -j 4 browser_cookie_contract -- --ignored
+
+      - name: Upload Rust coverage to Codecov
+        if: ${{ env.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: coverage/rust/lcov.info
+          flags: rust-units
+          token: ${{ env.CODECOV_TOKEN }}
+          fail_ci_if_error: true

@@ -1,0 +1,32 @@
+{
+  "id": "7583998092605656340",
+  "ext": "m4a",
+  "vcodec": "none",
+  "acodec": "aac",
+  "formats": [
+    {
+      "format_id": "audio",
+      "url": "https://sf16-ies-music-sg.tiktokcdn.com/obj/tos-alisg-ve-2774/oAF1f0AaeVgWBeie7GM5beKMdIMALrJvYuWwkJ?signature=fixture",
+      "ext": "m4a",
+      "acodec": "aac",
+      "vcodec": "none",
+      "protocol": "https",
+      "audio_ext": "m4a",
+      "video_ext": "none",
+      "vbr": 0,
+      "abr": null,
+      "tbr": null,
+      "resolution": "audio only",
+      "aspect_ratio": null,
+      "filesize_approx": null,
+      "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-us,en;q=0.5",
+        "Sec-Fetch-Mode": "navigate",
+        "Referer": "https://www.tiktok.com/@obnbadminton/video/7583998092605656340"
+      },
+      "format": "audio - audio only"
+    }
+  ]
+}

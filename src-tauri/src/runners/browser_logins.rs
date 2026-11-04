@@ -1,0 +1,1289 @@
+//! Profile names and site-session metadata. Cookie values are never projected or decrypted.
+use super::browser_cookies::{cookie_hint, CookieHint};
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BrowserCandidate {
+  pub id: String,
+  pub browser: String,
+  pub profile: String,
+  pub modified: SystemTime,
+  pub signed_in: bool,
+  pub app_bound: bool,
+  pub active_time: f64,
+}
+#[derive(Clone, Copy)]
+pub enum Os {
+  Mac,
+  Windows,
+  Linux,
+}
+
+#[cfg(test)]
+fn discover_at(
+  os: Os,
+  home: &Path,
+  local: &Path,
+  roaming: &Path,
+  default: Option<&str>,
+  remembered: Option<&str>,
+) -> Vec<BrowserCandidate> {
+  discover_for_host_at(os, home, local, roaming, default, remembered, None)
+}
+
+fn discover_for_host_at(
+  os: Os,
+  home: &Path,
+  local: &Path,
+  roaming: &Path,
+  default: Option<&str>,
+  remembered: Option<&str>,
+  host: Option<&str>,
+) -> Vec<BrowserCandidate> {
+  let roots = match os {
+    Os::Mac => vec![
+      (
+        "firefox",
+        home.join("Library/Application Support/Firefox/Profiles"),
+      ),
+      (
+        "chrome",
+        home.join("Library/Application Support/Google/Chrome"),
+      ),
+      (
+        "edge",
+        home.join("Library/Application Support/Microsoft Edge"),
+      ),
+      (
+        "brave",
+        home.join("Library/Application Support/BraveSoftware/Brave-Browser"),
+      ),
+    ],
+    Os::Windows => vec![
+      ("firefox", roaming.join("Mozilla/Firefox/Profiles")),
+      ("chrome", local.join("Google/Chrome/User Data")),
+      ("edge", local.join("Microsoft/Edge/User Data")),
+      ("brave", local.join("BraveSoftware/Brave-Browser/User Data")),
+    ],
+    Os::Linux => vec![
+      ("firefox", home.join(".mozilla/firefox")),
+      ("firefox", home.join(".config/mozilla/firefox")),
+      ("firefox", home.join("snap/firefox/common/.mozilla/firefox")),
+      (
+        "firefox",
+        home.join(".var/app/org.mozilla.firefox/.mozilla/firefox"),
+      ),
+      ("chrome", home.join(".config/google-chrome")),
+      ("edge", home.join(".config/microsoft-edge")),
+      ("brave", home.join(".config/BraveSoftware/Brave-Browser")),
+    ],
+  };
+  let mut roots = roots;
+  roots.extend(match os {
+    Os::Mac => vec![
+      (
+        "chromium",
+        home.join("Library/Application Support/Chromium"),
+      ),
+      ("vivaldi", home.join("Library/Application Support/Vivaldi")),
+      (
+        "opera",
+        home.join("Library/Application Support/com.operasoftware.Opera"),
+      ),
+      (
+        "opera",
+        home.join("Library/Application Support/com.operasoftware.OperaGX"),
+      ),
+    ],
+    Os::Windows => vec![
+      ("chromium", local.join("Chromium/User Data")),
+      ("vivaldi", local.join("Vivaldi/User Data")),
+      ("opera", roaming.join("Opera Software/Opera Stable")),
+      ("opera", roaming.join("Opera Software/Opera GX Stable")),
+    ],
+    Os::Linux => vec![
+      ("chromium", home.join(".config/chromium")),
+      ("vivaldi", home.join(".config/vivaldi")),
+      ("opera", home.join(".config/opera")),
+    ],
+  });
+  if matches!(os, Os::Linux) {
+    roots.extend([
+      ("chromium", home.join("snap/chromium/common/chromium")),
+      (
+        "chromium",
+        home.join("snap/chromium/common/.config/chromium"),
+      ),
+      (
+        "chrome",
+        home.join("snap/google-chrome/common/.config/google-chrome"),
+      ),
+      (
+        "brave",
+        home.join("snap/brave/current/.config/BraveSoftware/Brave-Browser"),
+      ),
+      (
+        "brave",
+        home.join("snap/brave/common/.config/BraveSoftware/Brave-Browser"),
+      ),
+      (
+        "chrome",
+        home.join(".var/app/com.google.Chrome/config/google-chrome"),
+      ),
+      (
+        "chromium",
+        home.join(".var/app/org.chromium.Chromium/config/chromium"),
+      ),
+      (
+        "edge",
+        home.join(".var/app/com.microsoft.Edge/config/microsoft-edge"),
+      ),
+      (
+        "brave",
+        home.join(".var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser"),
+      ),
+      (
+        "vivaldi",
+        home.join(".var/app/com.vivaldi.Vivaldi/config/vivaldi"),
+      ),
+      ("opera", home.join(".var/app/com.opera.Opera/config/opera")),
+    ]);
+  }
+  let now = SystemTime::now()
+    .duration_since(SystemTime::UNIX_EPOCH)
+    .map(|d| d.as_secs() as i64)
+    .unwrap_or(0);
+  let mut found = Vec::new();
+  for (browser, root) in roots.into_iter().filter(|(_, root)| root.is_absolute()) {
+    let state: serde_json::Value = std::fs::read(root.join("Local State"))
+      .ok()
+      .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+      .unwrap_or_default();
+    let firefox_names = firefox_profiles(&root);
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&root)
+      .into_iter()
+      .flatten()
+      .flatten()
+      .map(|e| e.path())
+      .filter(|p| p.is_dir())
+      .collect();
+    paths.extend(firefox_names.keys().cloned());
+    if browser == "opera" {
+      paths.push(root.clone());
+    }
+    paths.sort();
+    paths.dedup();
+    for path in paths {
+      let cookie_paths = if browser == "firefox" {
+        vec![path.join("cookies.sqlite")]
+      } else {
+        vec![path.join("Network/Cookies"), path.join("Cookies")]
+      };
+      let modified = cookie_paths
+        .iter()
+        .filter_map(|p| std::fs::metadata(p).ok())
+        .filter(|m| m.is_file())
+        .filter_map(|m| m.modified().ok())
+        .max();
+      if let Some(modified) = modified {
+        let directory = path.file_name().unwrap_or_default().to_string_lossy();
+        let key = if browser == "opera" && path == root {
+          "Default"
+        } else {
+          directory.as_ref()
+        };
+        let info = &state["profile"]["info_cache"][key];
+        let hint = host
+          .map(|host| {
+            cookie_paths
+              .iter()
+              .filter(|p| p.is_file())
+              .map(|p| cookie_hint(p, browser, os, host, now))
+              .fold(CookieHint::default(), |best, hint| {
+                // An old root Cookies file must not hide the active Network database's v20.
+                let app_bound = best.app_bound || hint.app_bound;
+                let mut selected =
+                  if (hint.signed_in, hint.last_access) > (best.signed_in, best.last_access) {
+                    hint
+                  } else {
+                    best
+                  };
+                selected.app_bound = app_bound;
+                selected
+              })
+          })
+          .unwrap_or_default();
+        found.push(BrowserCandidate {
+          id: format!("{}:{}", browser, path.to_string_lossy()),
+          browser: browser.into(),
+          profile: if browser == "firefox" {
+            firefox_names
+              .get(&path)
+              .cloned()
+              .unwrap_or_else(|| directory.into_owned())
+          } else {
+            chromium_profile_name(info, &directory)
+          },
+          modified,
+          signed_in: hint.signed_in,
+          app_bound: hint.app_bound,
+          active_time: if hint.signed_in {
+            hint.last_access as f64
+          } else {
+            info["active_time"]
+              .as_f64()
+              .filter(|v| v.is_finite())
+              .unwrap_or(0.0)
+          },
+        });
+      }
+    }
+  }
+
+  if matches!(os, Os::Mac) {
+    for path in [
+      home.join("Library/Cookies/Cookies.binarycookies"),
+      home.join("Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"),
+    ] {
+      if let Ok(m) = std::fs::metadata(path) {
+        if m.is_file() {
+          found.push(BrowserCandidate {
+            id: "safari".into(),
+            browser: "safari".into(),
+            profile: "Default".into(),
+            modified: m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            signed_in: false,
+            app_bound: false,
+            active_time: 0.0,
+          });
+          break;
+        }
+      }
+    }
+  }
+  // Disambiguate only within a browser, preserving the discovery/ranking order.
+  let mut counts = std::collections::HashMap::new();
+  for c in &found {
+    *counts
+      .entry((c.browser.clone(), c.profile.clone()))
+      .or_insert(0) += 1;
+  }
+  for c in &mut found {
+    if counts[&(c.browser.clone(), c.profile.clone())] > 1 {
+      let directory = c
+        .id
+        .split_once(':')
+        .and_then(|(_, path)| Path::new(path).file_name())
+        .unwrap_or_default()
+        .to_string_lossy();
+      c.profile = format!("{} · {}", c.profile, directory);
+    }
+  }
+  let order = [
+    "firefox", "chrome", "edge", "brave", "chromium", "vivaldi", "opera", "safari",
+  ];
+  found.sort_by(|a, b| {
+    let tier = |candidate: &BrowserCandidate| {
+      if candidate.app_bound {
+        5
+      } else if candidate.signed_in && candidate.browser != "firefox" {
+        0
+      } else if candidate.signed_in {
+        1
+      } else if candidate.browser == "safari" {
+        2
+      } else if remembered == Some(candidate.id.as_str()) {
+        3
+      } else {
+        4
+      }
+    };
+    tier(a)
+      .cmp(&tier(b))
+      .then_with(|| b.active_time.total_cmp(&a.active_time))
+      .then_with(|| {
+        (default != Some(a.browser.as_str())).cmp(&(default != Some(b.browser.as_str())))
+      })
+      .then_with(|| {
+        order
+          .iter()
+          .position(|x| *x == a.browser)
+          .cmp(&order.iter().position(|x| *x == b.browser))
+      })
+      .then_with(|| b.modified.cmp(&a.modified))
+      .then_with(|| a.id.cmp(&b.id))
+  });
+  found
+}
+
+pub fn discover(remembered: Option<&str>, host: &str) -> Vec<BrowserCandidate> {
+  let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+    .map(PathBuf::from)
+    .unwrap_or_default();
+  let local = std::env::var_os("LOCALAPPDATA")
+    .map(PathBuf::from)
+    .unwrap_or_default();
+  let roaming = std::env::var_os("APPDATA")
+    .map(PathBuf::from)
+    .unwrap_or_default();
+  let os = if cfg!(target_os = "macos") {
+    Os::Mac
+  } else if cfg!(windows) {
+    Os::Windows
+  } else {
+    Os::Linux
+  };
+  discover_for_host_at(
+    os,
+    &home,
+    &local,
+    &roaming,
+    default_browser(&home).as_deref(),
+    remembered,
+    Some(host),
+  )
+}
+
+fn chromium_profile_name(info: &serde_json::Value, directory: &str) -> String {
+  let text = |key| info[key].as_str().map(str::trim).filter(|s| !s.is_empty());
+  let name = text("name").unwrap_or(directory);
+  let given = text("gaia_given_name");
+  if info["is_using_default_name"].as_bool() == Some(true) {
+    given.or_else(|| text("gaia_name")).unwrap_or(name).into()
+  } else if let Some(given) = given.filter(|given| *given != name) {
+    format!("{given} ({name})")
+  } else {
+    name.into()
+  }
+}
+
+fn firefox_profiles(root: &Path) -> std::collections::HashMap<PathBuf, String> {
+  let mut names = std::collections::HashMap::new();
+  let ini_root = if root.file_name().is_some_and(|s| s == "Profiles") {
+    root.parent().unwrap_or(root)
+  } else {
+    root
+  };
+  let Ok(ini) = std::fs::read_to_string(ini_root.join("profiles.ini")) else {
+    return names;
+  };
+  for section in ini.split('[').filter(|s| s.starts_with("Profile")) {
+    let fields: std::collections::HashMap<_, _> = section
+      .lines()
+      .filter_map(|line| line.trim().split_once('='))
+      .collect();
+    if let (Some(path), Some(name)) = (fields.get("Path"), fields.get("Name")) {
+      if !name.is_empty() {
+        let path = if fields.get("IsRelative") == Some(&"0") {
+          PathBuf::from(path)
+        } else {
+          ini_root.join(path)
+        };
+        names.insert(path, (*name).into());
+      }
+    }
+  }
+  names
+}
+
+#[cfg(test)]
+fn has_host_cookies(path: &Path, browser: &str, host: &str) -> bool {
+  cookie_hint(path, browser, Os::Mac, host, 1).signed_in
+}
+
+/// Names only, for displaying an already selected browser. Does not inspect cookies.
+pub fn describe(id: &str) -> Option<BrowserCandidate> {
+  let (browser, path) = id.split_once(':').unwrap_or((id, ""));
+  let path = Path::new(path);
+  let directory = path.file_name().unwrap_or_default().to_string_lossy();
+  let profile = if browser == "safari" {
+    "Default".into()
+  } else if browser == "firefox" {
+    let root = path.parent().unwrap_or(path);
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+      .map(PathBuf::from)
+      .unwrap_or_default();
+    let roaming = std::env::var_os("APPDATA")
+      .map(PathBuf::from)
+      .unwrap_or_default();
+    [
+      root.to_path_buf(),
+      home.join("Library/Application Support/Firefox"),
+      roaming.join("Mozilla/Firefox"),
+      home.join(".mozilla/firefox"),
+      home.join(".config/mozilla/firefox"),
+      home.join("snap/firefox/common/.mozilla/firefox"),
+      home.join(".var/app/org.mozilla.firefox/.mozilla/firefox"),
+    ]
+    .into_iter()
+    .filter(|root| root.is_absolute())
+    .find_map(|root| firefox_profiles(&root).remove(path))
+    .unwrap_or_else(|| directory.to_string())
+  } else {
+    let root = if browser == "opera" && path.join("Local State").is_file() {
+      path
+    } else {
+      path.parent().unwrap_or(path)
+    };
+    let state: serde_json::Value = std::fs::read(root.join("Local State"))
+      .ok()
+      .and_then(|v| serde_json::from_slice(&v).ok())
+      .unwrap_or_default();
+    chromium_profile_name(
+      &state["profile"]["info_cache"][if path == root {
+        "Default"
+      } else {
+        directory.as_ref()
+      }],
+      &directory,
+    )
+  };
+  Some(BrowserCandidate {
+    id: id.into(),
+    browser: browser.into(),
+    profile,
+    modified: SystemTime::UNIX_EPOCH,
+    signed_in: false,
+    app_bound: false,
+    active_time: 0.0,
+  })
+}
+
+fn browser_name(value: &str) -> Option<String> {
+  let value = value.to_ascii_lowercase();
+  [
+    ("firefox", "firefox"),
+    ("chrome", "chrome"),
+    ("msedge", "edge"),
+    ("microsoft-edge", "edge"),
+    ("brave", "brave"),
+    ("safari", "safari"),
+    ("chromium", "chromium"),
+    ("vivaldi", "vivaldi"),
+    ("opera", "opera"),
+  ]
+  .into_iter()
+  .find(|(needle, _)| value.contains(needle))
+  .map(|(_, b)| b.into())
+}
+
+fn default_browser(home: &Path) -> Option<String> {
+  #[cfg(target_os = "macos")]
+  {
+    let output =
+      std::process::Command::new("/usr/bin/plutil")
+        .args(["-extract", "LSHandlers", "json", "-o", "-"])
+        .arg(home.join(
+          "Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist",
+        ))
+        .output()
+        .ok()?;
+    let handlers: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    handlers
+      .as_array()?
+      .iter()
+      .find(|h| h["LSHandlerURLScheme"] == "http")
+      .and_then(|h| h["LSHandlerRoleAll"].as_str())
+      .and_then(browser_name)
+  }
+  #[cfg(target_os = "windows")]
+  {
+    let _ = home;
+    let mut command = std::process::Command::new("reg");
+    crate::runners::ytdlp_process::configure_command(&mut command).ok()?;
+    let output = command
+      .args([
+        "query",
+        r"HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice",
+        "/v",
+        "ProgId",
+      ])
+      .output()
+      .ok()?;
+    browser_name(&String::from_utf8_lossy(&output.stdout))
+  }
+  #[cfg(target_os = "linux")]
+  {
+    let _ = home;
+    let output = std::process::Command::new("xdg-settings")
+      .args(["get", "default-web-browser"])
+      .output()
+      .ok()?;
+    browser_name(&String::from_utf8_lossy(&output.stdout))
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  fn root() -> PathBuf {
+    let p = std::env::temp_dir().join(format!("nezzel-browser-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&p).unwrap();
+    p
+  }
+  fn touch(root: &Path, rel: &str, seconds: u64) {
+    let p = root.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    let f = std::fs::File::create(p).unwrap();
+    f.set_times(
+      std::fs::FileTimes::new()
+        .set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds)),
+    )
+    .unwrap();
+  }
+  #[test]
+  fn site_session_cookie_names_and_registrable_domains() {
+    use crate::runners::browser_cookies::{same_site, session_present};
+    for (host, names, expected) in [
+      ("www.instagram.com", "sessionid", true),
+      ("instagram.com", "mid,ds_user_id,csrftoken", false),
+      ("m.facebook.com", "c_user,xs", true),
+      ("facebook.com", "c_user", false),
+      ("x.com", "auth_token", true),
+      ("twitter.com", "auth_token", true),
+      ("tiktok.com", "sessionid", true),
+      ("youtube.com", "SAPISID", true),
+      ("youtu.be", "__Secure-3PSID", true),
+      ("youtube.com", "LOGIN_INFO", true),
+      ("reddit.com", "reddit_session", true),
+      ("redd.it", "reddit_session", true),
+      ("v.redd.it", "reddit_session", true),
+      ("old.reddit.com", "reddit_session", true),
+      ("linkedin.com", "li_at", true),
+      ("pinterest.com", "_pinterest_sess", true),
+      ("threads.net", "sessionid", true),
+      ("threads.com", "sessionid", true),
+      ("vimeo.com", "vimeo", true),
+      ("snapchat.com", "sc-a-session", true),
+      ("other.co.uk", "anything", false),
+      ("other.co.uk", "", false),
+    ] {
+      let names = names
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+      assert_eq!(session_present(host, &names), expected, "{host}");
+    }
+    for (cookie, host, expected) in [
+      (".instagram.com", "m.instagram.com", true),
+      ("i.instagram.com", "www.instagram.com", true),
+      ("instagram.com.attacker.test", "instagram.com", false),
+      ("notinstagram.com", "instagram.com", false),
+      ("media.example.co.uk", "www.example.co.uk", true),
+      ("other.co.uk", "example.co.uk", false),
+      ("one.github.io", "two.github.io", false),
+      ("127.0.0.1", "127.0.0.1", false),
+    ] {
+      assert_eq!(same_site(cookie, host), expected, "{cookie}, {host}");
+    }
+  }
+
+  fn metadata_db(path: &Path, firefox: bool, rows: &[(&str, &str, i64, i64, bool)]) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let (table, host, expiry, access) = if firefox {
+      ("moz_cookies", "host", "expiry", "lastAccessed")
+    } else {
+      ("cookies", "host_key", "expires_utc", "last_access_utc")
+    };
+    // No value column. The encrypted prefix is only exposed by SQL as a boolean.
+    connection.execute_batch(&format!("CREATE TABLE {table} ({host} TEXT, name TEXT, {expiry} INTEGER, {access} INTEGER, encrypted_value BLOB)")).unwrap();
+    for (host, name, expiry, access, v20) in rows {
+      connection
+        .execute(
+          &format!("INSERT INTO {table} VALUES (?1, ?2, ?3, ?4, ?5)"),
+          rusqlite::params![
+            host,
+            name,
+            expiry,
+            access,
+            if *v20 {
+              b"v20-metadata-fixture".as_slice()
+            } else {
+              b"v10-metadata-fixture".as_slice()
+            }
+          ],
+        )
+        .unwrap();
+    }
+  }
+
+  #[test]
+  fn metadata_queries_ignore_expired_tracking_cookies_and_flag_windows_v20() {
+    let now = 2_000_000_000_i64;
+    for (firefox, os, future, session, v20, signed, blocked) in [
+      (false, Os::Mac, true, false, false, true, false),
+      (false, Os::Mac, false, false, false, false, false),
+      (false, Os::Mac, false, true, false, true, false),
+      (true, Os::Linux, true, false, false, true, false),
+      (true, Os::Linux, false, false, false, false, false),
+      (true, Os::Linux, false, true, false, false, false),
+      (false, Os::Windows, true, false, true, true, true),
+      (false, Os::Mac, true, false, true, true, false),
+    ] {
+      let root = crate::runners::gallery_files::Staging::new().unwrap();
+      let path = root.path.join("Cookies");
+      let unix_expiry = now + if future { 100 } else { -100 };
+      let expires = if session {
+        0
+      } else if firefox {
+        unix_expiry
+      } else {
+        (unix_expiry + 11_644_473_600) * 1_000_000
+      };
+      let access = if firefox {
+        900_000
+      } else {
+        11_644_473_600_900_000
+      };
+      metadata_db(
+        &path,
+        firefox,
+        &[(".instagram.com", "sessionid", expires, access, v20)],
+      );
+      let before = std::fs::read(&path).unwrap();
+      let hint = cookie_hint(
+        &path,
+        if firefox { "firefox" } else { "chrome" },
+        os,
+        "www.instagram.com",
+        now,
+      );
+      assert_eq!((hint.signed_in, hint.app_bound), (signed, blocked));
+      if signed {
+        assert_eq!(hint.last_access, 900_000);
+      }
+      assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+    for (expires, signed) in [
+      (now + 100, true),
+      (now - 100, false),
+      ((now + 100) * 1000, true),
+      ((now - 100) * 1000, false),
+    ] {
+      let root = crate::runners::gallery_files::Staging::new().unwrap();
+      let path = root.path.join("cookies.sqlite");
+      metadata_db(
+        &path,
+        true,
+        &[(".instagram.com", "sessionid", expires, 900_000, false)],
+      );
+      assert_eq!(
+        cookie_hint(&path, "firefox", Os::Linux, "instagram.com", now).signed_in,
+        signed,
+        "expiry {expires}"
+      );
+    }
+    let root = crate::runners::gallery_files::Staging::new().unwrap();
+    let path = root.path.join("Cookies");
+    metadata_db(
+      &path,
+      false,
+      &[
+        (".threads.net", "mid", 0, 0, false),
+        (".instagram.com", "sessionid", 0, 0, false),
+      ],
+    );
+    assert!(cookie_hint(&path, "chrome", Os::Mac, "www.threads.com", now).signed_in);
+    let live_path = root.path.join("LiveCookies");
+    metadata_db(&live_path, false, &[(".instagram.com", "mid", 0, 0, false)]);
+    let live = rusqlite::Connection::open(&live_path).unwrap();
+    live.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; UPDATE cookies SET name='sessionid';").unwrap();
+    let before = std::fs::read(&live_path).unwrap();
+    assert!(cookie_hint(&live_path, "chrome", Os::Mac, "instagram.com", now).signed_in);
+    assert_eq!(std::fs::read(&live_path).unwrap(), before);
+  }
+
+  #[test]
+  fn reddit_alias_discovery_finds_the_signed_in_profile_without_reading_cookie_values() {
+    let now = 2_000_000_000_i64;
+    for firefox in [false, true] {
+      let root = crate::runners::gallery_files::Staging::new().unwrap();
+      let path = root.path.join("Cookies");
+      metadata_db(
+        &path,
+        firefox,
+        &[(
+          ".reddit.com",
+          "reddit_session",
+          if firefox { now + 100 } else { 0 },
+          900_000,
+          false,
+        )],
+      );
+      let before = std::fs::read(&path).unwrap();
+      for host in ["redd.it", "v.redd.it", "old.reddit.com", "www.reddit.com"] {
+        assert!(
+          cookie_hint(
+            &path,
+            if firefox { "firefox" } else { "chrome" },
+            Os::Mac,
+            host,
+            now
+          )
+          .signed_in,
+          "{host}"
+        );
+      }
+      assert!(!cookie_hint(&path, "chrome", Os::Mac, "reddit.com.attacker.test", now).signed_in);
+      assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+  }
+
+  #[test]
+  fn locked_windows_cookie_copy_uses_immutable_or_reports_browser_protection() {
+    use crate::runners::browser_cookies::cookie_hint_with_copy;
+    let root = crate::runners::gallery_files::Staging::new().unwrap();
+    let path = root.path.join("Profile space #1").join("Cookies");
+    metadata_db(&path, false, &[(".instagram.com", "sessionid", 0, 0, true)]);
+    let before = std::fs::read(&path).unwrap();
+    let mut snapshots = Vec::new();
+    let hint = cookie_hint_with_copy(
+      &path,
+      "chrome",
+      Os::Windows,
+      "instagram.com",
+      2_000_000_000,
+      |from, to| {
+        snapshots.push(to.parent().unwrap().to_owned());
+        std::fs::copy(from, to)
+      },
+    );
+    assert!(hint.signed_in && hint.app_bound);
+    assert!(!snapshots.is_empty());
+    assert!(snapshots.iter().all(|snapshot| !snapshot.exists()));
+    let hint = cookie_hint_with_copy(
+      &path,
+      "chrome",
+      Os::Windows,
+      "instagram.com",
+      2_000_000_000,
+      |_, _| Err(std::io::ErrorKind::PermissionDenied.into()),
+    );
+    assert!(hint.signed_in && hint.app_bound);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(
+      std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+      1
+    );
+    std::fs::write(&path, b"unreadable database fixture").unwrap();
+    let hint = cookie_hint_with_copy(
+      &path,
+      "chrome",
+      Os::Windows,
+      "instagram.com",
+      2_000_000_000,
+      |_, _| Err(std::io::ErrorKind::PermissionDenied.into()),
+    );
+    assert!(!hint.signed_in && hint.app_bound);
+  }
+
+  #[test]
+  fn signed_chromium_access_time_precedes_firefox_and_windows_v20_is_last() {
+    let root = crate::runners::gallery_files::Staging::new().unwrap();
+    let local = root.path.join("local");
+    let roaming = root.path.join("roaming");
+    for (relative, firefox, access, v20) in [
+      (
+        "local/Google/Chrome/User Data/Default/Network/Cookies",
+        false,
+        100,
+        false,
+      ),
+      (
+        "local/BraveSoftware/Brave-Browser/User Data/Default/Cookies",
+        false,
+        200,
+        false,
+      ),
+      (
+        "roaming/Mozilla/Firefox/Profiles/main/cookies.sqlite",
+        true,
+        500,
+        false,
+      ),
+      (
+        "local/Microsoft/Edge/User Data/Default/Network/Cookies",
+        false,
+        600,
+        true,
+      ),
+    ] {
+      let access = if firefox {
+        access
+      } else {
+        access + 11_644_473_600_000_000
+      };
+      metadata_db(
+        &root.path.join(relative),
+        firefox,
+        &[(
+          ".instagram.com",
+          "sessionid",
+          if firefox { 4_102_444_800 } else { 0 },
+          access,
+          v20,
+        )],
+      );
+    }
+    metadata_db(
+      &root
+        .path
+        .join("local/Microsoft/Edge/User Data/Default/Cookies"),
+      false,
+      &[(
+        ".instagram.com",
+        "sessionid",
+        0,
+        11_644_473_600_000_900,
+        false,
+      )],
+    );
+    let found = discover_for_host_at(
+      Os::Windows,
+      &root.path,
+      &local,
+      &roaming,
+      Some("firefox"),
+      None,
+      Some("instagram.com"),
+    );
+    assert_eq!(
+      found.iter().map(|c| c.browser.as_str()).collect::<Vec<_>>(),
+      ["brave", "chrome", "firefox", "edge"]
+    );
+    assert!(found.last().unwrap().app_bound);
+    assert!(found.iter().all(|c| c.signed_in));
+  }
+
+  #[test]
+  fn chromium_menu_names_and_collisions() {
+    let p = root();
+    let base = "Library/Application Support/Google/Chrome";
+    let cases = [
+      (
+        "Default",
+        serde_json::json!({"name":"Your Chrome", "gaia_given_name":"Ahmed", "is_using_default_name":true, "active_time":10, "user_name":"private@example.com"}),
+        "Ahmed · Default",
+      ),
+      (
+        "Profile 1",
+        serde_json::json!({"name":"souvi", "gaia_given_name":""}),
+        "souvi",
+      ),
+      (
+        "Profile 4",
+        serde_json::json!({"name":"Ahmed", "gaia_given_name":""}),
+        "Ahmed · Profile 4",
+      ),
+      (
+        "Profile 5",
+        serde_json::json!({"name":"groupmbi and cacmauritania", "gaia_given_name":"MBI"}),
+        "MBI (groupmbi and cacmauritania)",
+      ),
+      (
+        "Profile 6",
+        serde_json::json!({"name":"hapa", "gaia_given_name":"hapa"}),
+        "hapa",
+      ),
+      (
+        "Profile 7",
+        serde_json::json!({"name":"Person 1", "gaia_given_name":"chat", "is_using_default_name":true}),
+        "chat",
+      ),
+      (
+        "Profile 8",
+        serde_json::json!({"name":"Person 2", "gaia_given_name":"", "gaia_name":"Full Name", "is_using_default_name":true}),
+        "Full Name",
+      ),
+      (
+        "Profile 9",
+        serde_json::json!({"name":"Person 3", "is_using_default_name":true}),
+        "Person 3",
+      ),
+      ("Profile 10", serde_json::json!({}), "Profile 10"),
+    ];
+    let mut cache = serde_json::Map::new();
+    for (dir, metadata, _) in &cases {
+      touch(&p, &format!("{base}/{dir}/Cookies"), 1);
+      cache.insert((*dir).into(), metadata.clone());
+    }
+    std::fs::write(
+      p.join(base).join("Local State"),
+      serde_json::json!({"profile":{"info_cache":cache}}).to_string(),
+    )
+    .unwrap();
+    let found = discover_at(Os::Mac, &p, &p, &p, None, None);
+    for (dir, _, expected) in cases {
+      let candidate = found
+        .iter()
+        .find(|c| c.id.ends_with(&format!("/{dir}")))
+        .unwrap();
+      assert_eq!(candidate.profile, expected);
+    }
+    std::fs::remove_dir_all(p).unwrap();
+  }
+  fn cookie_db(path: &Path, table: &str, column: &str, host: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // No plaintext value column: the detector must only project session metadata.
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let (expiry, access) = if table == "moz_cookies" {
+      ("expiry", "lastAccessed")
+    } else {
+      ("expires_utc", "last_access_utc")
+    };
+    connection
+      .execute_batch(&format!(
+        "CREATE TABLE {table} ({column} TEXT, name TEXT, {expiry} INTEGER, {access} INTEGER);"
+      ))
+      .unwrap();
+    connection
+      .execute(
+        &format!(
+          "INSERT INTO {table} VALUES (?1, 'sessionid', {}, 0)",
+          if table == "moz_cookies" {
+            4_102_444_800_i64
+          } else {
+            0
+          }
+        ),
+        [host],
+      )
+      .unwrap();
+  }
+  #[test]
+  fn host_cookie_hint_ranks_before_remembered_then_active_time() {
+    let p = root();
+    let base = p.join("Library/Application Support/Google/Chrome");
+    let cache = serde_json::json!({"profile":{"info_cache":{
+      "Default":{"name":"Recent", "active_time":90},
+      "Profile 1":{"name":"Signed in", "active_time":1},
+      "Profile 2":{"name":"Remembered", "active_time":100},
+      "Profile 3":{"name":"Older", "active_time":2}
+    }}});
+    for (dir, host) in [
+      ("Default", "unrelated.test"),
+      ("Profile 1", ".instagram.com"),
+      ("Profile 2", "notinstagram.com"),
+      ("Profile 3", "instagram.com.attacker.test"),
+    ] {
+      cookie_db(
+        &base.join(dir).join("Network/Cookies"),
+        "cookies",
+        "host_key",
+        host,
+      );
+    }
+    std::fs::write(base.join("Local State"), cache.to_string()).unwrap();
+    let remembered = format!("chrome:{}", base.join("Profile 2").display());
+    let db = base.join("Profile 1/Network/Cookies");
+    let before = std::fs::read(&db).unwrap();
+    let found = discover_for_host_at(
+      Os::Mac,
+      &p,
+      &p,
+      &p,
+      Some("firefox"),
+      Some(&remembered),
+      Some("www.instagram.com"),
+    );
+    assert_eq!(
+      found
+        .iter()
+        .map(|c| (c.profile.as_str(), c.signed_in))
+        .collect::<Vec<_>>(),
+      [
+        ("Signed in", true),
+        ("Remembered", false),
+        ("Recent", false),
+        ("Older", false)
+      ]
+    );
+    assert_eq!(std::fs::read(db).unwrap(), before);
+    assert!(!has_host_cookies(
+      &base.join("absent"),
+      "chrome",
+      "instagram.com"
+    ));
+    std::fs::write(base.join("broken"), "not sqlite").unwrap();
+    assert!(!has_host_cookies(
+      &base.join("broken"),
+      "chrome",
+      "instagram.com"
+    ));
+    assert!(!has_host_cookies(
+      &base.join("Default/Network/Cookies"),
+      "chrome",
+      "%' OR 1=1;--"
+    ));
+    std::fs::remove_dir_all(p).unwrap();
+  }
+  #[test]
+  fn firefox_ini_names_and_host_hints_include_custom_profile_paths() {
+    for (os, relative, profile) in [
+      (
+        Os::Mac,
+        "Library/Application Support/Firefox",
+        "Profiles/random.default",
+      ),
+      (
+        Os::Windows,
+        "roaming/Mozilla/Firefox",
+        "Profiles/random.default",
+      ),
+      (Os::Linux, ".mozilla/firefox", "random.default"),
+      (
+        Os::Linux,
+        "snap/firefox/common/.mozilla/firefox",
+        "random.default",
+      ),
+      (
+        Os::Linux,
+        ".var/app/org.mozilla.firefox/.mozilla/firefox",
+        "random.default",
+      ),
+    ] {
+      let root = crate::runners::gallery_files::Staging::new().unwrap();
+      let p = &root.path;
+      let base = p.join(relative);
+      cookie_db(
+        &base.join(profile).join("cookies.sqlite"),
+        "moz_cookies",
+        "host",
+        ".instagram.com",
+      );
+      let custom = p.join("external-custom");
+      cookie_db(
+        &custom.join("cookies.sqlite"),
+        "moz_cookies",
+        "host",
+        "other.test",
+      );
+      std::fs::write(base.join("profiles.ini"), format!("[Profile0]\nName=Ahmed.work\nIsRelative=1\nPath={profile}\n\n[Profile1]\nName=Custom\nIsRelative=0\nPath={}\n", custom.display())).unwrap();
+      let found = discover_for_host_at(
+        os,
+        p,
+        &p.join("local"),
+        &p.join("roaming"),
+        None,
+        None,
+        Some("instagram.com"),
+      );
+      assert_eq!(
+        found
+          .iter()
+          .map(|c| (c.profile.as_str(), c.signed_in))
+          .collect::<Vec<_>>(),
+        [("Ahmed.work", true), ("Custom", false)]
+      );
+      assert!(found.iter().all(|c| c
+        .id
+        .split_once(':')
+        .is_some_and(|(_, path)| Path::new(path).is_absolute())));
+    }
+  }
+  #[test]
+  fn mac_default_then_browser_order_newest_profile_and_remembered() {
+    let p = root();
+    touch(
+      &p,
+      "Library/Application Support/Firefox/Profiles/a/cookies.sqlite",
+      1,
+    );
+    touch(
+      &p,
+      "Library/Application Support/Google/Chrome/Default/Cookies",
+      2,
+    );
+    touch(
+      &p,
+      "Library/Application Support/Google/Chrome/Profile 1/Network/Cookies",
+      3,
+    );
+    let found = discover_at(Os::Mac, &p, &p, &p, Some("chrome"), None);
+    assert_eq!(
+      found.iter().map(|c| c.profile.as_str()).collect::<Vec<_>>(),
+      ["Profile 1", "Default", "a"]
+    );
+    let remembered = &found[2].id;
+    assert_eq!(
+      discover_at(Os::Mac, &p, &p, &p, Some("chrome"), Some(remembered))[0].browser,
+      "firefox"
+    );
+    std::fs::remove_dir_all(p).unwrap();
+  }
+  #[test]
+  fn chromium_family_roots_use_local_state_names() {
+    for (os, base, browser, profile) in [
+      (
+        Os::Mac,
+        "Library/Application Support/Microsoft Edge",
+        "edge",
+        "Default",
+      ),
+      (
+        Os::Mac,
+        "Library/Application Support/BraveSoftware/Brave-Browser",
+        "brave",
+        "Default",
+      ),
+      (
+        Os::Mac,
+        "Library/Application Support/Google/Chrome",
+        "chrome",
+        "Default",
+      ),
+      (
+        Os::Mac,
+        "Library/Application Support/Chromium",
+        "chromium",
+        "Default",
+      ),
+      (
+        Os::Mac,
+        "Library/Application Support/Vivaldi",
+        "vivaldi",
+        "Default",
+      ),
+      (
+        Os::Mac,
+        "Library/Application Support/com.operasoftware.Opera",
+        "opera",
+        "",
+      ),
+      (Os::Windows, "Google/Chrome/User Data", "chrome", "Default"),
+      (Os::Windows, "Microsoft/Edge/User Data", "edge", "Default"),
+      (
+        Os::Windows,
+        "BraveSoftware/Brave-Browser/User Data",
+        "brave",
+        "Default",
+      ),
+      (Os::Windows, "Chromium/User Data", "chromium", "Default"),
+      (Os::Linux, ".config/google-chrome", "chrome", "Default"),
+      (Os::Linux, ".config/microsoft-edge", "edge", "Default"),
+      (
+        Os::Linux,
+        ".config/BraveSoftware/Brave-Browser",
+        "brave",
+        "Default",
+      ),
+      (Os::Linux, ".config/vivaldi", "vivaldi", "Default"),
+      (Os::Linux, ".config/opera", "opera", ""),
+      (
+        Os::Linux,
+        "snap/chromium/common/chromium",
+        "chromium",
+        "Default",
+      ),
+      (
+        Os::Linux,
+        "snap/chromium/common/.config/chromium",
+        "chromium",
+        "Default",
+      ),
+      (
+        Os::Linux,
+        ".var/app/org.chromium.Chromium/config/chromium",
+        "chromium",
+        "Default",
+      ),
+      (
+        Os::Linux,
+        ".var/app/com.google.Chrome/config/google-chrome",
+        "chrome",
+        "Default",
+      ),
+      (
+        Os::Linux,
+        ".var/app/com.microsoft.Edge/config/microsoft-edge",
+        "edge",
+        "Default",
+      ),
+      (
+        Os::Linux,
+        ".var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser",
+        "brave",
+        "Default",
+      ),
+      (
+        Os::Linux,
+        ".var/app/com.vivaldi.Vivaldi/config/vivaldi",
+        "vivaldi",
+        "Default",
+      ),
+      (
+        Os::Linux,
+        ".var/app/com.opera.Opera/config/opera",
+        "opera",
+        "",
+      ),
+      (Os::Linux, ".config/chromium", "chromium", "Default"),
+      (Os::Windows, "Vivaldi/User Data", "vivaldi", "Default"),
+      (Os::Windows, "Opera Software/Opera Stable", "opera", ""),
+      (Os::Windows, "Opera Software/Opera GX Stable", "opera", ""),
+      (
+        Os::Mac,
+        "Library/Application Support/com.operasoftware.OperaGX",
+        "opera",
+        "",
+      ),
+    ] {
+      let p = root();
+      let base = p.join(base);
+      let profile_dir = if profile.is_empty() {
+        base.clone()
+      } else {
+        base.join(profile)
+      };
+      std::fs::create_dir_all(&profile_dir).unwrap();
+      std::fs::write(profile_dir.join("Cookies"), "").unwrap();
+      std::fs::write(base.join("Local State"), r#"{"profile":{"info_cache":{"Default":{"name":"Person 1","gaia_given_name":"chat","is_using_default_name":true}}}}"#).unwrap();
+      let found = discover_at(os, &p, &p, &p, None, None);
+      assert_eq!(
+        found
+          .iter()
+          .find(|c| c.id == format!("{browser}:{}", profile_dir.display()))
+          .unwrap()
+          .profile,
+        "chat"
+      );
+      std::fs::remove_dir_all(p).unwrap();
+    }
+  }
+  #[test]
+  fn windows_and_linux_find_only_existing_cookie_databases() {
+    let p = root();
+    touch(
+      &p,
+      "local/Microsoft/Edge/User Data/Default/Network/Cookies",
+      1,
+    );
+    touch(&p, "roaming/Mozilla/Firefox/Profiles/p/cookies.sqlite", 1);
+    let found = discover_at(
+      Os::Windows,
+      &p,
+      &p.join("local"),
+      &p.join("roaming"),
+      Some("edge"),
+      None,
+    );
+    assert_eq!(
+      found.iter().map(|c| c.browser.as_str()).collect::<Vec<_>>(),
+      ["edge", "firefox"]
+    );
+    touch(&p, ".config/google-chrome/Default/Cookies", 1);
+    touch(&p, ".mozilla/firefox/default/cookies.sqlite", 2);
+    assert_eq!(
+      discover_at(Os::Linux, &p, &p, &p, None, None)
+        .iter()
+        .map(|c| c.browser.as_str())
+        .collect::<Vec<_>>(),
+      ["firefox", "chrome"]
+    );
+    assert!(discover_at(Os::Linux, &p.join("missing"), &p, &p, None, None).is_empty());
+    std::fs::remove_dir_all(p).unwrap();
+  }
+}

@@ -1,0 +1,432 @@
+{
+  "rules": [
+    {
+      "code": "unableToExtractIdOrInfo",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Unable to extract video ID" },
+        { "kind": "substr", "value": "Unable to extract uploader id" },
+        { "kind": "substr", "value": "Unable to extract info section" },
+        { "kind": "substr", "value": "Instagram sent an empty media response" },
+        { "kind": "substr", "value": "Requested content is not available, rate-limit reached or login required" },
+        { "kind": "substr", "value": "Incomplete data received" },
+        { "kind": "substr", "value": "TikTok API keeps sending the same page" },
+        { "kind": "substr", "value": "No working app info is available" },
+        { "kind": "substr", "value": "Unable to extract secondary user ID" }
+      ]
+    },
+    {
+      "code": "signInRequired",
+      "component": "Instagram",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "This content is unreachable" },
+        { "kind": "substr", "value": "Restricted Video" }
+      ]
+    },
+    {
+      "code": "videoPasswordRequired",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)(?:video|album) is protected by a password" },
+        { "kind": "regex", "value": "(?i)\\bWrong video password\\b" }
+      ]
+    },
+    {
+      "code": "videoPasswordRequired",
+      "component": "vimeo",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)^Wrong password[.!]?$" }
+      ]
+    },
+    {
+      "code": "videoPasswordRequired",
+      "component": "vimeo:album",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)^Wrong password[.!]?$" }
+      ]
+    },
+    {
+      "code": "videoPasswordRequired",
+      "component": "vimeo:ondemand",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)^Wrong password[.!]?$" }
+      ]
+    },
+    {
+      "code": "videoPasswordRequired",
+      "component": "vimeo:review",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)^Wrong password[.!]?$" }
+      ]
+    },
+    {
+      "code": "videoPasswordRequired",
+      "component": "vimeo:event",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)^Wrong password[.!]?$" }
+      ]
+    },
+    {
+      "code": "noMediaFound",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "No media found" },
+        { "kind": "substr", "value": "This account does not have any videos posted" },
+        { "kind": "substr", "value": "This livestream has ended" },
+        { "kind": "substr", "value": "Twitter Space ended and replay is disabled" }
+      ]
+    },
+    {
+      "code": "mediaNotReady",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "This video is processing" },
+        { "kind": "substr", "value": "Twitter Space ended but not downloadable yet" }
+      ]
+    },
+    {
+      "code": "membersOnly",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "members-only content" },
+        { "kind": "substr", "value": "available to this channel's members" },
+        { "kind": "substr", "value": "subscriber-only content" }
+      ]
+    },
+    {
+      "code": "rateLimited429",
+      "component": "Instagram",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)rate[- ]limit" }
+      ]
+    },
+    {
+      "code": "noAudioTrack",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "unable to obtain file audio codec" }
+      ]
+    },
+    {
+      "code": "signInRequired",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Sign in to confirm your age" },
+        { "kind": "substr", "value": "Sign in required" },
+        { "kind": "substr", "value": "login required" },
+        { "kind": "substr", "value": "private video" },
+        { "kind": "substr", "value": "Account authentication is required" },
+        { "kind": "substr", "value": "only works when logged-in" },
+        { "kind": "substr", "value": "logged-in" },
+        { "kind": "substr", "value": "Use --cookies" },
+        { "kind": "substr", "value": "requires authentication" },
+        { "kind": "substr", "value": "log in to" },
+        { "kind": "substr", "value": "login to" },
+        { "kind": "substr", "value": "age-restricted" },
+        { "kind": "substr", "value": "isn't available to everyone" },
+        { "kind": "substr", "value": "can't be seen by certain audiences" },
+        { "kind": "substr", "value": "private content" },
+        { "kind": "substr", "value": "login_required" },
+        { "kind": "substr", "value": "only available to registered users" },
+        { "kind": "substr", "value": "Login details are needed to download this content" },
+        { "kind": "substr", "value": "only available for registered users" },
+        { "kind": "substr", "value": "is requiring login for access" },
+        { "kind": "substr", "value": "Log in for access" },
+        { "kind": "substr", "value": "Log into an account that has access" },
+        { "kind": "substr", "value": "not authorized to view this protected tweet" },
+        { "kind": "substr", "value": "Quarantined subreddit" },
+        { "kind": "substr", "value": "Private subreddit" }
+      ]
+    },
+    {
+      "code": "signInRequiredForBotDetection",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "not a bot" }
+      ]
+    },
+    {
+      "code": "geoBlocked",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "not available in your country" },
+        { "kind": "substr", "value": "not available from your location" },
+        { "kind": "substr", "value": "geo restriction" },
+        { "kind": "substr", "value": "geolocation" },
+        { "kind": "substr", "value": "IP address is blocked from accessing this post" },
+        { "kind": "substr", "value": "not made this video available in your country" }
+      ]
+    },
+    {
+      "code": "accessForbidden403",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "HTTP Error 403" },
+        { "kind": "substr", "value": "403: Forbidden" },
+        { "kind": "substr", "value": "Access to this resource is forbidden by access policy" },
+        { "kind": "substr", "value": "Your IP address is unable to access the Reddit API" },
+        { "kind": "substr", "value": "blocked due to its TLS fingerprint" },
+        { "kind": "substr", "value": "This event has not been made available to anyone" }
+      ]
+    },
+    {
+      "code": "notFound404",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "HTTP Error 404" },
+        { "kind": "substr", "value": "404: Not Found" }
+      ]
+    },
+    {
+      "code": "server5xx",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "HTTP Error 500" },
+        { "kind": "substr", "value": "HTTP Error 502" },
+        { "kind": "substr", "value": "HTTP Error 503" },
+        { "kind": "substr", "value": "HTTP Error 504" }
+      ]
+    },
+    {
+      "code": "rateLimited429",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "HTTP Error 429" },
+        { "kind": "substr", "value": "Too many requests" },
+        { "kind": "substr", "value": "rate limit" },
+        { "kind": "substr", "value": "rate-limit" }
+      ]
+    },
+    {
+      "code": "requestedFormatUnavailable",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Requested format is not available. Use --list-formats for a list of available formats" }
+      ]
+    },
+    {
+      "code": "unableToExtractInitialData",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Unable to extract yt initial data" },
+        { "kind": "substr", "value": "Did not get any data blocks" }
+      ]
+    },
+    {
+      "code": "nsigExtractionFailed",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "nsig extraction failed" },
+        { "kind": "substr", "value": "Unable to extract Initial JS player n function name" }
+      ]
+    },
+    {
+      "code": "drmProtected",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "is DRM protected" },
+        { "kind": "substr", "value": "This video is DRM protected" }
+      ]
+    },
+    {
+      "code": "embedOnly",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Cannot download embed-only video without embedding URL" }
+      ]
+    },
+    {
+      "code": "photosOnly",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "No video could be found in this tweet" },
+        { "kind": "regex", "value": "(?i)Media #[0-9]+ is not a video" },
+        { "kind": "substr", "value": "There is no video in this post" },
+        { "kind": "substr", "value": "No video could be found in this post" }
+      ]
+    },
+    {
+      "code": "urlNotSupported",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Unsupported URL" }
+      ]
+    },
+    {
+      "code": "urlUnsupported",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "is not a valid URL" }
+      ]
+    },
+    {
+      "code": "unknownUrlType",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "urlopen error unknown url type" }
+      ]
+    },
+    {
+      "code": "networkNameResolutionFailed",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "getaddrinfo failed" }
+      ]
+    },
+    {
+      "code": "playlistPrivateOrMissing",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "The playlist does not exist" }
+      ]
+    },
+    {
+      "code": "videoNotFoundOrPrivate",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Video has not been found" },
+        { "kind": "substr", "value": "does not exist" },
+        { "kind": "substr", "value": "metadata.formats is not iterable" },
+        { "kind": "substr", "value": "Broadcast no longer exists" },
+        { "kind": "substr", "value": "Twitter Space not found" },
+        { "kind": "substr", "value": "This clip is no longer available" }
+      ]
+    },
+    {
+      "code": "channelUnavailable",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "This channel is not available" },
+        { "kind": "regex", "value": "(?i)Channel \"[^\"]+\" not found" }
+      ]
+    },
+    {
+      "code": "ffmpegNotFound",
+      "component": "ffmpeg",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "ffmpeg or avconv not found" },
+        { "kind": "substr", "value": "ffprobe/avprobe and ffmpeg/avconv not found" }
+      ]
+    },
+    {
+      "code": "ffmpegFailed",
+      "component": "ffmpeg",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)ffmpeg (exited|returned).*code\\s*\\d+" },
+        { "kind": "substr", "value": "Error in ffmpeg" }
+      ]
+    },
+    {
+      "code": "cannotAllocateMemory",
+      "component": "ffmpeg",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Cannot allocate memory" }
+      ]
+    },
+    {
+      "code": "permissionDenied",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "[Errno 13]" }
+      ]
+    },
+    {
+      "code": "noWritePermission",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "[Errno 95]" }
+      ]
+    },
+    {
+      "code": "windowsFileMissing",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "[WinError 2]" }
+      ]
+    },
+    {
+      "code": "blockedGeneric",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "The video is blocked" },
+        { "kind": "substr", "value": "Your IP is likely being blocked by Youtube" },
+        { "kind": "substr", "value": "YouTube is requiring a captcha challenge" }
+      ]
+    },
+    {
+      "code": "copyrightClaimed",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "blocked it on copyright grounds" }
+      ]
+    },
+    {
+      "code": "notPremieredYet",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Premieres in" }
+      ]
+    },
+    {
+      "code": "livestreamNotStarted",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "This live event will begin in a few moments" },
+        { "kind": "substr", "value": "This live broadcast has not yet started" },
+        { "kind": "substr", "value": "Twitter Space not started yet" },
+        { "kind": "substr", "value": "This live event is scheduled for" },
+        { "kind": "substr", "value": "This live event has not yet started" }
+      ]
+    },
+    {
+      "code": "sslVerifyFailed",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "SSL: CERTIFICATE_VERIFY_FAILED" },
+        { "kind": "substr", "value": "certificate verify failed" }
+      ]
+    },
+    {
+      "code": "sponsorBlockUnreachable",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Unable to communicate with SponsorBlock API" }
+      ]
+    },
+    {
+      "code": "downloadRetryingFragment",
+      "appliesTo": "warning",
+      "patterns": [
+        { "kind": "substr", "value": "Retrying fragment download" }
+      ]
+    },
+    {
+      "code": "unableToConnectToProxy",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Unable to connect to proxy" }
+      ]
+    },
+    {
+      "code": "mediaUnavailable",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Requested tweet is unavailable" },
+        { "kind": "regex", "value": "(?i)Video #[0-9]+ is unavailable" },
+        { "kind": "substr", "value": "The video is not available, Facebook said:" },
+        { "kind": "substr", "value": "This event video is unavailable" }
+      ]
+    }
+  ],
+  "fallbackCode": "unknown"
+}

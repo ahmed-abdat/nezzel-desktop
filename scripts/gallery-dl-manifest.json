@@ -1,0 +1,29 @@
+{
+  "version": "1.32.19",
+  "python": "3.14.6",
+  "license": "GPL-2.0-only",
+  "project": "https://codeberg.org/mikf/gallery-dl",
+  "source": {
+    "url": "https://codeberg.org/mikf/gallery-dl/releases/download/v1.32.19/gallery_dl-1.32.19.tar.gz",
+    "sha256": "63323bc1bc37b8ba25c19d2ef7a86158d1f79cccaee8d69dda907986f3f3e824"
+  },
+  "assets": {
+    "linux-x64": {
+      "url": "https://codeberg.org/mikf/gallery-dl/releases/download/v1.32.19/gallery-dl.bin",
+      "sha256": "9662483cafa72f51ce4b2153aebd620256a9ab536218674b8794f7b3ece11c29"
+    },
+    "windows-x64": {
+      "url": "https://codeberg.org/mikf/gallery-dl/releases/download/v1.32.19/gallery-dl.exe",
+      "sha256": "4dda3f14efbc8a8e616af1fc7e1e88d795995326b47692453e620117254dec18"
+    }
+  },
+  "targets": {
+    "aarch64-apple-darwin": "native",
+    "x86_64-apple-darwin": "native",
+    "aarch64-unknown-linux-gnu": "native",
+    "x86_64-unknown-linux-gnu": "linux-x64",
+    "x86_64-pc-windows-msvc": "windows-x64",
+    "aarch64-pc-windows-msvc": "windows-x64"
+  },
+  "notes": "Windows 11 ARM64 runs the official x64 sidecar through OS emulation. Native builds are unsigned; Developer ID signing is a separate owner gate."
+}

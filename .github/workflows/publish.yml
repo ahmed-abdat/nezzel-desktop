@@ -1,0 +1,433 @@
+name: 'Publish'
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write
+    env:
+      WINDOWS_PFX_B64: ${{ secrets.WINDOWS_PFX_B64 }}
+      WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+      # Unset secrets mean "off": unsigned macOS beta (ad-hoc), no Sentry, no MSIX.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      HAS_SENTRY: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+            galleryTarget: 'aarch64-apple-darwin'
+          - platform: 'macos-15-intel'
+            args: '--target x86_64-apple-darwin'
+            galleryTarget: 'x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+            galleryTarget: 'x86_64-unknown-linux-gnu'
+          - platform: 'ubuntu-22.04-arm'
+            args: ''
+            galleryTarget: 'aarch64-unknown-linux-gnu'
+          - platform: 'windows-latest'
+            args: ''
+            galleryTarget: 'x86_64-pc-windows-msvc'
+          - platform: 'windows-11-arm'
+            args: ''
+            galleryTarget: 'aarch64-pc-windows-msvc'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04' || matrix.platform == 'ubuntu-22.04-arm'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: setup node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: install Rust 1.99.1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.99.1
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.platform == 'windows-11-arm' && 'aarch64-pc-windows-msvc' || '' }}
+
+      - name: Install cargo-about
+        uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        with:
+          tool: cargo-about
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: './src-tauri -> target'
+          # One cache per runner image: C objects built against another glibc fail to link.
+          prefix-key: v2-${{ matrix.platform }}
+
+      # install-action has no x86_64-macOS cargo-about build; its binstall fallback can leave a
+      # binary `cargo about` can't run. Check the real subcommand after the cache restore.
+      - name: Ensure cargo-about works
+        shell: bash
+        run: cargo about --version || cargo install cargo-about --locked --force --features cli && cargo about --version
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up pinned Python for gallery-dl preparation
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14.6'
+
+      - name: Prepare hash-verified gallery-dl and installer tools
+        run: python scripts/fetch-gallery-dl.py --target ${{ matrix.galleryTarget }} && python scripts/fetch-tools.py --target ${{ matrix.galleryTarget }}
+
+      - name: Ad-hoc sign without an Apple certificate (macOS only)
+        if: startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT != 'true'
+        run: echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+
+      - name: Import Apple Developer Certificate (MacOS only)
+        if: startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain
+
+      - name: Prepare notarization key (macOS only)
+        if: startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          mkdir -p "$(dirname "$APPLE_API_KEY_PATH")"
+          printf '%s' "$APPLE_API_KEY_P8" > "$APPLE_API_KEY_PATH"
+          # Notarization env reaches the build only when signing is on (empty values would still trigger it).
+          {
+            echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+            echo "APPLE_API_KEY=$APPLE_API_KEY"
+            echo "APPLE_API_KEY_PATH=$APPLE_API_KEY_PATH"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Sentry CLI
+        if: matrix.platform != 'windows-11-arm' && env.HAS_SENTRY == 'true'
+        uses: matbour/setup-sentry-cli@ac9d752ca8f44ef545fb2ce2dcd329cce57d778b # v2
+        with:
+          version: 2.58.2
+          token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          organization: ${{ secrets.SENTRY_ORG }}
+          project: ${{ secrets.SENTRY_PROJECT }}
+
+      # TEMPORARY WORKAROUND:
+      # Use a custom tauri-cli branch to enable the new "truly portable" AppImage format.
+      # This relies on TAURI_BUNDLER_NEW_APPIMAGE_FORMAT=true and can be removed once
+      # https://github.com/tauri-apps/tauri/pull/12491 is merged and released upstream.
+      #
+      # Pin to the last revision before the quick-sharun migration, which started
+      # delegating bundling to a mutable external script downloaded at build time.
+      - name: Override tauri-cli (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04' || matrix.platform == 'ubuntu-22.04-arm'
+        shell: bash
+        run: |
+          cargo install tauri-cli --git https://github.com/tauri-apps/tauri --rev b5573c1db2bb6118594b586a6aa51aeb37aa7d84 --locked --force
+          echo "TAURI_BUNDLER_NEW_APPIMAGE_FORMAT=true" >> $GITHUB_ENV
+
+      # TEMPORARY WORKAROUND:
+      # Because we use "cargo tauri" in that tauri build step, we always have to install tauri cli here.
+      - name: Install tauri-cli
+        if: matrix.platform != 'ubuntu-22.04' && matrix.platform != 'ubuntu-22.04-arm'
+        shell: bash
+        run: |
+          cargo install tauri-cli
+
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        id: tauri
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Our own Sentry project (owner-set secret); unset means the build sends nothing.
+          NEZZEL_SENTRY_DSN: ${{ secrets.NEZZEL_SENTRY_DSN }}
+          # TEMPORARY WORKAROUND:
+          # This environment variable is needed to enable the new appimage features.
+          TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: "true"
+        with:
+          tagName: app-v__VERSION__
+          releaseName: 'Nezzel v__VERSION__'
+          releaseBody: 'See the assets to download this version and install. If you have an existing install, it will auto-update on launch.'
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          # TEMPORARY WORKAROUND:
+          # This option is needed to use the possibly overriden branch of tauri-cli, to fix appimages.
+          tauriScript: 'cargo tauri'
+          args: ${{ matrix.args }}
+
+      - name: Create public PDBs (Windows only)
+        if: matrix.platform == 'windows-latest' || matrix.platform == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          $kitsRoot = "${Env:ProgramFiles(x86)}\Windows Kits\10"
+          if (-not (Test-Path $kitsRoot)) {
+            Write-Error "Windows 10 Kits folder not found at $kitsRoot"
+          }
+
+          $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'x64' }
+          $pdbcopy = Get-ChildItem -Path $kitsRoot -Recurse -Filter "pdbcopy.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\$arch\\pdbcopy\.exe$" } |
+            Select-Object -First 1
+
+          if (-not $pdbcopy -and $env:RUNNER_ARCH -eq 'ARM64') {
+            $pdbcopy = Get-ChildItem -Path $kitsRoot -Recurse -Filter "pdbcopy.exe" -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match "\\x64\\pdbcopy\.exe$" } |
+              Select-Object -First 1
+          }
+
+          if (-not $pdbcopy) {
+            Write-Error "pdbcopy.exe not found under $kitsRoot"
+          }
+
+          $pdbs = Get-ChildItem -Path "src-tauri/target/release" -Filter "*.pdb"
+          if (-not $pdbs) {
+            Write-Error "No PDB files found under src-tauri/target/release"
+          }
+
+          $publicDir = "src-tauri/target/release/public-pdb"
+          New-Item -ItemType Directory -Path $publicDir -Force | Out-Null
+
+          foreach ($pdb in $pdbs) {
+            $outPath = Join-Path $publicDir $pdb.Name
+            & "$($pdbcopy.FullName)" "$($pdb.FullName)" "$outPath" -p
+          }
+
+      - name: Upload debug symbols to Sentry
+        if: matrix.platform != 'windows-11-arm' && env.HAS_SENTRY == 'true'
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          VERSION="$(node -p 'require("./package.json").version')"
+          SENTRY_RELEASE="nezzel@${VERSION}"
+          export SENTRY_RELEASE
+          
+          echo "Using Sentry release: $SENTRY_RELEASE"
+          
+          cd src-tauri
+          
+          if [ -d "target/release/public-pdb" ]; then
+            sentry-cli debug-files upload --include-sources target/release/public-pdb
+          else
+            sentry-cli debug-files upload --include-sources target/release
+          fi
+          
+          if [ "${{ matrix.platform }}" = "ubuntu-22.04" ]; then
+            sentry-cli releases new "$SENTRY_RELEASE" || true
+            sentry-cli releases set-commits "$SENTRY_RELEASE" --auto || true
+            sentry-cli releases finalize "$SENTRY_RELEASE" || true
+          fi
+
+      - name: Stage pinned installer payload for MSIX (Windows only)
+        if: matrix.platform == 'windows-latest' || matrix.platform == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          $appFolder = "msix-layout/Nezzel"
+          New-Item -ItemType Directory -Path "$appFolder/bin" -Force | Out-Null
+          foreach ($sidecar in @("aria2c.exe", "gallery-dl.exe", "ffmpeg.exe", "ffprobe.exe", "deno.exe", "gallery-dl.sha256")) {
+            Copy-Item (Join-Path "src-tauri/target/release" $sidecar) -Destination $appFolder -Force
+          }
+          Copy-Item "src-tauri/target/release/tools" -Destination $appFolder -Recurse -Force
+          # Store binaries are immutable. Use the same bundled paths as NSIS/portable.
+          $metadata = @{ is_locked = $true; versions = @{} }
+          $metadata | ConvertTo-Json | Set-Content "$appFolder/bin/metadata.json"
+
+      - name: Bundle Portable Version (Windows only)
+        if: matrix.platform == 'windows-latest' || matrix.platform == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          $releaseDir = "src-tauri/target/release"
+          $layoutRoot = "portable-layout"
+          $portableFolder = "ovd-portable"
+
+          $pkg = Get-Content -Raw "package.json" | ConvertFrom-Json
+          $version = $pkg.version
+          
+          # Detect architecture
+          $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'x64' }
+          
+          $zipName = "Nezzel_$($version)_$($arch)-portable.zip"
+          $exeName = "Nezzel_$($version)_$($arch).exe"
+          $keepFileName = ".keep"
+          
+          $tagName = "app-v$version"
+          Write-Host "Building portable bundle for $arch architecture: $zipName"
+          Write-Host "Using release tag: $tagName"
+          
+          # The app binary, not a bundled sidecar (aria2c/gallery-dl .exe also sit in this folder).
+          $exe = Get-Item -Path (Join-Path $releaseDir "nezzel.exe") -ErrorAction SilentlyContinue
+          if (-not $exe) { Write-Error "Could not find main exe in $releaseDir" }
+          
+          New-Item -ItemType Directory -Path "$layoutRoot/$portableFolder" -Force | Out-Null
+          New-Item -ItemType File -Path "$layoutRoot/$portableFolder/$keepFileName" -Value "Do not remove this file or directory." -Force | Out-Null
+          Copy-Item $exe.FullName -Destination "$layoutRoot/$exeName" -Force
+          foreach ($sidecar in @("aria2c.exe", "gallery-dl.exe", "ffmpeg.exe", "ffprobe.exe", "deno.exe", "gallery-dl.sha256")) {
+            Copy-Item (Join-Path $releaseDir $sidecar) -Destination $layoutRoot -Force
+          }
+          Copy-Item (Join-Path $releaseDir "tools") -Destination $layoutRoot -Recurse -Force
+          Copy-Item (Join-Path $releaseDir "licenses") -Destination $layoutRoot -Recurse -Force
+          
+          Compress-Archive -Path "$layoutRoot/*" -DestinationPath $zipName -Force
+      
+          echo "PORTABLE_ASSET=$zipName" >> $env:GITHUB_ENV
+          echo "RELEASE_TAG=$tagName" >> $env:GITHUB_ENV
+
+      - name: Upload Portable (Windows only)
+        if: matrix.platform == 'windows-latest' || matrix.platform == 'windows-11-arm'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Uploading ${PORTABLE_ASSET} to release ${RELEASE_TAG}"
+          gh release upload "${RELEASE_TAG}" "${PORTABLE_ASSET}" --clobber
+
+      - name: Install VC++ runtime (Windows ARM64 only)
+        if: matrix.platform == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP "vc_redist.arm64.exe"
+          Invoke-WebRequest -Uri "https://aka.ms/vc14/vc_redist.arm64.exe" -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList "/install","/quiet","/norestart" -Wait
+
+      - name: Build and sign MSIX (Windows only)
+        if: (matrix.platform == 'windows-latest' || matrix.platform == 'windows-11-arm') && env.WINDOWS_PFX_B64 != ''
+        uses: ./.github/actions/msix-build-sign
+        with:
+          pfx-b64: ${{ secrets.WINDOWS_PFX_B64 }}
+          pfx-password: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+          architecture: ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Upload MSIX artifact (Windows only)
+        if: (matrix.platform == 'windows-latest' || matrix.platform == 'windows-11-arm') && env.WINDOWS_PFX_B64 != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nezzel-msix-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          path: Nezzel_${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}.msix
+
+      - name: Upload PDB symbols (Windows only)
+        if: matrix.platform == 'windows-latest' || matrix.platform == 'windows-11-arm'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nezzel-pdb-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+          path: src-tauri/target/release/public-pdb/*.pdb
+
+  package-appxupload:
+    # Store package: needs the WINDOWS_PFX secrets; turn on with the MSIX_ENABLED repo variable.
+    if: vars.MSIX_ENABLED == 'true'
+    runs-on: windows-latest
+    needs: publish-tauri
+    permissions:
+      contents: read
+    steps:
+      - name: Download x64 MSIX
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nezzel-msix-x64
+          path: dist/msix/x64
+
+      - name: Download arm64 MSIX
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nezzel-msix-arm64
+          path: dist/msix/arm64
+
+      - name: Download x64 PDB symbols
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nezzel-pdb-x64
+          path: dist/symbols/x64
+
+      - name: Download arm64 PDB symbols
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nezzel-pdb-arm64
+          path: dist/symbols/arm64
+
+      - name: Create msixupload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+  
+          $makeappx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "MakeAppx.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1 | ForEach-Object FullName
+          if (-not $makeappx) { throw "MakeAppx.exe not found (Windows SDK missing?)" }
+  
+          $x64 = Get-ChildItem "dist/msix/x64"   -Filter "*.msix" | Select-Object -First 1
+          $arm64 = Get-ChildItem "dist/msix/arm64" -Filter "*.msix" | Select-Object -First 1
+          if (-not $x64)   { throw "Missing x64 .msix under dist/msix/x64" }
+          if (-not $arm64) { throw "Missing arm64 .msix under dist/msix/arm64" }
+  
+          if (Test-Path "unpack_tmp") { Remove-Item "unpack_tmp" -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path "unpack_tmp" | Out-Null
+          & $makeappx unpack /p $x64.FullName /d "unpack_tmp" | Out-Null
+          [xml]$xml = Get-Content "unpack_tmp\AppxManifest.xml"
+          $version = $xml.Package.Identity.Version
+          if (-not $version) { throw "Failed to read Identity.Version from x64 manifest" }
+  
+          $pdbs = Get-ChildItem -Path "dist/symbols" -Filter "*.pdb" -Recurse
+          if (-not $pdbs) { throw "No PDB files found under dist/symbols" }
+          Compress-Archive -Path $pdbs.FullName -DestinationPath "Nezzel.appxsym" -Force
+  
+          if (Test-Path "bundle_in") { Remove-Item "bundle_in" -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path "bundle_in" | Out-Null
+          Copy-Item $x64.FullName "bundle_in\Nezzel_x64.msix" -Force
+          Copy-Item $arm64.FullName "bundle_in\Nezzel_arm64.msix" -Force
+  
+          & $makeappx bundle /d "bundle_in" /p "Nezzel.msixbundle" /bv $version | Out-Null
+  
+          if (Test-Path "upload") { Remove-Item "upload" -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path "upload" | Out-Null
+          Copy-Item "Nezzel.msixbundle" "upload\" -Force
+          Copy-Item "Nezzel.appxsym" "upload\" -Force
+  
+          Compress-Archive -Path "upload\*" -DestinationPath "Nezzel.msixupload" -Force
+
+      - name: Upload msixupload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nezzel-msixupload
+          path: Nezzel.msixupload

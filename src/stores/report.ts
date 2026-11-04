@@ -1,0 +1,144 @@
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
+import { i18n } from '../i18n';
+import { useToastStore } from './toast';
+import { usePreferencesStore } from './preferences';
+import { useOnboardingStore } from './onboarding';
+import router from '../router';
+
+/** Built and scrubbed in Rust (`diagnostics::report`). */
+export interface ProblemReport {
+  title: string;
+  body: string;
+}
+
+/** A failed row's context: error code and stage trail. Rust reduces the link (`link_for_report`). */
+export interface ReportDownloadContext {
+  errorCode: string | null;
+  exitCode: number | null;
+  attempts: { stage: string; login: boolean; outcome: string; code: string | null; ms: number }[];
+}
+
+export interface ReportedDownload {
+  context: ReportDownloadContext;
+  url: string | null;
+  extractor: string | null;
+}
+
+const t = (key: string) => i18n.global.t(key);
+
+/** A download failed: Rust sends it when reports are on (site + link shape only). */
+export function reportFailedDownload(download: ReportedDownload): void {
+  // Never let reporting break failure handling (a mocked or missing backend may not return a promise).
+  try {
+    void Promise.resolve(invoke('diagnostics_download_failed', { download: download.context, url: download.url, extractor: download.extractor })).catch(() => {});
+  } catch {
+    // Reporting is best effort.
+  }
+}
+
+export const useReportStore = defineStore('report', () => {
+  const open = ref(false);
+  const download = ref<ReportedDownload | null>(null);
+  const sending = ref(false);
+  const toast = useToastStore();
+
+  function openReport(failed?: ReportedDownload) {
+    download.value = failed ?? null;
+    sending.value = false;
+    open.value = true;
+  }
+
+  function close() {
+    if (!sending.value) open.value = false;
+  }
+
+  function args(note: string, includeLink: boolean) {
+    return {
+      note: note.trim() || null,
+      download: download.value?.context ?? null,
+      url: download.value?.url ?? null,
+      extractor: download.value?.extractor ?? null,
+      includeLink,
+    };
+  }
+
+  /** Copy the same scrubbed text, for when sending is not possible. */
+  async function copyDetails(note: string, includeLink: boolean) {
+    try {
+      const report = await invoke<ProblemReport>('diagnostics_report', args(note, includeLink));
+      await navigator.clipboard.writeText(report.body);
+      toast.showToast(t('report.copied'), { style: 'success' });
+    } catch {
+      toast.showToast(t('report.copyFailed'), { style: 'error' });
+    }
+  }
+
+  async function send(note: string, includeLink: boolean) {
+    sending.value = true;
+    try {
+      await invoke('diagnostics_send', args(note, includeLink));
+      open.value = false;
+      toast.showToast(t('report.sent'), { style: 'success' });
+    } catch {
+      toast.showToast(t('report.sendFailed'), {
+        style: 'error',
+        duration: 8000,
+        action: { label: t('report.copyDetails'), run: () => void copyDetails(note, includeLink) },
+      });
+    } finally {
+      sending.value = false;
+    }
+  }
+
+  let started = false;
+  /**
+   * Once per launch, after the welcome sheet. Installs from before reports existed see a one-time
+   * notice first, and a crash from that run is offered, not sent on its own.
+   */
+  async function startupChecks() {
+    if (started) return;
+    started = true;
+    const preferences = usePreferencesStore();
+    const needsNotice = !useOnboardingStore().sawReportsSwitch
+      && preferences.preferences?.onboarding !== undefined
+      && !preferences.preferences.onboarding.reportsNoticeDone;
+    if (needsNotice) {
+      toast.showToast(t('report.notice.text'), {
+        style: 'info',
+        duration: 0,
+        action: { label: t('report.notice.action'), run: () => void router.push({ name: 'settings.advanced' }) },
+      });
+      void preferences.patch({ onboarding: { reportsNoticeDone: true } }).catch(() => {});
+    }
+    await checkCrash(!needsNotice);
+  }
+
+  /** Previous run's crash: Rust deletes the file as it reads it, so this shows once. */
+  async function checkCrash(auto = true) {
+    let notice: { sent: boolean } | null = null;
+    try {
+      notice = await invoke<{ sent: boolean } | null>('diagnostics_crash_check', { auto });
+    } catch {
+      return;
+    }
+    if (!notice) return;
+    if (notice.sent) {
+      toast.showToast(t('report.crashSent'), { style: 'info', duration: 8000 });
+      return;
+    }
+    toast.showToast(t('report.crashTitle'), {
+      style: 'warning',
+      duration: 0,
+      action: {
+        label: t('report.sendCrash'),
+        run: () => void invoke('diagnostics_send_crash')
+          .then(() => toast.showToast(t('report.sent'), { style: 'success' }))
+          .catch(() => toast.showToast(t('report.sendFailed'), { style: 'error' })),
+      },
+    });
+  }
+
+  return { open, download, sending, openReport, close, send, checkCrash, startupChecks };
+});
