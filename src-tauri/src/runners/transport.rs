@@ -1,3 +1,4 @@
+use crate::binaries::bundled_tools::sidecar_candidates;
 use serde_json::Value;
 use std::{
   io::Read,
@@ -83,22 +84,17 @@ fn find_bundled_aria2(exe: Option<&Path>, resources: Option<&Path>) -> Option<Pa
   } else {
     "aria2c"
   };
-  let mut paths = Vec::new();
-  if let Some(dir) = exe.and_then(Path::parent) {
-    paths.push(dir.join(name));
-  }
-  if let Some(dir) = resources {
-    paths.push(dir.join(name));
-  }
-  paths.into_iter().find(|path| {
-    if !executable(path) {
-      return false;
-    }
-    let mut header = [0; STUB_MARKER.len()];
-    std::fs::File::open(path)
-      .and_then(|mut f| f.read(&mut header))
-      .is_ok_and(|size| !header[..size].starts_with(STUB_MARKER))
-  })
+  sidecar_candidates(exe, resources, name)
+    .into_iter()
+    .find(|path| {
+      if !executable(path) {
+        return false;
+      }
+      let mut header = [0; STUB_MARKER.len()];
+      std::fs::File::open(path)
+        .and_then(|mut f| f.read(&mut header))
+        .is_ok_and(|size| !header[..size].starts_with(STUB_MARKER))
+    })
 }
 fn executable(path: &Path) -> bool {
   let Ok(meta) = std::fs::metadata(path) else {

@@ -19,7 +19,7 @@
                 <template #chev><span class="cn-chev" role="img" aria-label="^"><ChevronUp class="size-[11px]" aria-hidden="true" /></span></template>
               </i18n-t>
             </p>
-            <p v-else-if="os === 'linux'" id="cn-hint" class="cn-p cn-hint">{{ t('closeNote.hintLinux') }}</p>
+            <p v-else-if="os === 'linux'" id="cn-hint" class="cn-p cn-hint">{{ t(`closeNote.${linuxHintKey(desktop ?? 'other')}`) }}</p>
           </div>
         </div>
         <div class="mt-3 flex justify-end gap-2">
@@ -40,8 +40,9 @@ import { ChevronUp } from '@lucide/vue';
 import nezzelMark from '../../assets/brand/nezzel-mark.svg';
 import { Button } from '../ui/button';
 import { localeDirection } from '../../i18n';
+import { linuxHintKey, type LinuxDesktop } from './desktopOs';
 
-const props = defineProps<{ os: string; edge: 'top' | 'bottom'; arrowX: number }>();
+const props = defineProps<{ os: string; desktop?: LinuxDesktop; edge: 'top' | 'bottom'; arrowX: number }>();
 const { t, locale } = useI18n();
 const dir = computed(() => localeDirection(locale.value));
 const hint = computed(() => props.os === 'windows' || props.os === 'linux');

@@ -139,6 +139,16 @@ describe('ShortcutRecorder', () => {
     }
   });
 
+  it('lets a plain Tab leave while recording instead of trapping keyboard focus', async () => {
+    const wrapper = mountRecorder();
+    const control = wrapper.get('[data-testid="shortcut-control"]');
+    await control.trigger('click');
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', code: 'Tab', cancelable: true, bubbles: true });
+    control.element.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(false);
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+  });
+
   it('shows held modifiers live and explains how to record', async () => {
     const wrapper = mountRecorder();
     const control = wrapper.get('[data-testid="shortcut-control"]');

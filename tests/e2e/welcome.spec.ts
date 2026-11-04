@@ -28,3 +28,21 @@ test('fresh profile: welcome, Get started, then the main list', async ({ page, c
   await expect(welcome).toBeHidden();
   await expect(page.locator('#queue-url-input')).toBeVisible();
 });
+
+test('keyboard: Tab goes through the switches to Get started, with a visible focus ring', async ({ page }) => {
+  await page.goto('/');
+  const welcome = page.getByTestId('welcome');
+  await expect(welcome).toBeFocused({ timeout: 20_000 });
+  const order: string[] = [];
+  for (let i = 0; i < 8 && !order.includes('welcome-start-button'); i++) {
+    await page.keyboard.press('Tab');
+    order.push(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.testid ?? ''));
+  }
+  expect(order).toEqual(['welcome-card', 'welcome-start', 'welcome-reports', 'welcome-start-button']);
+  const start = page.getByTestId('welcome-start-button');
+  await expect(start).toBeFocused();
+  // The ring is the primary hue: without an offset it melts into the button.
+  expect(await start.evaluate(el => getComputedStyle(el).getPropertyValue('--tw-ring-offset-width').trim())).toBe('2px');
+  await page.keyboard.press('Enter');
+  await expect(welcome).toBeHidden();
+});

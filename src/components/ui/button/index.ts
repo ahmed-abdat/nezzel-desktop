@@ -8,7 +8,8 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground shadow-xs hover:bg-primary-hover',
+        // The ring shares the primary hue: an offset keeps keyboard focus visible on the fill.
+        default: 'bg-primary text-primary-foreground shadow-xs hover:bg-primary-hover focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         outline: 'border border-input bg-card text-foreground shadow-xs hover:bg-accent',
         secondary: 'bg-muted text-foreground hover:bg-accent',
         ghost: 'text-foreground hover:bg-foreground/[0.06]',

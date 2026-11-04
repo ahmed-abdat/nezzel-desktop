@@ -1899,7 +1899,9 @@
     "place": {
       "mac": "menu bar",
       "windows": "tray, by the clock",
-      "linux": "top bar"
+      "linux": "top bar",
+      "linuxKde": "system tray",
+      "linuxOther": "notification area"
     },
     "privacy": "No account needed and no ads. You can turn reports off anytime",
     "getStarted": "Get started",
@@ -1946,6 +1948,8 @@
     "body": "Copied links still bring up the card, and this icon opens Nezzel again",
     "hintWindows": "It sits under {chev} by the clock. Drag it onto the taskbar to keep it in view",
     "hintLinux": "No icon in your top bar? Open Nezzel from Activities",
+    "hintKde": "No icon in your panel? Look under the arrow in the system tray",
+    "hintOther": "No icon in your panel? Open Nezzel from your app menu",
     "quit": "Quit Nezzel",
     "gotIt": "Got it"
   },

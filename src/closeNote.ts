@@ -21,6 +21,7 @@ export async function mountCloseNote() {
   const q = new URLSearchParams(location.search);
   const app = createApp(CloseNote, {
     os: q.get('os') ?? 'mac',
+    desktop: (['gnome', 'kde', 'other'] as const).find(d => d === q.get('desktop')) ?? 'other',
     edge: q.get('edge') === 'bottom' ? 'bottom' : 'top',
     arrowX: Number(q.get('nx')) || 160,
   }).use(i18n);

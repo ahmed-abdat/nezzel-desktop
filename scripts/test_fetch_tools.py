@@ -54,6 +54,15 @@ class FetchToolsTests(unittest.TestCase):
                 self.assertEqual(binary.read_bytes(), b'ffmpeg')
                 with patch.object(bootstrap.urllib.request, 'urlopen', side_effect=AssertionError('cache unexpectedly downloaded')):
                     bootstrap.install('x86_64-unknown-linux-gnu')
+                # Linux packages ship tools as resources (never /usr/bin), arch-neutral and executable.
+                staged = root / 'src-tauri/binaries/linux-tools'
+                self.assertEqual(sorted(p.name for p in staged.iterdir()), ['deno', 'ffmpeg', 'ffprobe'])
+                self.assertTrue(all(p.stat().st_mode & 0o111 for p in staged.iterdir()))
+                (root / 'src-tauri/binaries/aria2c-x86_64-unknown-linux-gnu').write_bytes(b'aria2')
+                (staged / 'leftover').write_bytes(b'old')
+                with patch.object(bootstrap.urllib.request, 'urlopen', side_effect=AssertionError('cache unexpectedly downloaded')):
+                    bootstrap.install('x86_64-unknown-linux-gnu')
+                self.assertEqual(sorted(p.name for p in staged.iterdir()), ['aria2c', 'deno', 'ffmpeg', 'ffprobe'])
 
     def test_windows_arm64_archive_entries_use_exe_sidecars_and_preserve_onedir(self):
         with tempfile.TemporaryDirectory() as tmp:

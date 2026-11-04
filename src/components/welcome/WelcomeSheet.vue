@@ -32,7 +32,7 @@
               <Power class="wl-ic" aria-hidden="true" />
               <span class="min-w-0 flex-1">
                 <label id="wl-start-l" for="wl-start" class="wl-label">{{ t('welcome.start.label') }}</label>
-                <small id="wl-start-d" class="wl-help">{{ t('welcome.start.help', { place: t(`welcome.place.${os}`) }) }}</small>
+                <small id="wl-start-d" class="wl-help">{{ t('welcome.start.help', { place: t(`welcome.place.${trayPlaceKey(os, capturePlatform.desktop)}`) }) }}</small>
               </span>
               <Switch id="wl-start" v-model="start" class="wl-sw" aria-labelledby="wl-start-l" aria-describedby="wl-start-d" data-testid="welcome-start" />
             </div>
@@ -96,7 +96,7 @@ import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
 import WelcomeDemo from './WelcomeDemo.vue';
 import WelcomeShortcut from './WelcomeShortcut.vue';
-import { desktopOs, folderLabel } from './desktopOs';
+import { desktopOs, folderLabel, trayPlaceKey } from './desktopOs';
 import { localeDirection } from '../../i18n';
 import { usePlatform } from '../../composables/usePlatform';
 import { useSettingsStore } from '../../stores/settings';

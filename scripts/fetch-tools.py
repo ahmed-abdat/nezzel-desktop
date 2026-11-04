@@ -165,7 +165,27 @@ def install(target):
     temporary = index_path.with_suffix('.json.tmp')
     temporary.write_text(json.dumps(index, sort_keys=True) + '\n')
     temporary.replace(index_path)
+    if 'linux' in target:
+        stage_linux(target)
     return index
+
+
+# Linux packages put externalBin in /usr/bin, over the distro's ffmpeg/aria2. tauri.linux.conf.json
+# ships these as resources instead (<resources>/tools/<name>); stage them under arch-neutral names.
+LINUX_SIDECARS = ('aria2c', 'gallery-dl', 'ffmpeg', 'ffprobe', 'deno')
+
+
+def stage_linux(target):
+    binaries = ROOT / 'src-tauri/binaries'
+    staged = binaries / 'linux-tools'
+    if staged.exists():
+        shutil.rmtree(staged)
+    staged.mkdir()
+    for name in LINUX_SIDECARS:
+        source = binaries / f'{name}-{target}'
+        if source.is_file():
+            shutil.copyfile(source, staged / name)
+            (staged / name).chmod(0o755)
 
 
 # Tauri signs externalBin itself, but resource executables need explicit nested signing.

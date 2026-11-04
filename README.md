@@ -52,7 +52,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 **Is it free?** Yes, and open source under the AGPL-3.0. No ads, no account, no paid tier.
 
-**Does Nezzel send anything to a server?** No Nezzel server exists. The app talks to the sites you save from, and to GitHub for tool and app updates. Releases contain no analytics or crash reporting. Details in [PRIVACY.md](PRIVACY.md).
+**Does Nezzel send anything to a server?** No Nezzel server exists. The app talks to the sites you save from, and to GitHub for tool and app updates. Crash and error reports go to our own Sentry project (EU), on by default; they never include links, file names, paths or cookies, and you can turn them off in Settings or on the welcome screen. No analytics. Details in [PRIVACY.md](PRIVACY.md).
 
 **Why does my OS warn me when I install it?** The beta isn't code-signed yet. See [Install](#install) for the one-time step.
 
@@ -70,7 +70,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 حمّل التطبيق من [صفحة الإصدارات](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). النسخة التجريبية غير موقّعة بعد، لذلك قد يحذّرك النظام عند فتحها أول مرة: في macOS افتح «إعدادات النظام ← الخصوصية والأمن» واضغط «فتح على أي حال»، وفي Windows اضغط «More info» ثم «Run anyway».
 
-لا يرسل التطبيق أي بيانات إلى خادم لـ Nezzel، ولا يقرأ ملفات تعريف الارتباط (الكوكيز) من متصفحك إلا بعد موافقتك، ولا يمرّر إلا كوكيز الموقع الذي طلبها. التفاصيل في [PRIVACY.md](PRIVACY.md).
+لا يوجد خادم لـ Nezzel. تُرسَل تقارير الأعطال والأخطاء إلى مشروعنا في Sentry (في الاتحاد الأوروبي) وهي مفعّلة افتراضيًا، دون الروابط أو أسماء الملفات أو المسارات أو الكوكيز، ويمكنك إيقافها من الإعدادات أو من شاشة الترحيب. ولا يقرأ ملفات تعريف الارتباط (الكوكيز) من متصفحك إلا بعد موافقتك، ولا يمرّر إلا كوكيز الموقع الذي طلبها. التفاصيل في [PRIVACY.md](PRIVACY.md).
 
 يوجد أيضًا [Nezzel لأندرويد](https://github.com/ahmed-abdat/nezzel).
 
@@ -82,7 +82,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 Copiez un lien : Nezzel le détecte (ou collez-le dans le champ). Choisissez la qualité, puis cliquez sur «&nbsp;Télécharger&nbsp;». Les fichiers vont dans `Downloads/Nezzel`. Téléchargez l’application depuis la [page des versions](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest).
 
-La bêta n’est pas encore signée : au premier lancement, macOS demande d’autoriser l’app dans Réglages Système → Confidentialité et sécurité, et Windows SmartScreen demande «&nbsp;Informations complémentaires → Exécuter quand même&nbsp;». Aucune donnée n’est envoyée à un serveur Nezzel. Détails dans [PRIVACY.md](PRIVACY.md).
+La bêta n’est pas encore signée : au premier lancement, macOS demande d’autoriser l’app dans Réglages Système → Confidentialité et sécurité, et Windows SmartScreen demande «&nbsp;Informations complémentaires → Exécuter quand même&nbsp;». Il n’y a pas de serveur Nezzel. Les rapports de plantage et d’erreur partent vers notre projet Sentry (UE), activés par défaut, sans liens, noms de fichiers, chemins ni cookies ; vous pouvez les désactiver dans les Réglages ou sur l’écran d’accueil. Détails dans [PRIVACY.md](PRIVACY.md).
 
 ## For developers
 

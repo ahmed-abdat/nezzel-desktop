@@ -24,3 +24,22 @@ test('Cmd/Ctrl+V anywhere in the window pastes the copied link into the field', 
   await page.keyboard.press('ControlOrMeta+V');
   await expect(page.locator('#queue-url-input')).toHaveValue('https://example.com/pasted');
 });
+
+test('Ctrl+V in the prefilled quick bar keeps one link, not a duplicate', async ({ page, context }) => {
+  const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.addInitScript((offer) => {
+    window.E2E = { capture: { offer } };
+  }, { url, site: 'youtube.com' });
+  await page.goto('/?window=capture-bar');
+  const field = page.locator('#capture-url');
+  await expect(field).toHaveValue(url);
+  await expect(field).toBeFocused();
+  await page.evaluate(link => navigator.clipboard.writeText(link), url);
+  await page.keyboard.press('ControlOrMeta+V');
+  await expect(field).toHaveValue(url);
+  // A different link replaces the prefilled one.
+  await page.evaluate(() => navigator.clipboard.writeText('https://example.com/other'));
+  await page.keyboard.press('ControlOrMeta+V');
+  await expect(field).toHaveValue('https://example.com/other');
+});

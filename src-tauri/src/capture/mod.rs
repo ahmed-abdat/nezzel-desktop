@@ -16,7 +16,7 @@ pub(crate) fn matrix_normalize(text: &str) -> Option<String> {
 }
 use serde::{Deserialize, Serialize};
 use std::{
-  collections::{HashMap, HashSet},
+  collections::HashMap,
   sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex,
@@ -51,7 +51,8 @@ pub struct CaptureState {
   started: Instant,
   shortcut: Mutex<Option<String>>,
   metadata: Mutex<HashMap<u64, Option<serde_json::Value>>>,
-  claimed: Mutex<HashSet<u64>>,
+  /// Offer id → the action that claimed it.
+  claimed: Mutex<HashMap<u64, &'static str>>,
   jobs: Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
   changed: tokio::sync::Notify,
   pub shortcut_failed: AtomicBool,
@@ -132,6 +133,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
           .store(true, Ordering::Relaxed);
         let action = adopt_on_focus(&handle.state::<CaptureState>());
         if let Some(action) = action {
+          tracing::info!("Copied-link card adopted: the main window got focus");
           if let Some(card) = handle.get_webview_window("capture-card") {
             let _ = card.hide();
           }
@@ -643,7 +645,7 @@ mod action_tests {
   }
 
   #[test]
-  fn focus_adopts_card_once_and_later_click_is_already_handled() {
+  fn focus_adopts_card_once_and_a_racing_click_still_acts_once() {
     let state = CaptureState::default();
     pending_offer(&state, "capture-card", true);
     let payload = adopt_on_focus(&state).unwrap();
@@ -651,12 +653,21 @@ mod action_tests {
     assert_eq!(payload.id, 1);
     assert!(payload.item.is_none());
     assert!(adopt_on_focus(&state).is_none());
+    // A click racing the focus upgrades the adopted row once; nothing claims it after that.
     assert_eq!(
       claim_action(&state, "capture-card", 1, "download")
-        .err()
-        .as_deref(),
-      Some("offer already handled")
+        .unwrap()
+        .action,
+      "download"
     );
+    for action in ["download", "options", "adopt"] {
+      assert_eq!(
+        claim_action(&state, "capture-card", 1, action)
+          .err()
+          .as_deref(),
+        Some("offer already handled")
+      );
+    }
   }
 
   #[test]
@@ -786,6 +797,8 @@ pub struct CapturePlatform {
   pub session: clipboard::Session,
   /// A copy in another app can raise the card while Nezzel is in the background.
   pub background_clipboard: bool,
+  /// Whose words the tray copy uses (Linux; `other` elsewhere).
+  pub desktop: clipboard::Desktop,
 }
 
 #[tauri::command]
@@ -794,6 +807,7 @@ pub async fn capture_platform(app: AppHandle) -> CapturePlatform {
   CapturePlatform {
     session,
     background_clipboard: clipboard::background_clipboard(session, data_control(&app).await),
+    desktop: clipboard::current_desktop(),
   }
 }
 
@@ -847,9 +861,22 @@ fn claim_action(
   if action != "dismiss" && current.url.is_empty() {
     return Err("unsupported URL".into());
   }
-  if !state.claimed.lock().unwrap().insert(id) {
-    return Err("offer already handled".into());
+  let action: &'static str = match action {
+    "download" => "download",
+    "options" => "options",
+    "adopt" => "adopt",
+    _ => "dismiss",
+  };
+  let mut claimed = state.claimed.lock().unwrap();
+  match claimed.get(&id) {
+    None => {}
+    // X11 can focus the main window as the card is clicked: focus adopts the row first, and the
+    // click must still start it (or open its options) instead of being dropped.
+    Some(&"adopt") if matches!(action, "download" | "options") => {}
+    Some(_) => return Err("offer already handled".into()),
   }
+  claimed.insert(id, action);
+  drop(claimed);
   Ok(CaptureAction {
     id,
     url: current.url.clone(),

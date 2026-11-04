@@ -2,6 +2,7 @@ use crate::state::json_merge;
 use crate::SharedPreferences;
 use serde::Serialize;
 use serde_json::Value;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::async_runtime::JoinHandle;
@@ -51,6 +52,8 @@ pub struct PreferencesPatch {
 
 struct DebouncedPatch {
   pending: Value,
+  /// Maximize generation when the first patch of this batch was queued.
+  generation: Option<u64>,
   task: Option<JoinHandle<()>>,
 }
 
@@ -59,6 +62,36 @@ struct PatchDebouncer {
   inner: Arc<Mutex<DebouncedPatch>>,
   delay: Duration,
   app: AppHandle<Wry>,
+  /// Bumped whenever an event sees the window maximized (or can't tell).
+  maximized: Arc<AtomicU64>,
+}
+
+/// Only a window known to be in its normal state has geometry worth restoring; a failed query
+/// counts as maximized (fail closed).
+fn is_normal(maximized: Option<bool>) -> bool {
+  maximized == Some(false)
+}
+
+/// GTK can deliver the Moved/Resized of a maximize before `is_maximized` turns true, so a batch is
+/// saved only if no event saw a maximized window since it started and the window is normal now.
+/// Dropping a batch keeps the last normal geometry on disk.
+fn should_persist(batch: Option<u64>, now: u64, maximized: Option<bool>) -> bool {
+  batch.is_none_or(|batch| batch == now) && is_normal(maximized)
+}
+
+/// The KWayland title-bar workaround below, never on a maximized window: a non-resizable GTK window
+/// pins its size request to the current (maximized) size.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn should_toggle_resizable(
+  focused: bool,
+  session: crate::capture::clipboard::Session,
+  maximized: Option<bool>,
+) -> bool {
+  focused && session == crate::capture::clipboard::Session::Wayland && is_normal(maximized)
+}
+
+fn main_maximized(app: &AppHandle<Wry>) -> Option<bool> {
+  app.get_webview_window("main")?.is_maximized().ok()
 }
 
 impl PatchDebouncer {
@@ -66,39 +99,58 @@ impl PatchDebouncer {
     Self {
       inner: Arc::new(Mutex::new(DebouncedPatch {
         pending: Value::Object(Default::default()),
+        generation: None,
         task: None,
       })),
       delay,
       app,
+      maximized: Arc::new(AtomicU64::new(0)),
     }
+  }
+
+  /// Records what an event saw; true when the window is normal and its geometry may be queued.
+  fn observe(&self, maximized: Option<bool>) -> bool {
+    if !is_normal(maximized) {
+      self.maximized.fetch_add(1, Ordering::Relaxed);
+    }
+    is_normal(maximized)
+  }
+
+  /// Takes the batch; Some only when it may be saved.
+  fn take_batch(&self, g: &mut DebouncedPatch) -> Option<Value> {
+    let pending = std::mem::replace(&mut g.pending, Value::Object(Default::default()));
+    let batch = g.generation.take();
+    let now = self.maximized.load(Ordering::Relaxed);
+    let keep = should_persist(batch, now, main_maximized(&self.app));
+    (keep && !pending.as_object().is_some_and(|o| o.is_empty())).then_some(pending)
   }
 
   async fn push(&self, patch: Value) {
     let mut g = self.inner.lock().await;
 
+    if g.generation.is_none() {
+      g.generation = Some(self.maximized.load(Ordering::Relaxed));
+    }
     json_merge(&mut g.pending, &patch);
 
     if let Some(t) = g.task.take() {
       t.abort();
     }
 
-    let inner = self.inner.clone();
+    let this = self.clone();
     let app = self.app.clone();
     let delay = self.delay;
 
     g.task = Some(tauri::async_runtime::spawn(async move {
       tokio::time::sleep(delay).await;
 
-      let to_flush = {
-        let mut g = inner.lock().await;
-        let v = std::mem::replace(&mut g.pending, Value::Object(Default::default()));
+      let Some(to_flush) = ({
+        let mut g = this.inner.lock().await;
         g.task = None;
-        v
-      };
-
-      if to_flush.as_object().map(|o| o.is_empty()).unwrap_or(false) {
+        this.take_batch(&mut g)
+      }) else {
         return;
-      }
+      };
 
       let prefs = match app.try_state::<SharedPreferences>() {
         Some(h) => h,
@@ -115,17 +167,15 @@ impl PatchDebouncer {
   }
 
   async fn flush_now(&self) {
-    let to_flush = {
+    let Some(to_flush) = ({
       let mut g = self.inner.lock().await;
       if let Some(t) = g.task.take() {
         t.abort();
       }
-      std::mem::replace(&mut g.pending, Value::Object(Default::default()))
-    };
-
-    if to_flush.as_object().map(|o| o.is_empty()).unwrap_or(false) {
+      self.take_batch(&mut g)
+    }) else {
       return;
-    }
+    };
 
     let prefs = match self.app.try_state::<SharedPreferences>() {
       Some(h) => h,
@@ -224,7 +274,7 @@ pub fn track_main_window(app: &AppHandle<Wry>) {
 
     match event {
       WindowEvent::Moved(pos) => {
-        if window_for_events.is_maximized().unwrap_or(false) {
+        if !debouncer.observe(window_for_events.is_maximized().ok()) {
           return;
         }
 
@@ -245,7 +295,7 @@ pub fn track_main_window(app: &AppHandle<Wry>) {
         }
       }
       WindowEvent::Resized(_) => {
-        if window_for_events.is_maximized().unwrap_or(false) {
+        if !debouncer.observe(window_for_events.is_maximized().ok()) {
           return;
         }
 
@@ -277,7 +327,13 @@ pub fn track_main_window(app: &AppHandle<Wry>) {
       // Toggling the resizable property appears to resolve this issue.
       // Info: https://github.com/tauri-apps/tao/issues/1046
       WindowEvent::Focused(focused) => {
-        if !focused {
+        let maximized = window_for_events.is_maximized().ok();
+        debouncer.observe(maximized);
+        if !should_toggle_resizable(
+          *focused,
+          crate::capture::clipboard::current_session(),
+          maximized,
+        ) {
           return;
         }
 
@@ -351,4 +407,47 @@ fn window_rect_is_on_some_monitor(
       .iter()
       .any(|m| rect_intersects_monitor(x, y, w, h, m)),
   )
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::capture::clipboard::Session;
+
+  #[test]
+  fn geometry_is_saved_only_from_a_batch_that_never_saw_a_maximize() {
+    for (batch, now, maximized, expected) in [
+      (Some(3), 3, Some(false), true),
+      (None, 3, Some(false), true),
+      // A maximize was seen after the batch started (GTK queued its Resized as "normal").
+      (Some(3), 4, Some(false), false),
+      (Some(3), 3, Some(true), false),
+      // Query failed: fail closed, keep the last normal geometry.
+      (Some(3), 3, None, false),
+    ] {
+      assert_eq!(
+        should_persist(batch, now, maximized),
+        expected,
+        "{batch:?} {now} {maximized:?}"
+      );
+    }
+  }
+
+  #[test]
+  fn resizable_toggle_only_on_wayland_focus_of_a_normal_window() {
+    for (focused, session, maximized, expected) in [
+      (true, Session::Wayland, Some(false), true),
+      (false, Session::Wayland, Some(false), false),
+      (true, Session::Wayland, Some(true), false),
+      (true, Session::Wayland, None, false),
+      (true, Session::X11, Some(false), false),
+      (true, Session::Other, Some(false), false),
+    ] {
+      assert_eq!(
+        should_toggle_resizable(focused, session, maximized),
+        expected,
+        "{focused} {session:?} {maximized:?}"
+      );
+    }
+  }
 }

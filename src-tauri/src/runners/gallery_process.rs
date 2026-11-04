@@ -1,3 +1,4 @@
+use crate::binaries::bundled_tools::sidecar_candidates;
 use crate::parsers::gallery::GalleryError;
 use crate::runners::ytdlp_process::{
   configure_command, kill_platform_process, platform_process_from_child, PlatformProcess,
@@ -61,8 +62,7 @@ pub fn find_bundled(executable: &Path, resources: &Path) -> Result<PathBuf, Gall
   } else {
     "gallery-dl"
   };
-  for directory in [executable.parent().unwrap_or(resources), resources] {
-    let path = directory.join(name);
+  for path in sidecar_candidates(Some(executable), Some(resources), name) {
     let Ok(metadata) = path.metadata() else {
       continue;
     };

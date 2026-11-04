@@ -137,6 +137,11 @@ async function shoot(page: Page, state: GalleryState, locale: Locale, entries: I
     for (const [size, viewport] of Object.entries(sizes)) {
       await page.setViewportSize(viewport);
       await page.evaluate(() => document.fonts.ready);
+      if (!state.window) {
+        // The window body never scrolls (Linux showed a blank band under the status bar): panes scroll inside.
+        const overflow = await page.evaluate(() => document.scrollingElement!.scrollHeight - window.innerHeight);
+        expect(overflow, `${state.name} ${size}: page scrolls`).toBeLessThanOrEqual(0);
+      }
       const file = `${state.name}-${locale}-${theme}-${size}.png`;
       await page.screenshot({ path: path.join(OUT, file), animations: 'disabled', caret: 'hide' });
       entries.push({ state: state.name, locale, theme, size, file });

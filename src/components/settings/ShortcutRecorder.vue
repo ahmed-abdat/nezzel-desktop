@@ -142,6 +142,8 @@ function commit(next: string) {
 
 function onKey(event: KeyboardEvent) {
   if (!recording.value) return; // Enter/Space: the native button click starts recording
+  // Plain Tab leaves the recorder (a keyboard trap otherwise); blur stops recording.
+  if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) return;
   event.preventDefault();
   event.stopPropagation();
   const result = recordKey(event, props.mac);

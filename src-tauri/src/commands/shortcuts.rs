@@ -175,6 +175,14 @@ fn try_register(app: &AppHandle, accelerator: &str) -> bool {
   ok
 }
 
+fn shortcut_kind(accelerator: &str) -> &'static str {
+  match accelerator {
+    DEFAULT_CAPTURE_SHORTCUT => "default",
+    FALLBACK_CAPTURE_SHORTCUT => "fallback",
+    _ => "custom",
+  }
+}
+
 /// Rebind the Quick download shortcut.
 pub fn register_capture_shortcut(app: &AppHandle, requested: &str) {
   if let Some(reason) =
@@ -204,6 +212,12 @@ pub fn register_capture_shortcut(app: &AppHandle, requested: &str) {
     .find(|accelerator| try_register(app, accelerator));
   // Registering validates the combo with the OS; while a recorder listens, release the hook again right away.
   if let Some(active) = active {
+    // Kinds only: a recorded combo is the user's own setting.
+    tracing::info!(
+      session = ?crate::capture::clipboard::current_session(),
+      combo = shortcut_kind(active),
+      "Quick download shortcut registered"
+    );
     if PAUSED.load(Ordering::Relaxed) {
       let _ = app.global_shortcut().unregister(active);
     }

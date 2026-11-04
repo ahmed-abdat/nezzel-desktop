@@ -1,11 +1,11 @@
 # Privacy
 
-Nezzel Desktop has no ads, no account and no Nezzel server. Everything you save is processed on your computer.
+Nezzel Desktop has no ads, no account, no analytics and no Nezzel server. Everything you save is processed on your computer. Crash and error reports are on by default (see below).
 
 ## What goes over the network
 
 - **Saving media:** requests go from your computer to the site you're saving from and its content servers. Before handing a link to yt-dlp, Nezzel may read the public page itself (Facebook, LinkedIn, Telegram, Reddit, Threads, Snapchat, Vimeo) to find the media. These requests go only to the site of the link you gave it.
-- **Download tools:** on first run Nezzel downloads the tools it needs from their official GitHub releases: [yt-dlp](https://github.com/yt-dlp/yt-dlp), ffmpeg and ffprobe ([ffmpeg-static](https://github.com/eugeneware/ffmpeg-static), or [yt-dlp/FFmpeg-Builds](https://github.com/yt-dlp/FFmpeg-Builds) on Windows ARM), [Deno](https://github.com/denoland/deno) and [AtomicParsley](https://github.com/wez/atomicparsley). Each file is checked against a SHA-256 hash pinned in the app before it's used. gallery-dl and aria2 come inside the installer, so they need no download.
+- **Download tools:** yt-dlp, ffmpeg, ffprobe, Deno, gallery-dl and aria2 come inside the installer, so nothing is downloaded on first run. Each bundled file is checked against a SHA-256 hash pinned at build time.
 - **Tool updates:** while **Update download tools automatically** is on (the default), Nezzel checks the yt-dlp releases on GitHub at most once a day and checks a new version against the SHA-256 list published with that release.
 - **App updates:** while **Update Nezzel automatically** is on (the default), Nezzel checks `github.com/ahmed-abdat/nezzel-desktop/releases` for a newer version when it starts. Updates are signed, and the app checks the signature before installing. Portable, Microsoft Store and Snap builds skip this check.
 - GitHub sees your IP address for these requests. No cookies, account or device identifiers are sent with them.
@@ -33,7 +33,7 @@ Nezzel sends crash and error reports to our own [Sentry](https://sentry.io) proj
 
 **What is never sent**
 
-Cookies, passwords and tokens, file names, folders and other local paths, your account or computer name, and email or IP addresses found in errors and logs. Nezzel removes them before a report leaves your computer, and links to local or private network addresses are never included. Like any server, Sentry sees the IP address of the connection; our project is set not to store it.
+Cookies, passwords and tokens, file names, folders and other local paths, your account or computer name, and email or IP addresses found in errors and logs. Nezzel removes them before a report leaves your computer, and links to local or private network addresses are never included. Like any server, Sentry sees the IP address of the connection; our project (hosted in the EU) is set not to store it.
 
 Reports only work in builds made with our Sentry key. Builds without one send nothing. If you used Nezzel before reports existed, it tells you once that they are on, and a crash from that first start is offered to you instead of being sent.
 

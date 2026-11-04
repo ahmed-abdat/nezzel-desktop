@@ -363,13 +363,10 @@ impl BinariesManager {
             .as_ref()
             .map(|dir| dir.join("tools/yt-dlp").join(&name))]
         } else {
-          vec![
-            executable
-              .as_ref()
-              .and_then(|exe| exe.parent())
-              .map(|dir| dir.join(&name)),
-            resources.as_ref().map(|dir| dir.join(&name)),
-          ]
+          bundled_tools::sidecar_candidates(executable.as_deref(), resources.as_deref(), &name)
+            .into_iter()
+            .map(Some)
+            .collect()
         };
         if let Some(path) = candidates
           .into_iter()

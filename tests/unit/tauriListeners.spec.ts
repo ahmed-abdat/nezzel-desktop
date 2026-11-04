@@ -123,4 +123,15 @@ describe('capture listeners', () => {
     expect(info).toHaveBeenCalledTimes(preview === 'fallback' ? 1 : 0);
     expect(sheet.open).toBe(false);
   });
+
+  it('a Download click that races focus adoption starts the adopted row once', async () => {
+    const { download, groups, states } = await setup();
+    await emit('capture_action', { id: 5, url, action: 'adopt' });
+    await emit('capture_action', { id: 5, url, action: 'download', item });
+    await emit('capture_action', { id: 5, url, action: 'download', item });
+    await flushPromises();
+    expect(groups.orderedGroups).toHaveLength(1);
+    expect(download).toHaveBeenCalledOnce();
+    expect(states.getGroupState(groups.orderedGroups[0].id)).toBe(MediaState.downloading);
+  });
 });

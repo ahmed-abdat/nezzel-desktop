@@ -2,7 +2,7 @@
   <config-provider :dir="dir">
     <tooltip-provider :delay-duration="500">
       <a href="#nz-main" class="nz-skip">{{ t('shell.skipToContent') }}</a>
-      <div class="relative flex h-screen min-h-0 bg-background text-[13px] text-foreground" :class="dir === 'rtl' && 'text-[14px]'">
+      <div class="relative flex h-full min-h-0 bg-background text-[13px] text-foreground" :class="dir === 'rtl' && 'text-[14px]'">
         <app-sidebar :collapsed="collapsed" :can-toggle="!narrowWindow" :inert="overlayOpen || undefined" @toggle="toggleSidebar" />
         <!-- macOS (LTR): the toggle sits in the title strip right after the traffic lights and stays put when the
              sidebar collapses. Physical `left` on purpose: the lights are at the physical left in every language. -->

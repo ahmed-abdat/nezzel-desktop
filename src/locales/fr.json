@@ -1902,7 +1902,9 @@
     "place": {
       "mac": "la barre des menus",
       "windows": "la zone de notification",
-      "linux": "la barre du haut"
+      "linux": "la barre du haut",
+      "linuxKde": "la boîte à miniatures",
+      "linuxOther": "la zone de notification"
     },
     "privacy": "Aucun compte ni publicité. Vous pouvez désactiver les rapports à tout moment",
     "getStarted": "Commencer",
@@ -1949,6 +1951,8 @@
     "body": "La carte s’affiche toujours quand vous copiez un lien, et cette icône rouvre Nezzel",
     "hintWindows": "Elle est sous {chev} près de l’horloge. Glissez-la dans la barre des tâches pour la garder visible",
     "hintLinux": "Pas d’icône dans la barre du haut ? Ouvrez Nezzel depuis Activités",
+    "hintKde": "Pas d’icône dans le panneau ? Regardez sous la flèche de la boîte à miniatures",
+    "hintOther": "Pas d’icône dans le panneau ? Ouvrez Nezzel depuis le menu des applications",
     "quit": "Quitter Nezzel",
     "gotIt": "Compris"
   },

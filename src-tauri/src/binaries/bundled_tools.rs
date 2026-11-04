@@ -19,7 +19,37 @@ struct Receipt {
   files: HashMap<String, String>,
 }
 
-pub(super) fn executable(path: &Path) -> bool {
+/// Where a bundled single-file tool may live, in lookup order. `name` carries the exe suffix.
+/// macOS (`Contents/MacOS`) and Windows ship tools next to the app binary. Linux packages
+/// ship them as resources (`/usr/lib/Nezzel/tools/`, `$APPDIR/usr/lib/Nezzel/tools/`):
+/// the binary sits in `/usr/bin`, so a tool next to it is the distro's, never ours.
+pub(crate) fn sidecar_candidates(
+  exe: Option<&Path>,
+  resources: Option<&Path>,
+  name: &str,
+) -> Vec<PathBuf> {
+  candidates_for(cfg!(target_os = "linux"), exe, resources, name)
+}
+
+fn candidates_for(
+  linux: bool,
+  exe: Option<&Path>,
+  resources: Option<&Path>,
+  name: &str,
+) -> Vec<PathBuf> {
+  let beside = (!linux)
+    .then(|| exe.and_then(Path::parent).map(|dir| dir.join(name)))
+    .flatten();
+  let packaged = linux
+    .then(|| resources.map(|dir| dir.join("tools").join(name)))
+    .flatten();
+  [beside, packaged, resources.map(|dir| dir.join(name))]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+pub(crate) fn executable(path: &Path) -> bool {
   let Ok(meta) = std::fs::metadata(path) else {
     return false;
   };
@@ -185,6 +215,90 @@ pub(super) fn verified_repair(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn sidecars_resolve_in_every_package_layout_and_never_from_usr_bin() {
+    let root = std::env::temp_dir().join(format!("nezzel-layout-{}", uuid::Uuid::new_v4()));
+    let tool = |relative: &str| {
+      let path = root.join(relative);
+      std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+      std::fs::write(&path, b"tool").unwrap();
+      #[cfg(unix)]
+      {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+      }
+    };
+    // A distro ffmpeg beside the deb binary must never count as ours.
+    tool("deb/usr/bin/ffmpeg");
+    tool("deb/usr/lib/Nezzel/tools/ffmpeg");
+    tool("nodeb/usr/bin/ffmpeg");
+    tool("appimage/usr/lib/Nezzel/tools/ffmpeg");
+    tool("cargo/target/debug/tools/ffmpeg");
+    tool("Nezzel.app/Contents/MacOS/ffmpeg");
+    tool("win/ffmpeg.exe");
+    for (layout, linux, exe, resources, name, expected) in [
+      (
+        "deb/rpm",
+        true,
+        "deb/usr/bin/nezzel",
+        "deb/usr/lib/Nezzel",
+        "ffmpeg",
+        Some("deb/usr/lib/Nezzel/tools/ffmpeg"),
+      ),
+      (
+        "deb, tool missing",
+        true,
+        "nodeb/usr/bin/nezzel",
+        "nodeb/usr/lib/Nezzel",
+        "ffmpeg",
+        None,
+      ),
+      (
+        "AppImage",
+        true,
+        "appimage/usr/bin/nezzel",
+        "appimage/usr/lib/Nezzel",
+        "ffmpeg",
+        Some("appimage/usr/lib/Nezzel/tools/ffmpeg"),
+      ),
+      (
+        "linux dev",
+        true,
+        "cargo/target/debug/nezzel",
+        "cargo/target/debug",
+        "ffmpeg",
+        Some("cargo/target/debug/tools/ffmpeg"),
+      ),
+      (
+        "macOS",
+        false,
+        "Nezzel.app/Contents/MacOS/nezzel",
+        "Nezzel.app/Contents/Resources",
+        "ffmpeg",
+        Some("Nezzel.app/Contents/MacOS/ffmpeg"),
+      ),
+      (
+        "Windows",
+        false,
+        "win/nezzel.exe",
+        "win",
+        "ffmpeg.exe",
+        Some("win/ffmpeg.exe"),
+      ),
+    ] {
+      let found = candidates_for(
+        linux,
+        Some(&root.join(exe)),
+        Some(&root.join(resources)),
+        name,
+      )
+      .into_iter()
+      .find(|path| executable(path));
+      assert_eq!(found, expected.map(|path| root.join(path)), "{layout}");
+    }
+    std::fs::remove_dir_all(root).unwrap();
+  }
 
   #[test]
   fn resolution_order_requires_verified_newer_ytdlp() {

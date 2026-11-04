@@ -49,7 +49,7 @@ export async function registerCaptureListeners() {
   const sheet = useDownloadSheetStore();
   const groups = useMediaGroupStore();
   const states = useMediaStateStore();
-  const captures = new Map<number, { groupId: string; awaitingItem: boolean }>();
+  const captures = new Map<number, { groupId: string; awaitingItem: boolean; upgraded: boolean }>();
 
   async function fillCapture(id: number, item?: MediaItem | null) {
     const capture = captures.get(id);
@@ -73,9 +73,13 @@ export async function registerCaptureListeners() {
     void fillCapture(payload.id, payload.item);
   });
   await listen<{ id: number; url: string; action: string; item?: MediaItem | null }>('capture_action', ({ payload }) => {
-    if (captures.has(payload.id) || !['download', 'options', 'adopt'].includes(payload.action)) return;
-    const groupId = media.createCaptureGroup(payload.url, payload.action === 'download');
-    captures.set(payload.id, { groupId, awaitingItem: true });
+    if (!['download', 'options', 'adopt'].includes(payload.action)) return;
+    const known = captures.get(payload.id);
+    // Focus adopted the row as the card was clicked (X11): the click still starts it or opens its options.
+    if (known && (payload.action === 'adopt' || known.upgraded)) return;
+    const groupId = known?.groupId ?? media.createCaptureGroup(payload.url, payload.action === 'download');
+    if (known) known.upgraded = true;
+    else captures.set(payload.id, { groupId, awaitingItem: true, upgraded: payload.action !== 'adopt' });
     if (payload.action === 'download') {
       void media.downloadPreparedGroup(groupId).catch(() => {});
     } else if (payload.action === 'options') {

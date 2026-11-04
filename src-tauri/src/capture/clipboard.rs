@@ -53,6 +53,55 @@ pub fn current_session() -> Session {
   }
 }
 
+/// Which desktop's words the tray copy uses: GNOME says top bar/Activities, KDE system tray,
+/// the rest (XFCE, Cinnamon, MATE, Budgie, ...) notification area.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Desktop {
+  Gnome,
+  Kde,
+  Other,
+}
+
+impl Desktop {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Desktop::Gnome => "gnome",
+      Desktop::Kde => "kde",
+      Desktop::Other => "other",
+    }
+  }
+}
+
+/// Desktop from `XDG_CURRENT_DESKTOP` (colon list, e.g. `ubuntu:GNOME`, `Budgie:GNOME`).
+pub fn desktop_from(current_desktop: Option<&str>) -> Desktop {
+  let names: Vec<String> = current_desktop
+    .unwrap_or_default()
+    .split(':')
+    .map(|name| name.trim().to_ascii_lowercase())
+    .collect();
+  let has = |wanted: &str| names.iter().any(|name| name == wanted);
+  if has("kde") {
+    Desktop::Kde
+  } else if has("gnome")
+    && !["budgie", "unity", "x-cinnamon", "cinnamon", "pantheon"]
+      .iter()
+      .any(|name| has(name))
+  {
+    Desktop::Gnome
+  } else {
+    Desktop::Other
+  }
+}
+
+pub fn current_desktop() -> Desktop {
+  if cfg!(target_os = "linux") {
+    desktop_from(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref())
+  } else {
+    Desktop::Other
+  }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reader {
   /// arboard through the clipboard plugin.
@@ -312,6 +361,26 @@ mod tests {
     assert!(background_clipboard(Session::Wayland, true));
     assert!(!background_clipboard(Session::Wayland, false));
     assert!(background_clipboard(Session::Other, false));
+  }
+
+  #[test]
+  fn desktop_picks_the_tray_words() {
+    for (value, expected) in [
+      (Some("GNOME"), Desktop::Gnome),
+      (Some("ubuntu:GNOME"), Desktop::Gnome),
+      (Some("pop:GNOME"), Desktop::Gnome),
+      (Some("KDE"), Desktop::Kde),
+      (Some("kde"), Desktop::Kde),
+      (Some("Budgie:GNOME"), Desktop::Other),
+      (Some("X-Cinnamon"), Desktop::Other),
+      (Some("XFCE"), Desktop::Other),
+      (Some("MATE"), Desktop::Other),
+      (Some("Unity:Unity7:ubuntu"), Desktop::Other),
+      (Some(""), Desktop::Other),
+      (None, Desktop::Other),
+    ] {
+      assert_eq!(desktop_from(value), expected, "{value:?}");
+    }
     assert_eq!(global_shortcut_reason(Session::Wayland), Some("wayland"));
     assert_eq!(global_shortcut_reason(Session::X11), None);
     assert_eq!(global_shortcut_reason(Session::Other), None);

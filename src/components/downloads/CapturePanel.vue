@@ -25,7 +25,8 @@
               spellcheck="false"
               :placeholder="t('capture.placeholder')"
               class="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/70"
-              @input="edit" />
+              @input="edit"
+              @paste="onPaste" />
             <span v-if="offer.resolving || (offer.url && !offer.feed && !offer.title && !offer.failed)" class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary motion-reduce:animate-none" role="status" :aria-label="t('capture.loading')" />
           </div>
           <tooltip :content="t('capture.dismiss')">
@@ -201,7 +202,10 @@ function update(value: CaptureOffer) {
   if (value.id < offer.value.id || (editing.value && value.id === offer.value.id)) return;
   if (value.id !== offer.value.id) {
     void syncAppearance().catch(() => {});
-    if (!editing.value) text.value = value.url;
+    if (!editing.value) {
+      text.value = value.url;
+      void nextTick(selectPrefill);
+    }
     editing.value = false;
   }
   if (value.url !== offer.value.url) {
@@ -211,6 +215,15 @@ function update(value: CaptureOffer) {
   offer.value = value;
   error.value = false;
   void nextTick(fitBar); // the window may have been hidden when the observer last fired
+}
+/** A prefilled link is selected, so typing or pasting replaces it instead of appending a second copy. */
+function selectPrefill() {
+  if (isBar && text.value && document.activeElement?.id === 'capture-url') input.value?.select();
+}
+/** Pasting the link that is already in the field (Ctrl+V after the bar prefilled it) changes nothing. */
+function onPaste(event: ClipboardEvent) {
+  const pasted = event.clipboardData?.getData('text/plain').trim();
+  if (pasted && pasted === text.value.trim()) event.preventDefault();
 }
 function edit() {
   clearTimeout(editTimer);
@@ -264,6 +277,7 @@ onMounted(async () => {
   });
   update(await invoke<CaptureOffer>('capture_snapshot'));
   input.value?.focus();
+  selectPrefill();
   if (isBar && panel.value && typeof ResizeObserver !== 'undefined') {
     sizer = new ResizeObserver(fitBar);
     sizer.observe(panel.value);

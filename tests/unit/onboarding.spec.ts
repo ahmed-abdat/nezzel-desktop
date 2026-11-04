@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import WelcomeShortcut from '../../src/components/welcome/WelcomeShortcut.vue';
 import { i18n } from '../../src/i18n';
+import { linuxHintKey, trayPlaceKey } from '../../src/components/welcome/desktopOs';
 import { shouldShowWelcome, useOnboardingStore } from '../../src/stores/onboarding';
 import { installTauriMock } from '../utils/tauriMock';
 import { defaultSettings } from '../../src/tauri/types/config';
@@ -84,5 +85,20 @@ describe('onboarding', () => {
     await flushPromises();
     expect(wrapper.find('[data-testid="welcome-shortcut-wayland"]').text()).toContain('nezzel --capture');
     expect(wrapper.find('[data-testid="welcome-shortcut-skip"]').exists()).toBe(false);
+  });
+
+  it.each([
+    ['gnome', 'top bar', 'Activities'],
+    ['kde', 'system tray', 'arrow in the system tray'],
+    ['other', 'notification area', 'app menu'],
+  ] as const)('Linux tray copy follows the desktop (%s)', (desktop, place, hint) => {
+    const t = i18n.global.t;
+    expect(t(`welcome.place.${trayPlaceKey('linux', desktop)}`)).toBe(place);
+    expect(t(`closeNote.${linuxHintKey(desktop)}`)).toContain(hint);
+    for (const locale of ['ar', 'fr'] as const) {
+      expect(i18n.global.te(`welcome.place.${trayPlaceKey('linux', desktop)}`, locale)).toBe(true);
+      expect(i18n.global.te(`closeNote.${linuxHintKey(desktop)}`, locale)).toBe(true);
+    }
+    expect(trayPlaceKey('mac', desktop)).toBe('mac');
   });
 });

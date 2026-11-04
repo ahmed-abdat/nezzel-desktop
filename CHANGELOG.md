@@ -11,6 +11,6 @@ First public beta of Nezzel Desktop, a fork of Open Video Downloader 3.2.1.
 - Clear failure messages (sign-in needed, region blocked, removed, rate limited) instead of "unknown error".
 - Library keeps your download history; "Remove from list" never deletes files.
 - English, Arabic (right-to-left) and French.
-- No crash reports or analytics: release builds ship without any reporting key.
+- Crash and error reports to our own Sentry project (EU), on by default with a switch in Settings and on the welcome screen; no links, file names, paths or cookies are sent automatically. No analytics.
 
 Known limits: macOS and Windows builds are not signed yet (see the install note in the README).

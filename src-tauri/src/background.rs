@@ -346,8 +346,9 @@ fn open_note(app: &AppHandle, anchor: Option<(f64, f64, Edge)>) -> tauri::Result
     "bottom"
   };
   let url = format!(
-    "index.html?window={NOTE_LABEL}&os={}&edge={edge}&nx={}",
+    "index.html?window={NOTE_LABEL}&os={}&desktop={}&edge={edge}&nx={}",
     os_name(),
+    crate::capture::clipboard::current_desktop().as_str(),
     placement.arrow_x.round()
   );
   if let Some(old) = app.get_webview_window(NOTE_LABEL) {
