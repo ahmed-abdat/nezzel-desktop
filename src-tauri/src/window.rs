@@ -228,8 +228,9 @@ pub fn restore_main_window(app: &AppHandle<Wry>) {
     true
   };
 
-  if has_size {
-    if let Err(e) = window.set_size(PhysicalSize::new(s.width, s.height)) {
+  let restored = has_size.then(|| PhysicalSize::new(s.width, s.height));
+  if let Some(size) = restored {
+    if let Err(e) = window.set_size(size) {
       tracing::warn!("Failed to restore window size: {e}");
     }
   }
@@ -245,8 +246,21 @@ pub fn restore_main_window(app: &AppHandle<Wry>) {
       tracing::warn!("Failed to restore maximized state: {e}");
     }
   } else {
-    fit_main_window_on_screen(&window);
+    fit_main_window_on_screen(&window, restored);
   }
+}
+
+/// The window's outer size, its frame (outer minus inner) and whether its position is known.
+/// GTK (tao 0.37) caches the outer size only from configure events, which fire once the window is
+/// mapped; before that it reports the window origin (~0x0) and the inner size is the default size
+/// or the last requested one. #36: the fit saw a 0x0 window, "fitted", and the 900 px window opened
+/// under the KDE panel. An outer size smaller than the inner one means "not mapped yet": use the
+/// inner size, frame unknown (0) and position unknown.
+fn window_extent(outer: (u32, u32), inner: (u32, u32)) -> ((u32, u32), (u32, u32), bool) {
+  if outer.0 < inner.0 || outer.1 < inner.1 {
+    return (inner, (0, 0), false);
+  }
+  (outer, (outer.0 - inner.0, outer.1 - inner.1), true)
 }
 
 /// The window rect (outer, physical px) moved and shrunk to lie inside `area`, or None when it already
@@ -300,15 +314,26 @@ fn usable_area(work: Rect, monitor: Rect, scale: f64, wayland: bool) -> Rect {
   (work.0, work.1, work.2, work.3.saturating_sub(reserve))
 }
 
-fn fit_main_window_on_screen(window: &WebviewWindow) {
+/// `restored`: the saved inner size just requested, which an unmapped GTK window does not report yet.
+fn fit_main_window_on_screen(window: &WebviewWindow, restored: Option<PhysicalSize<u32>>) {
+  // An unmapped GTK window has no GdkWindow, so current_monitor falls back to the primary monitor,
+  // which GDK Wayland does not name: take the first monitor then.
   let monitor = window
     .current_monitor()
     .ok()
     .flatten()
-    .or_else(|| window.primary_monitor().ok().flatten());
+    .or_else(|| window.primary_monitor().ok().flatten())
+    .or_else(|| window.available_monitors().ok()?.into_iter().next());
   let (Some(monitor), Ok(outer), Ok(inner)) = (monitor, window.outer_size(), window.inner_size())
   else {
+    tracing::info!("Window fit skipped: no monitor or size");
     return;
+  };
+  let (outer, frame, mapped) =
+    window_extent((outer.width, outer.height), (inner.width, inner.height));
+  let outer = match restored {
+    Some(s) if !mapped => (s.width, s.height),
+    _ => outer,
   };
   // Wayland never reveals a window's real position (tao reports cached numbers) and ignores moves:
   // fit the size only and let the compositor place it.
@@ -331,16 +356,23 @@ fn fit_main_window_on_screen(window: &WebviewWindow) {
     monitor.scale_factor(),
     wayland,
   );
-  let known = (!wayland)
+  let known = (!wayland && mapped)
     .then(|| window.outer_position().ok().map(|p| (p.x, p.y)))
     .flatten();
-  let Some((position, (w, h))) = fit_plan(known, (outer.width, outer.height), area) else {
+  tracing::info!(
+    monitor = ?(monitor.size().width, monitor.size().height),
+    work = ?(work.size.width, work.size.height),
+    area = ?(area.2, area.3),
+    window = ?outer,
+    mapped,
+    wayland,
+    "Window fit"
+  );
+  let Some((position, (w, h))) = fit_plan(known, outer, area) else {
     return;
   };
   // set_size takes the inner size: keep the frame the OS adds around it.
-  let frame_w = outer.width.saturating_sub(inner.width);
-  let frame_h = outer.height.saturating_sub(inner.height);
-  let size = PhysicalSize::new(w.saturating_sub(frame_w), h.saturating_sub(frame_h));
+  let size = PhysicalSize::new(w.saturating_sub(frame.0), h.saturating_sub(frame.1));
   if let Err(e) = window.set_size(size) {
     tracing::warn!("Failed to fit the window on the screen: {e}");
   }
@@ -564,6 +596,25 @@ mod tests {
     assert_eq!(usable_area(screen, screen, 1., false), screen);
     let second = (1280, 0, 1920, 1080);
     assert_eq!(usable_area(second, second, 1., false), second);
+  }
+
+  #[test]
+  fn an_unmapped_gtk_window_is_fitted_from_its_inner_size() {
+    for (outer, inner, expected) in [
+      // GTK before the first map: tao reports the origin as the outer size (#36).
+      ((0, 0), (800, 900), ((800, 900), (0, 0), false)),
+      ((0, 0), (0, 0), ((0, 0), (0, 0), true)),
+      // Mapped (or macOS/Windows): the frame is outer minus inner.
+      ((800, 937), (800, 900), ((800, 937), (0, 37), true)),
+      ((816, 939), (800, 900), ((816, 939), (16, 39), true)),
+    ] {
+      assert_eq!(window_extent(outer, inner), expected, "{outer:?} {inner:?}");
+    }
+    // Fedora KDE Wayland 1280x800, first launch: the 0x0 outer size used to skip the fit.
+    let screen = (0, 0, 1280, 800);
+    let area = usable_area(screen, screen, 1., true);
+    let (outer, _, _) = window_extent((0, 0), (800, 900));
+    assert_eq!(fit_plan(None, outer, area), Some((None, (800, 704))));
   }
 
   #[test]

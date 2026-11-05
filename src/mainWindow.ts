@@ -77,15 +77,30 @@ export function mountMainWindow() {
   initStores().catch((e) => {
     console.error(e);
   }).finally(() => {
-    void invoke('app_ready');
     if (!__E2E__) {
       startWindowWatcher();
       void registerCaptureListeners();
       shareMotionPreference();
     }
     app.mount('#app');
+    // app_ready shows the window: only once there is something to paint. Shown with an empty page,
+    // WebKitGTK (Fedora KDE Wayland VM, #36) kept the window grey until the first click.
+    void firstFrame().then(() => invoke('app_ready'));
     if (!__E2E__) void useMediaStore().loadLibrary().catch(() => console.warn('Unable to load local download history'));
   });
+
+  /** The first route rendered and laid out. A hidden window may never run animation frames, so a
+   * frame is awaited only while the page is visible, and never longer than 300 ms. */
+  async function firstFrame(): Promise<void> {
+    await Promise.race([router.isReady(), wait(300)]).catch(() => {});
+    void document.body.offsetHeight; // style and layout now, so the first paint has the page
+    if (document.visibilityState !== 'visible') return;
+    await Promise.race([new Promise(requestAnimationFrame), wait(300)]);
+  }
+
+  function wait(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 
   /** The first-close shrink is native: Rust needs the user's reduced-motion choice. */
   function shareMotionPreference(): void {

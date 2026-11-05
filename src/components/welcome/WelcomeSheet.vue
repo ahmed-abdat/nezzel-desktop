@@ -137,6 +137,22 @@ const sheet = ref<HTMLElement>();
 const keyboard = ref(false);
 function onKey(event: KeyboardEvent) {
   if (!event.metaKey && !event.ctrlKey) keyboard.value = true;
+  if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey) trapTab(event);
+}
+
+/** A modal sheet keeps Tab inside. Past the last control WebKitGTK moved focus onto the page
+ * itself and then the GTK window: two stops with nothing to outline (#36). */
+function trapTab(event: KeyboardEvent) {
+  const stops = [...(sheet.value?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]') ?? [])]
+    .filter(el => el.getClientRects().length > 0);
+  if (!stops.length) return;
+  const at = stops.indexOf(document.activeElement as HTMLElement);
+  const next = event.shiftKey
+    ? (at <= 0 ? stops.at(-1) : undefined)
+    : (at === -1 || at === stops.length - 1 ? stops[0] : undefined);
+  if (!next) return;
+  event.preventDefault();
+  next.focus();
 }
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -176,6 +192,8 @@ function onLinkCopy() {
 
 function getStarted() {
   void onboarding.complete({ card: card.value, start: start.value });
+  // The sheet and its focused button go away now: keyboard and screen-reader focus lands on the main content.
+  void nextTick(() => document.getElementById('nz-main')?.focus({ preventScroll: true }));
 }
 
 onMounted(() => {

@@ -13,6 +13,11 @@ export const onboardingHandlers: Record<string, IPCHandler> = {
     window.E2E.preferences = { ...window.E2E.preferences, ...patch, onboarding: { ...window.E2E.preferences.onboarding, ...patch.onboarding } as Preferences['onboarding'] };
     return { ...defaultPreferences, ...window.E2E.preferences };
   },
+  // app_ready shows the window: e2e checks the page was already rendered then (#36 grey window).
+  app_ready: () => {
+    (window as Window & { __appReadyRendered?: boolean }).__appReadyRendered = (document.getElementById('app')?.childElementCount ?? 0) > 0;
+    return null;
+  },
   // Welcome "Try it": the backend writes the clipboard and shows the real card.
   capture_try_link: async () => {
     await navigator.clipboard.writeText('https://www.youtube.com/watch?v=jNQXAC9IVRw');
