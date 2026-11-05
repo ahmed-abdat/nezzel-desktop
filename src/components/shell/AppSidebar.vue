@@ -101,7 +101,7 @@ const items = computed(() => [
 
 function linkCls(on: boolean, iconOnly: boolean) {
   return [
-    'flex items-center gap-2 rounded-[6px] text-start text-[13px] outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-ring/40',
+    'flex items-center gap-2 rounded-[6px] text-start text-[13px] outline-none transition-colors duration-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]',
     // Rail: 36px square targets on a 6px rhythm, icon centred, the active pill is the same square. Expanded: 32px rows, 4px apart.
     iconOnly ? 'size-9 justify-center px-0' : 'h-8 w-full px-2',
     on ? 'bg-primary-soft font-medium text-primary-soft-foreground' : 'text-foreground/85 hover:bg-foreground/[0.035]',

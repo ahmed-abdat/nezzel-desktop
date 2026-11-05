@@ -942,219 +942,272 @@
   "errors": {
     "runner": {
       "loginConsentDeclined": {
-        "shortMessage": "Connexion du navigateur non utilisée",
-        "message": "Vous n'avez pas autorisé la connexion du navigateur. Réessayez pour continuer"
+        "shortMessage": "La connexion par le navigateur n'a pas été autorisée",
+        "message": "Vous n'avez pas autorisé la connexion du navigateur. Réessayez pour continuer",
+        "action": "Réessayez et autorisez la connexion"
       },
       "fetchTimeout": {
         "shortMessage": "Le site a mis trop de temps à répondre",
-        "message": "Le site a mis trop de temps à répondre. Réessayez"
+        "message": "Le site a mis trop de temps à répondre. Réessayez",
+        "action": "Réessayez"
       },
       "loginConsentTimeout": {
         "shortMessage": "La demande de connexion a expiré",
-        "message": "La demande de connexion est restée sans réponse. Réessayez pour continuer"
+        "message": "La demande de connexion est restée sans réponse. Réessayez pour continuer",
+        "action": "Réessayez et répondez à la demande de connexion"
       },
       "noMediaFound": {
         "shortMessage": "Rien à télécharger sur cette page",
-        "message": "Cette page ne contient ni vidéo, ni audio, ni photo. Ouvrez la publication elle-même et copiez son lien"
+        "message": "Cette page ne contient ni vidéo, ni audio, ni photo. Ouvrez la publication elle-même et copiez son lien",
+        "action": "Ouvrez la publication elle-même et copiez son lien"
       },
       "internal": {
         "shortMessage": "Un problème est survenu dans Nezzel",
-        "message": "Un problème est survenu dans Nezzel pendant ce téléchargement. Réessayez"
+        "message": "Un problème est survenu dans Nezzel pendant ce téléchargement. Réessayez",
+        "action": "Réessayez. Si cela se reproduit, signalez le problème"
       },
       "signInRequired": {
-        "shortMessage": "Connexion requise",
-        "message": "Ce site ne l'affiche qu'aux personnes connectées"
+        "shortMessage": "Ce site demande une connexion",
+        "message": "Ce site ne l'affiche qu'aux personnes connectées",
+        "action": "Connectez-vous au site, puis réessayez"
       },
       "membersOnly": {
         "shortMessage": "Réservé aux membres de la chaîne",
-        "message": "Cette vidéo est uniquement disponible pour les membres du channel"
+        "message": "Cette vidéo est uniquement disponible pour les membres du channel",
+        "action": "Connectez-vous avec un compte membre, puis réessayez"
       },
       "geoBlocked": {
         "shortMessage": "Indisponible dans votre pays",
-        "message": "Ce contenu n’est pas disponible dans votre région"
+        "message": "Ce contenu n’est pas disponible dans votre région",
+        "action": "Nezzel ne peut rien y changer. Essayez un lien d'une autre source"
       },
       "accessForbidden403": {
-        "shortMessage": "Le site n'a pas autorisé ce téléchargement",
-        "message": "Le site a refusé ce téléchargement. Le fichier est peut-être privé, ou le lien a expiré"
+        "shortMessage": "Le site a refusé ce téléchargement",
+        "message": "Le site a refusé ce téléchargement. Le fichier est peut-être privé, ou le lien a expiré",
+        "action": "Si la publication est privée, connectez-vous. Sinon, copiez un nouveau lien et réessayez"
       },
       "notFound404": {
-        "shortMessage": "Introuvable",
-        "message": "Il n'y a plus rien à ce lien. Vérifiez le lien, ou s'il a été supprimé"
+        "shortMessage": "Il n'y a plus rien à ce lien",
+        "message": "Il n'y a plus rien à ce lien. Vérifiez le lien, ou s'il a été supprimé",
+        "action": "Vérifiez le lien, ou si la publication a été supprimée"
       },
       "server5xx": {
         "shortMessage": "Le site rencontre un problème",
-        "message": "Le site a un problème temporaire. Réessayez plus tard"
+        "message": "Le site a un problème temporaire. Réessayez plus tard",
+        "action": "Patientez un peu, puis réessayez"
       },
       "rateLimited429": {
-        "shortMessage": "Trop de téléchargements depuis ce site. Patientez un peu, puis réessayez",
-        "message": "Le site limite les téléchargements pour l'instant. Patientez quelques minutes, puis réessayez"
+        "shortMessage": "Le site limite les téléchargements pour l'instant",
+        "message": "Le site limite les téléchargements pour l'instant. Patientez quelques minutes, puis réessayez",
+        "action": "Patientez quelques minutes, puis réessayez"
       },
       "noAudioTrack": {
-        "shortMessage": "Cette vidéo n'a pas de son à enregistrer en audio",
-        "message": "Cette vidéo n'a pas de son à enregistrer en audio. Téléchargez-la plutôt en vidéo"
+        "shortMessage": "Cette vidéo n'a pas de son",
+        "message": "Cette vidéo n'a pas de son à enregistrer en audio. Téléchargez-la plutôt en vidéo",
+        "action": "Téléchargez-la plutôt en vidéo"
       },
       "requestedFormatUnavailable": {
-        "shortMessage": "Format indisponible",
-        "message": "Le format sélectionné n’est pas disponible pour cette vidéo"
+        "shortMessage": "La qualité choisie n'est pas disponible",
+        "message": "Le format sélectionné n’est pas disponible pour cette vidéo",
+        "action": "Réessayez avec Meilleure, ou choisissez une autre qualité"
       },
       "unableToExtractInitialData": {
-        "shortMessage": "Impossible de lire cette page",
-        "message": "Nezzel n'a pas pu lire cette page. Le site a peut-être changé ; mettre à jour les outils de téléchargement règle souvent le problème"
+        "shortMessage": "Nezzel n'a pas pu lire cette page",
+        "message": "Nezzel n'a pas pu lire cette page. Le site a peut-être changé ; mettre à jour les outils de téléchargement règle souvent le problème",
+        "action": "Mettez à jour les outils de téléchargement dans les Réglages, puis réessayez"
       },
       "unableToExtractIdOrInfo": {
-        "shortMessage": "Impossible de lire les détails de cette vidéo",
-        "message": "Nezzel n'a pas pu lire les détails de cette vidéo. Réessayez ou mettez à jour les outils de téléchargement"
+        "shortMessage": "Nezzel n'a pas pu lire les détails de cette vidéo",
+        "message": "Nezzel n'a pas pu lire les détails de cette vidéo. Réessayez ou mettez à jour les outils de téléchargement",
+        "action": "Réessayez, ou mettez à jour les outils de téléchargement dans les Réglages"
       },
       "nsigExtractionFailed": {
-        "shortMessage": "Le site a bloqué le téléchargement",
-        "message": "Le site a changé la protection de ses vidéos. Mettre à jour les outils de téléchargement règle généralement le problème"
+        "shortMessage": "Le site a changé la protection de ses vidéos",
+        "message": "Le site a changé la protection de ses vidéos. Mettre à jour les outils de téléchargement règle généralement le problème",
+        "action": "Mettez à jour les outils de téléchargement dans les Réglages, puis réessayez"
       },
       "drmProtected": {
-        "shortMessage": "Vidéo protégée contre la copie",
-        "message": "Le site protège cette vidéo contre la copie, Nezzel ne peut donc pas l'enregistrer"
+        "shortMessage": "Cette vidéo est protégée contre la copie",
+        "message": "Le site protège cette vidéo contre la copie, Nezzel ne peut donc pas l'enregistrer",
+        "action": "Nezzel ne peut pas enregistrer les vidéos protégées. Regardez-la sur le site"
       },
       "embedOnly": {
-        "shortMessage": "Vidéo intégrée uniquement",
-        "message": "Cette vidéo est accessible uniquement via un lecteur intégré"
+        "shortMessage": "Cette vidéo ne se lit que dans une autre page",
+        "message": "Cette vidéo ne se lit que dans une autre page. Copiez le lien de la page qui affiche la vidéo, puis réessayez",
+        "action": "Copiez le lien de la page qui affiche la vidéo, puis réessayez"
       },
       "videoPasswordRequired": {
-        "shortMessage": "Mot de passe vidéo manquant ou incorrect",
-        "message": "Cette vidéo ou cet album nécessite un mot de passe, ou celui saisi est incorrect. Saisissez celui fourni par son propriétaire dans les paramètres avancés, puis réessayez."
+        "shortMessage": "Cette vidéo demande un mot de passe",
+        "message": "Cette vidéo ou cet album nécessite un mot de passe, ou celui saisi est incorrect. Saisissez celui fourni par son propriétaire dans les paramètres avancés, puis réessayez.",
+        "action": "Saisissez le mot de passe du propriétaire dans les Réglages avancés, puis réessayez"
       },
       "mediaNotReady": {
-        "shortMessage": "Média pas encore prêt",
-        "message": "Le site prépare encore ce média. Réessayez plus tard."
+        "shortMessage": "Le site prépare encore ce média",
+        "message": "Le site prépare encore ce média. Réessayez plus tard.",
+        "action": "Réessayez plus tard"
       },
       "mediaUnavailable": {
-        "shortMessage": "Média indisponible",
-        "message": "Le site ne permet pas d’accéder à ce média pour le moment. Ouvrez le lien sur le site pour en savoir plus."
+        "shortMessage": "Le site ne propose pas ce média pour l'instant",
+        "message": "Le site ne permet pas d’accéder à ce média pour le moment. Ouvrez le lien sur le site pour en savoir plus.",
+        "action": "Ouvrez le lien sur le site pour en savoir plus"
       },
       "photosOnly": {
-        "shortMessage": "Publication photo",
-        "message": "Cette publication contient des photos, pas une vidéo"
+        "shortMessage": "Cette publication contient des photos, pas de vidéo",
+        "message": "Cette publication contient des photos, pas une vidéo",
+        "action": "Téléchargez plutôt les photos"
       },
       "imageEngineUnavailable": {
-        "shortMessage": "Moteur photo indisponible",
-        "message": "Le moteur photo est absent ou n’a pas pu être vérifié. Réinstallez Nezzel puis réessayez."
+        "shortMessage": "Nezzel ne peut pas enregistrer de photos pour l'instant",
+        "message": "La partie de Nezzel qui enregistre les photos est absente ou endommagée. Réinstallez Nezzel et réessayez. Si cela se reproduit, signalez le problème.",
+        "action": "Réinstallez Nezzel. Si cela se reproduit, signalez le problème"
       },
       "imageSourceUnavailable": {
-        "shortMessage": "Impossible d’enregistrer cette publication",
-        "message": "La source n’a pas fourni les médias sélectionnés, ou les données de l’image étaient incomplètes. Réessayez."
+        "shortMessage": "Impossible d'enregistrer cette publication",
+        "message": "La source n’a pas fourni les médias sélectionnés, ou les données de l’image étaient incomplètes. Réessayez.",
+        "action": "Réessayez"
       },
       "imageSelectionChanged": {
-        "shortMessage": "Sélectionnez à nouveau les éléments",
-        "message": "Les pièces jointes de cette publication ont changé. Relisez le lien et sélectionnez au moins un élément."
+        "shortMessage": "Les éléments de cette publication ont changé",
+        "message": "Les pièces jointes de cette publication ont changé. Relisez le lien et sélectionnez au moins un élément.",
+        "action": "Relisez le lien et choisissez les éléments"
       },
       "imageFileConflict": {
-        "shortMessage": "Le fichier existe déjà",
-        "message": "Un fichier porte déjà ce nom, ou la destination ne peut pas le créer en toute sécurité. Choisissez un autre dossier ou nom de fichier."
+        "shortMessage": "Un fichier de ce nom existe déjà",
+        "message": "Un fichier porte déjà ce nom, ou la destination ne peut pas le créer en toute sécurité. Choisissez un autre dossier ou nom de fichier.",
+        "action": "Choisissez un autre dossier ou nom de fichier"
       },
       "imageHeaderAuthUnavailable": {
-        "shortMessage": "En-têtes d’authentification personnalisés indisponibles pour les images",
-        "message": "Pour télécharger des images, utilisez les cookies du navigateur plutôt que des jetons d’accès ou des en-têtes personnalisés."
+        "shortMessage": "Les photos ne peuvent pas utiliser d'en-têtes de connexion personnalisés",
+        "message": "Pour télécharger des images, utilisez les cookies du navigateur plutôt que des jetons d’accès ou des en-têtes personnalisés.",
+        "action": "Connectez-vous plutôt avec un navigateur, dans les Réglages"
       },
       "imageImpersonationUnavailable": {
-        "shortMessage": "Paramètre de connexion photo indisponible",
-        "message": "Le moteur photo ne peut pas utiliser l’émulation de navigateur choisie. Désactivez-la dans les réglages avancés puis réessayez."
+        "shortMessage": "Les photos ne prennent pas en charge l'imitation de navigateur",
+        "message": "Impossible d'enregistrer les photos avec l'imitation de navigateur choisie. Désactivez-la dans les Réglages avancés, puis réessayez.",
+        "action": "Désactivez l'imitation dans les Réglages avancés, puis réessayez"
       },
       "urlNotSupported": {
-        "shortMessage": "Nezzel ne peut pas encore télécharger depuis ce lien",
-        "message": "Le téléchargement depuis ce lien n’est pas encore pris en charge."
+        "shortMessage": "Nezzel ne peut pas encore télécharger depuis ce site",
+        "message": "Le téléchargement depuis ce lien n’est pas encore pris en charge.",
+        "action": "Signalez le problème pour que nous l'ajoutions"
       },
       "urlUnsupported": {
-        "shortMessage": "Ce n'est pas un lien que Nezzel peut ouvrir",
-        "message": "Nezzel ne reconnaît pas ce lien. Vérifiez qu'il a été copié en entier"
+        "shortMessage": "Nezzel ne reconnaît pas ce lien",
+        "message": "Nezzel ne reconnaît pas ce lien. Vérifiez qu'il a été copié en entier",
+        "action": "Vérifiez qu'il a été copié en entier"
       },
       "unknownUrlType": {
-        "shortMessage": "Type d’URL inconnu",
-        "message": "Le protocole de l’URL fourni n’est pas supporté"
+        "shortMessage": "Ce n'est pas un lien web",
+        "message": "Ce n'est pas un lien web. Copiez un lien qui commence par https://",
+        "action": "Copiez un lien qui commence par https://"
       },
       "networkNameResolutionFailed": {
-        "shortMessage": "Pas de connexion Internet",
-        "message": "Impossible de joindre le site. Vérifiez votre connexion Internet, puis réessayez"
+        "shortMessage": "Pas de connexion internet",
+        "message": "Impossible de joindre le site. Vérifiez votre connexion Internet, puis réessayez",
+        "action": "Vérifiez votre connexion, puis réessayez"
       },
       "unableToConnectToProxy": {
-        "shortMessage": "Échec de connexion au proxy",
-        "message": "Impossible de se connecter au proxy. Vérifiez les paramètres du proxy"
+        "shortMessage": "Connexion au proxy impossible",
+        "message": "Connexion au proxy impossible. Vérifiez le proxy dans les Réglages réseau, puis réessayez",
+        "action": "Vérifiez le proxy dans les Réglages réseau, puis réessayez"
       },
       "signInRequiredForBotDetection": {
-        "shortMessage": "Connexion requise",
-        "message": "Le site demande une connexion pour vérifier que vous n'êtes pas un robot"
+        "shortMessage": "Le site veut vérifier que vous n'êtes pas un robot",
+        "message": "Le site demande une connexion pour vérifier que vous n'êtes pas un robot",
+        "action": "Connectez-vous au site, puis réessayez"
       },
       "playlistPrivateOrMissing": {
-        "shortMessage": "Playlist indisponible",
-        "message": "Cette playlist est privée ou n’existe plus"
+        "shortMessage": "Cette playlist est privée ou n'existe plus",
+        "message": "Cette playlist est privée ou n’existe plus",
+        "action": "Connectez-vous si elle est à vous, ou vérifiez le lien"
       },
       "videoNotFoundOrPrivate": {
-        "shortMessage": "Supprimée ou privée",
-        "message": "Cette vidéo a été supprimée ou rendue privée"
+        "shortMessage": "Cette vidéo a été supprimée ou rendue privée",
+        "message": "Cette vidéo a été supprimée ou rendue privée",
+        "action": "Connectez-vous si vous y avez accès, ou vérifiez le lien"
       },
       "channelUnavailable": {
-        "shortMessage": "Chaîne indisponible",
-        "message": "La chaîne hébergeant ce contenu n’est plus accessible"
+        "shortMessage": "Cette chaîne n'est plus disponible",
+        "message": "La chaîne hébergeant ce contenu n’est plus accessible",
+        "action": "Vérifiez le lien, ou cherchez la vidéo ailleurs"
       },
       "ffmpegNotFound": {
-        "shortMessage": "ffmpeg introuvable",
-        "message": "La conversion en mp3 ou mp4 nécessite ffmpeg"
+        "shortMessage": "Les outils vidéo de Nezzel sont absents",
+        "message": "Nezzel a besoin de ses outils vidéo pour créer des fichiers mp3 ou mp4, et ils sont absents. Réinstallez Nezzel, ou mettez à jour les outils de téléchargement dans les Réglages.",
+        "action": "Réinstallez Nezzel, ou mettez à jour les outils de téléchargement dans les Réglages"
       },
       "ffmpegFailed": {
-        "shortMessage": "Impossible de finaliser le fichier",
-        "message": "Le téléchargement est terminé, mais Nezzel n'a pas pu assembler le fichier. Réessayez ou choisissez un autre format"
+        "shortMessage": "Nezzel n'a pas pu assembler le fichier",
+        "message": "Le téléchargement est terminé, mais Nezzel n'a pas pu assembler le fichier. Réessayez ou choisissez un autre format",
+        "action": "Réessayez, ou choisissez un autre format"
       },
       "cannotAllocateMemory": {
-        "shortMessage": "Mémoire insuffisante",
-        "message": "Votre ordinateur a manqué de mémoire en préparant le fichier. Fermez d'autres apps et réessayez"
+        "shortMessage": "Votre ordinateur manque de mémoire",
+        "message": "Votre ordinateur a manqué de mémoire en préparant le fichier. Fermez d'autres apps et réessayez",
+        "action": "Fermez d'autres applications, puis réessayez"
       },
       "permissionDenied": {
-        "shortMessage": "Permission refusée",
-        "message": "L’application n’a pas la permission d’accéder à ce fichier ou dossier"
+        "shortMessage": "Nezzel ne peut pas ouvrir ce fichier ou ce dossier",
+        "message": "Nezzel n'a pas l'autorisation d'utiliser ce fichier ou ce dossier. Choisissez un autre dossier de téléchargement, ou autorisez l'accès dans les réglages du système.",
+        "action": "Choisissez un autre dossier, ou autorisez Nezzel à y accéder"
       },
       "noWritePermission": {
-        "shortMessage": "Impossible d’écrire",
-        "message": "Le chemin de destination n’est pas accessible en écriture"
+        "shortMessage": "Nezzel ne peut pas enregistrer dans ce dossier",
+        "message": "Nezzel ne peut pas enregistrer de fichiers dans ce dossier. Choisissez un autre dossier de téléchargement dans les Réglages.",
+        "action": "Choisissez un autre dossier de téléchargement dans les Réglages"
       },
       "windowsFileMissing": {
-        "shortMessage": "Fichier manquant",
-        "message": "Le fichier référencé est introuvable (WinError 2)"
+        "shortMessage": "Un fichier nécessaire à Nezzel est absent",
+        "message": "Un fichier nécessaire à Nezzel est introuvable. Réessayez. Si cela se reproduit, réinstallez Nezzel.",
+        "action": "Réessayez. Si cela se reproduit, réinstallez Nezzel"
       },
       "blockedGeneric": {
-        "shortMessage": "Vidéo bloquée",
-        "message": "Cette vidéo est bloquée et ne peut pas être téléchargée"
+        "shortMessage": "Le site a bloqué cette vidéo",
+        "message": "Cette vidéo est bloquée et ne peut pas être téléchargée",
+        "action": "Ouvrez-la sur le site pour en savoir plus"
       },
       "copyrightClaimed": {
-        "shortMessage": "Blocage copyright",
-        "message": "La vidéo a été bloquée pour cause de copyright"
+        "shortMessage": "Bloquée suite à une réclamation de droits d'auteur",
+        "message": "La vidéo a été bloquée pour cause de copyright",
+        "action": "Nezzel ne peut rien y changer. Cherchez la vidéo ailleurs"
       },
       "notPremieredYet": {
-        "shortMessage": "Pas encore diffusée",
-        "message": "Cette vidéo n’est pas disponible avant sa première"
+        "shortMessage": "Cette vidéo n'a pas encore été diffusée",
+        "message": "Cette vidéo n’est pas disponible avant sa première",
+        "action": "Réessayez après le début de la première"
       },
       "livestreamNotStarted": {
-        "shortMessage": "Live non commencé",
-        "message": "Le direct n'a pas encore commencé. Réessayez quand il sera en cours"
+        "shortMessage": "Le direct n'a pas commencé",
+        "message": "Le direct n'a pas encore commencé. Réessayez quand il sera en cours",
+        "action": "Réessayez une fois qu'il est en direct"
       },
       "sslVerifyFailed": {
-        "shortMessage": "SSL échoué",
-        "message": "La connexion sécurisée n’a pas pu être vérifiée. Vérifiez vos certificats ou la date/heure"
+        "shortMessage": "La connexion sécurisée n'a pas pu être vérifiée",
+        "message": "La connexion sécurisée n’a pas pu être vérifiée. Vérifiez vos certificats ou la date/heure",
+        "action": "Vérifiez la date et l'heure de votre ordinateur, puis réessayez"
       },
       "sponsorBlockUnreachable": {
-        "shortMessage": "SponsorBlock hors ligne",
-        "message": "Impossible de se connecter à l’API SponsorBlock pour les segments"
+        "shortMessage": "SponsorBlock injoignable pour retirer les passages sponsorisés",
+        "message": "SponsorBlock est injoignable, les passages sponsorisés n'ont donc pas été retirés. La vidéo est téléchargée en entier. Réessayez plus tard pour les retirer.",
+        "action": "La vidéo est téléchargée en entier. Réessayez plus tard pour les retirer"
       },
       "downloadRetryingFragment": {
-        "shortMessage": "Nouvel essai fragment",
-        "message": "Un fragment a échoué et sera automatiquement retéléchargé"
+        "shortMessage": "Une partie du téléchargement a échoué",
+        "message": "Un fragment a échoué et sera automatiquement retéléchargé",
+        "action": "Rien à faire : Nezzel réessaie"
       },
       "unknown": {
         "shortMessage": "Téléchargement impossible",
-        "hint": "Téléchargement impossible. Réessayez ou ouvrez les détails",
-        "message": "Nezzel n’a pas pu terminer ce téléchargement. Réessayez ou ouvrez les détails pour consulter l’erreur du moteur."
+        "message": "Nezzel n'a pas pu terminer ce téléchargement. Réessayez. Si cela se reproduit, signalez le problème ; les détails sont joints pour nous.",
+        "action": "Réessayez. Si cela se reproduit, signalez le problème"
       },
       "rejectedByFilter": {
-        "shortMessage": "Filtré",
-        "message": "Ignoré par vos filtres de liens"
+        "shortMessage": "Ignoré par vos filtres de liens",
+        "message": "Ignoré par vos filtres de liens",
+        "action": "Modifiez les filtres pour l'inclure"
       }
-    }
+    },
+    "rowLine": "{what}. {action}"
   },
   "about": {
     "title": "À propos",
@@ -1497,6 +1550,13 @@
     "announce": {
       "done": "{title} : téléchargé",
       "failed": "{title} : échec"
+    },
+    "columns": {
+      "name": "Nom",
+      "site": "Site",
+      "quality": "Qualité",
+      "size": "Taille",
+      "length": "Durée"
     }
   },
   "attachments": {
@@ -1744,7 +1804,53 @@
     "slowHint": "Ce site est lent. Vous pouvez lancer le téléchargement ; Nezzel continue la lecture dans la liste",
     "actionFailed": "Impossible de lancer le téléchargement. Réessayez",
     "starting": "Démarrage…",
-    "feedPage": "C'est un fil, pas une publication. Ouvrez une publication, puis copiez son lien"
+    "feedPage": "C'est un fil, pas une publication. Ouvrez une publication, puis copiez son lien",
+    "pick": {
+      "group": "Télécharger en",
+      "download": "Télécharger",
+      "keyTip": "Appuyez sur {n}"
+    },
+    "fail": {
+      "retry": "Réessayer",
+      "report": "Signaler",
+      "thisSite": "ce site",
+      "login": {
+        "title": "Ceci demande une connexion sur {site}",
+        "hint": "Options peut utiliser un navigateur où vous êtes connecté"
+      },
+      "unavailable": {
+        "title": "Ce contenu a été supprimé ou est privé",
+        "hint": "Vérifiez le lien ou demandez à son auteur de le partager"
+      },
+      "unsupported": {
+        "title": "{site} n'est pas encore pris en charge",
+        "hint": "Signalez-le et nous verrons pour l'ajouter"
+      },
+      "region": {
+        "title": "Ce contenu n'est pas disponible dans votre pays",
+        "hint": "Un proxy dans Réglages > Avancé peut aider"
+      },
+      "protected": {
+        "title": "Cette vidéo est protégée contre la copie",
+        "hint": "Nezzel ne peut pas enregistrer les flux protégés par DRM"
+      },
+      "busy": {
+        "title": "{site} limite les demandes en ce moment",
+        "hint": "Attendez quelques minutes, puis réessayez"
+      },
+      "network": {
+        "title": "Impossible de joindre {site}",
+        "hint": "Vérifiez votre connexion, puis réessayez"
+      },
+      "slow": {
+        "title": "{site} met trop de temps à répondre",
+        "hint": "Ouvrez Options pour continuer dans la liste, ou réessayez"
+      },
+      "unknown": {
+        "title": "Impossible de lire ce lien",
+        "hint": "Réessayez, ou signalez-le pour que nous le corrigions"
+      }
+    }
   },
   "shortcut": {
     "press": "Appuyez sur le nouveau raccourci…",

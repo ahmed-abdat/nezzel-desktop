@@ -7,6 +7,7 @@ import { useMediaDiagnosticsStore } from '../stores/media/diagnostics';
 import { useMediaDestinationStore } from '../stores/media/destination';
 import { ProgressStage } from '../tauri/types/progress';
 import { formatDuration } from '../helpers/units';
+import { qualityLabel } from '../helpers/formats';
 import { capitalizeFirstLetter } from '../helpers/progress';
 import { choiceForOptions } from '../helpers/quickChoice';
 import { savedAttachments } from '../helpers/mediaKind';
@@ -124,9 +125,9 @@ export function useDownloadRow(group: Ref<Group>) {
     const opts = optionsStore.getOptions(group.value.id);
     switch (choice.value) {
       case 'audio': return t('sheet.audio');
-      case 'small': return opts?.height ? `${opts.height}p` : t('sheet.small');
-      case 'best': return opts?.height ? `${opts.height}p` : t('sheet.best');
-      default: return opts?.height ? `${opts.height}p${opts.fps ?? ''}` : opts?.abr ? `${opts.abr}kbps` : t('sheet.custom');
+      case 'small': return opts?.height ? qualityLabel(opts.height, opts.fps) : t('sheet.small');
+      case 'best': return opts?.height ? qualityLabel(opts.height, opts.fps) : t('sheet.best');
+      default: return opts?.height ? qualityLabel(opts.height, opts.fps) : opts?.abr ? `${opts.abr}kbps` : t('sheet.custom');
     }
   });
 
@@ -191,9 +192,16 @@ export function useDownloadRow(group: Ref<Group>) {
     return parts.filter(part => part && part.trim().length > 0);
   });
 
+  /** Wide list columns: what was chosen, how big, how long. Empty string = unknown yet. */
+  const columns = computed(() => ({
+    quality: group.value.isCombined ? t('downloads.row.items', { n: group.value.total }, group.value.total) : (phase.value === 'reading' ? '' : choiceLabel.value),
+    size: group.value.filesize ? formatSizeLocal(group.value.filesize) : '',
+    length: group.value.duration ? formatDuration(group.value.duration) : '',
+  }));
+
   const lastDiagnostic = computed(() => diagnosticsStore.findLastDiagnosticByGroupId(group.value.id));
   const lastFatal = computed(() => diagnosticsStore.findLastFatalByGroupId(group.value.id));
   const needsLogin = computed(() => phase.value === 'error' && (lastDiagnostic.value?.code ?? '').includes('signIn'));
 
-  return { state, phase, isList, site, percent, metaLine, needsLogin, lastDiagnostic, lastFatal, destination, choice, fileKind, readingStuck, processing };
+  return { state, phase, isList, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, choice, fileKind, readingStuck, processing };
 }

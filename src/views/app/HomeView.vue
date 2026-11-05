@@ -25,7 +25,7 @@
       </ul>
     </div>
 
-    <template v-else>
+    <div v-else class="@container/list flex flex-1 flex-col">
       <!-- Search: title or site, case/accent/harakat-insensitive. Esc clears. -->
       <div class="flex items-center gap-1.5 border-b border-hairline px-4 py-1.5" role="search">
         <search-icon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -52,13 +52,22 @@
             :key="chip.key"
             :to="chip.to"
             :aria-current="chip.on ? 'true' : undefined"
-            class="inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-[12px] outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-ring/40"
+            class="inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-[12px] outline-none transition-colors duration-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
             :class="chip.on ? 'border-transparent bg-primary-soft font-medium text-primary-soft-foreground' : 'border-hairline text-foreground/80 hover:bg-foreground/[0.04]'"
           >
             {{ chip.label }}
             <span v-if="chip.count" class="tnum" :class="chip.key === 'failed' && !chip.on ? 'text-destructive' : chip.on ? '' : 'text-muted-foreground'">{{ count(chip.count) }}</span>
           </router-link>
         </div>
+      </div>
+      <!-- Finder-style column labels, only when the list is wide enough for columns (cells in DownloadRow). -->
+      <div v-if="shownCount > 0" class="hidden items-center gap-3 border-b border-hairline pe-4 ps-8 py-1 text-[11.5px] font-medium text-muted-foreground @min-[1040px]/list:flex" aria-hidden="true">
+        <span :class="showThumbnails ? (compactRows ? 'ms-[60px]' : 'ms-[84px]') : ''" class="min-w-0 flex-1">{{ t('downloads.columns.name') }}</span>
+        <span class="w-32 shrink-0">{{ t('downloads.columns.site') }}</span>
+        <span class="w-24 shrink-0">{{ t('downloads.columns.quality') }}</span>
+        <span class="w-20 shrink-0 text-end">{{ t('downloads.columns.size') }}</span>
+        <span class="w-16 shrink-0 text-end">{{ t('downloads.columns.length') }}</span>
+        <span class="w-[200px] shrink-0" />
       </div>
       <p class="sr-only" role="status" aria-live="polite">{{ query ? t('downloads.list.results', { n: count(shownCount) }, shownCount) : '' }}</p>
       <!-- Finished and failed rows are announced once, so screen-reader users hear outcomes without hunting. -->
@@ -98,9 +107,9 @@
       <section v-if="shownFinished.length" aria-labelledby="ledger-finished">
         <selection-bar v-if="selectionCount && firstSection === 'finished'" :groups="selectedGroups" />
         <header v-else :class="headCls">
-          <h2 id="ledger-finished" class="flex-1">{{ t('downloads.sections.finished') }} <span class="tnum ms-1 font-normal">{{ count(shownFinished.length) }}</span></h2>
+          <h2 id="ledger-finished">{{ t('downloads.sections.finished') }} <span class="tnum ms-1 font-normal">{{ count(shownFinished.length) }}</span></h2>
           <Tooltip v-if="view.status !== 'done'" :content="t('downloads.list.clearFinishedHint')">
-            <Button variant="ghost" class="-my-1 h-6 px-2" @click="clearFinished(shownFinished)">
+            <Button variant="ghost" class="-my-1 ms-1 h-6 px-2 font-normal text-muted-foreground hover:text-foreground" @click="clearFinished(shownFinished)">
               {{ t('downloads.list.clearFinished') }}
             </Button>
           </Tooltip>
@@ -109,7 +118,18 @@
           <download-row v-for="row in shownFinished" :key="row.id" :group="row.group" />
         </ul>
       </section>
-    </template>
+
+      <!-- A short list leaves room: say how to add more, quietly, with the real keys. -->
+      <ul v-if="!query && shownCount > 0 && shownCount <= 8" class="flex flex-wrap items-center gap-x-6 gap-y-2 py-5 pe-4 ps-8 text-[12px] text-muted-foreground" data-testid="list-hint">
+        <li v-for="hint in hints.slice(0, 2)" :key="hint.key" class="flex items-center gap-2">
+          <component :is="hint.icon" class="size-3.5 shrink-0 text-muted-foreground/80" aria-hidden="true" />
+          <i18n-t :keypath="hint.textKey" tag="span" scope="global">
+            <template #brand><bdi dir="ltr">{{ brandName }}</bdi></template>
+          </i18n-t>
+          <span v-if="hint.keys.length" class="inline-flex gap-0.5" dir="ltr"><Kbd v-for="cap in hint.keys" :key="cap">{{ cap }}</Kbd></span>
+        </li>
+      </ul>
+    </div>
   </div>
 </template>
 
@@ -150,7 +170,7 @@ const { rows, shown, query, clearFinished, counts } = useDownloadList();
 const hidden = useListHiddenStore();
 const mediaStore = useMediaStore();
 const optionsStore = useMediaOptionsStore();
-const { defaultChoice } = useUiPrefs();
+const { defaultChoice, compactRows, showThumbnails } = useUiPrefs();
 const isStarting = ref(false);
 const { isMac } = usePlatform();
 const captureShortcut = useCaptureShortcut();

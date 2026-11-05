@@ -11,6 +11,58 @@ pub struct PreviewStatus {
   pub title: String,
   pub details: PreviewDetails,
   pub failed: bool,
+  /// Why the read failed, from a fixed vocabulary (see `fail_reason`); never engine text.
+  pub reason: Option<&'static str>,
+}
+
+/// Plain reasons the bar and card can explain: `login`, `unavailable` (removed or private), `unsupported`,
+/// `region`, `protected`, `busy` (rate limited), `network`, `slow` (timed out), `unknown`.
+pub fn reason_for_code(code: &str) -> &'static str {
+  match code {
+    "signInRequired"
+    | "signInRequiredForBotDetection"
+    | "membersOnly"
+    | "videoPasswordRequired" => "login",
+    "videoNotFoundOrPrivate"
+    | "playlistPrivateOrMissing"
+    | "notFound404"
+    | "mediaUnavailable"
+    | "channelUnavailable"
+    | "copyrightClaimed"
+    | "accessForbidden403" => "unavailable",
+    "urlNotSupported" | "urlUnsupported" | "unknownUrlType" | "noMediaFound" | "embedOnly" => {
+      "unsupported"
+    }
+    "geoBlocked" => "region",
+    "drmProtected" => "protected",
+    "rateLimited429" | "blockedGeneric" => "busy",
+    "networkNameResolutionFailed" | "unableToConnectToProxy" | "sslVerifyFailed" | "server5xx" => {
+      "network"
+    }
+    _ => "unknown",
+  }
+}
+
+/// The first recognised yt-dlp error line decides the reason; anything unrecognised is `unknown`.
+pub fn fail_reason(stderr: &str) -> &'static str {
+  use crate::parsers::ytdlp_error::{DiagnosticMatcher, YtdlpErrorParser};
+  static PARSER: std::sync::OnceLock<Option<YtdlpErrorParser>> = std::sync::OnceLock::new();
+  let Some(parser) = PARSER
+    .get_or_init(|| {
+      DiagnosticMatcher::from_json(include_str!("../diagnostic_rules.json"))
+        .ok()
+        .map(|matcher| YtdlpErrorParser::new("capture", "capture", matcher))
+    })
+    .as_ref()
+  else {
+    return "unknown";
+  };
+  stderr
+    .lines()
+    .filter_map(|line| parser.parse_fetch_line(line, false))
+    .map(|event| reason_for_code(&event.code))
+    .find(|reason| *reason != "unknown")
+    .unwrap_or("unknown")
 }
 
 /// What the quick bar shows about a link: plain facts, never raw format ids.
@@ -29,7 +81,19 @@ pub struct PreviewDetails {
   pub best_ext: String,
   /// Bytes of the best video + best audio when the site reports them.
   pub size: Option<u64>,
+  /// The link has a sound track (separate or muxed): the quick "Audio" pick applies.
+  pub has_audio: bool,
+  /// Bytes of the best audio-only format, when the site reports it.
+  pub audio_size: Option<u64>,
+  /// The quick "Smaller" pick: the highest height at or under 720 below the best, else the next lower one.
+  /// None when there is only one quality (no smaller pick to offer).
+  pub small_height: Option<u64>,
+  /// Bytes of that smaller video (+ best audio when it has none of its own).
+  pub small_size: Option<u64>,
 }
+
+/// Quick "Smaller" pick ceiling, the same as the app's `SMALL_MAX_HEIGHT`.
+const SMALL_MAX_HEIGHT: u64 = 720;
 
 fn text(item: &Value, key: &str, max: usize) -> String {
   item
@@ -78,19 +142,31 @@ pub fn summarize(item: &Value) -> PreviewDetails {
     .filter(|f| codec(f, "acodec") && !codec(f, "vcodec"))
     .max_by_key(|f| f.get("abr").and_then(Value::as_f64).map(|v| v as u64));
   let video_has_audio = best_video.is_some_and(|f| codec(f, "acodec"));
+  let audio_bytes = best_audio.and_then(|f| bytes(f));
+  // A video's download size: its bytes, plus the best audio when it carries no sound of its own.
+  let with_audio = |video: &Value| match (bytes(video), audio_bytes) {
+    (Some(v), Some(a)) if !codec(video, "acodec") => Some(v.saturating_add(a)),
+    (v, _) => v,
+  };
   let size = if media_kind.as_deref() == Some("file") {
     bytes(item)
   } else {
-    match (
-      best_video.and_then(|f| bytes(f)),
-      best_audio.and_then(|f| bytes(f)),
-    ) {
-      (Some(v), Some(a)) if !video_has_audio => Some(v.saturating_add(a)),
-      (Some(v), _) => Some(v),
-      (None, Some(a)) if best_video.is_none() => Some(a),
-      _ => None,
+    match best_video {
+      Some(video) => with_audio(video),
+      None => audio_bytes,
     }
   };
+  let best_height = best_video.and_then(|f| height(f));
+  let small_video = best_height.and_then(|best| {
+    let lower = formats.iter().filter(|f| {
+      height(f).is_some_and(|h| h < best) && (codec(f, "vcodec") || f.get("vcodec").is_none())
+    });
+    let under_cap = lower
+      .clone()
+      .filter(|f| height(f).is_some_and(|h| h <= SMALL_MAX_HEIGHT))
+      .max_by_key(|f| (height(f), bytes(f)));
+    under_cap.or_else(|| lower.max_by_key(|f| (height(f), bytes(f))))
+  });
   let best_ext = match best_video {
     Some(f) if video_has_audio => text(f, "ext", 8),
     Some(_) => "mp4".into(),
@@ -122,24 +198,45 @@ pub fn summarize(item: &Value) -> PreviewDetails {
       .find(|s| !s.is_empty())
       .unwrap_or_default(),
     views: item.get("view_count").and_then(Value::as_u64),
-    best_height: best_video.and_then(|f| height(f)),
+    best_height,
     best_ext,
     size,
+    has_audio: best_audio.is_some() || video_has_audio,
+    audio_size: audio_bytes,
+    small_height: small_video.and_then(|f| height(f)),
+    small_size: small_video.and_then(|f| with_audio(f)),
   }
 }
 
+#[cfg(test)]
 pub async fn read_output(
   command: &mut Command,
   process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
 ) -> Option<Vec<u8>> {
+  read_output_reason(command, process_guard).await.ok()
+}
+
+/// Like `read_output`, but a failure says why (`fail_reason` over at most 64 KiB of stderr, or `slow`).
+pub async fn read_output_reason(
+  command: &mut Command,
+  process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
+) -> Result<Vec<u8>, &'static str> {
   command
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
-    .stderr(Stdio::null())
+    .stderr(Stdio::piped())
     .kill_on_drop(true);
   #[cfg(windows)]
   command.creation_flags(0x08000000); // CREATE_NO_WINDOW
-  let mut child = command.spawn().ok()?;
+  let mut child = command.spawn().map_err(|_| "unknown")?;
+  // Drained concurrently so a chatty stderr can never block stdout; capped, never forwarded as text.
+  let stderr = child.stderr.take().map(|stderr| {
+    tokio::spawn(async move {
+      let mut bytes = Vec::new();
+      let _ = stderr.take(64 * 1024).read_to_end(&mut bytes).await;
+      String::from_utf8_lossy(&bytes).into_owned()
+    })
+  });
   // 20 s leaves room for a second engine within capture_action's 46-second metadata wait.
   // Cancellation signals the owner to kill + reap before releasing its process guard.
   let (cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
@@ -159,17 +256,24 @@ pub async fn read_output(
       Some(bytes)
     });
     let result = tokio::select! {
-      result = read => result.ok().flatten(),
-      _ = cancelled => None,
+      result = read => result.map_err(|_| "slow"),
+      _ = cancelled => Ok(None),
     };
     // Also reap on oversized output and timeout; kill_on_drop alone does not wait.
     let _ = child.kill().await;
     let _ = child.wait().await;
     result
   });
-  let result = owner.await.ok().flatten();
+  let result = owner.await.unwrap_or(Ok(None));
   drop(cancel);
-  result
+  match result {
+    Ok(Some(bytes)) => Ok(bytes),
+    Err(reason) => Err(reason),
+    Ok(None) => match stderr {
+      Some(task) => Err(fail_reason(&task.await.unwrap_or_default())),
+      None => Err("unknown"),
+    },
+  }
 }
 
 #[cfg(test)]
@@ -190,6 +294,52 @@ mod summary_tests {
       ),
       (Some("file"), Some(4096), None, "")
     );
+  }
+
+  #[test]
+  fn failed_reads_say_why_in_a_fixed_vocabulary() {
+    for (stderr, reason) in [
+      ("ERROR: [youtube] abc: Sign in to confirm you're not a bot", "login"),
+      ("ERROR: [youtube] abc: Join this channel to get access to members-only content", "login"),
+      ("ERROR: [youtube] abc: Private video. Sign in if you've been granted access", "login"),
+      ("ERROR: [vimeo] 123: Video has not been found", "unavailable"),
+      ("ERROR: Unsupported URL: https://example.com/page", "unsupported"),
+      ("ERROR: [youtube] abc: The uploader has not made this video available in your country", "region"),
+      ("WARNING: something harmless\nERROR: [generic] Unable to download webpage: HTTP Error 429: Too Many Requests", "busy"),
+      ("ERROR: Unable to download webpage: <urlopen error [Errno 11001] getaddrinfo failed>", "network"),
+      ("some unrecognised failure", "unknown"),
+      ("", "unknown"),
+    ] {
+      assert_eq!(fail_reason(stderr), reason, "{stderr}");
+    }
+  }
+
+  #[test]
+  fn quick_picks_offer_the_smaller_quality_only_when_one_exists() {
+    let fmt = |h: u64, bytes: u64| json!({"height": h, "vcodec": "h264", "acodec": "none", "filesize": bytes});
+    let audio = json!({"abr": 128.0, "vcodec": "none", "acodec": "aac", "filesize": 10});
+    // (heights, expected small height, expected small size)
+    let cases: [(&[u64], Option<u64>, Option<u64>); 5] = [
+      (&[2160, 1080, 720, 480], Some(720), Some(730)), // best ≤ 720 below the best
+      (&[1080, 480, 360], Some(480), Some(490)),       // no 720: the nearest lower under the cap
+      (&[2160, 1440], Some(1440), Some(1450)),         // nothing ≤ 720: the next lower one
+      (&[720], None, None),                            // single quality: no Smaller pick
+      (&[], None, None),                               // audio only: no video picks
+    ];
+    for (heights, small, size) in cases {
+      let mut formats: Vec<Value> = heights.iter().map(|h| fmt(*h, *h)).collect();
+      formats.push(audio.clone());
+      let d = summarize(&json!({ "formats": formats }));
+      assert_eq!(
+        (d.small_height, d.small_size),
+        (small, size),
+        "heights {heights:?}"
+      );
+      assert!(d.has_audio);
+      assert_eq!(d.audio_size, Some(10));
+    }
+    let silent = summarize(&json!({"formats": [fmt(1080, 1)]}));
+    assert!(!silent.has_audio, "a video-only link offers no Audio pick");
   }
 
   #[test]

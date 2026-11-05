@@ -7,6 +7,7 @@
     :class="isBar ? 'gap-3 p-4' : 'h-screen gap-2 p-3.5'"
     :style="{ fontSize: rtl ? '14px' : '13px' }"
     @keydown.esc.prevent="act('dismiss')"
+    @keydown="onPickKey"
   >
     <template v-if="isBar">
       <form class="flex flex-col gap-3" @submit.prevent="act('download')">
@@ -67,20 +68,24 @@
           </div>
           <p v-else-if="offer.resolving" class="text-[12.5px] text-muted-foreground" role="status">{{ t('capture.readingBrowser') }}</p>
           <p v-else-if="error" class="text-[12.5px] text-destructive" role="alert">{{ t(error === 'action' ? 'capture.actionFailed' : 'capture.failed') }}</p>
-          <p v-else-if="offer.failed" class="text-[12.5px] text-destructive" role="alert">{{ t('capture.failed') }}</p>
+          <div v-else-if="offer.failed" class="flex min-w-0 flex-col gap-0.5" role="alert" data-testid="capture-fail">
+            <p class="flex items-start gap-1.5 text-[12.5px] font-medium text-destructive-foreground dark:text-destructive"><TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" /><bdi>{{ t(`capture.fail.${failure}.title`, { site: offer.site || t('capture.fail.thisSite') }) }}</bdi></p>
+            <p class="ps-5 text-[12px] text-muted-foreground text-pretty">{{ t(`capture.fail.${failure}.hint`) }}</p>
+          </div>
           <p v-else-if="text && !offer.url" class="text-[12.5px] text-muted-foreground" role="status">{{ t('capture.unsupported') }}</p>
           <p v-else class="text-[12.5px] text-muted-foreground">{{ t('capture.emptyHint') }}</p>
         </div>
 
         <div class="flex items-center gap-2">
           <p v-if="isMac && offer.resolving" class="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground" :title="t('capture.automationHint')">{{ t('capture.automationHint') }}</p>
-          <span v-else class="inline-flex flex-1 items-center gap-1 text-[11.5px] text-muted-foreground">
+          <span v-else class="inline-flex min-w-0 flex-1 items-center gap-1 overflow-hidden whitespace-nowrap text-[11.5px] text-muted-foreground">
             <Kbd>{{ escKey }}</Kbd>{{ t('capture.escCloses') }}
           </span>
-          <Button type="button" variant="outline" size="sm" :disabled="!ready" @click="act('options')">{{ t('capture.options') }}</Button>
-          <Button type="submit" size="sm" :disabled="!ready" :aria-busy="acting || undefined">
-            <LoaderCircle v-if="acting" class="animate-spin" aria-hidden="true" /><ArrowDownToLine v-else aria-hidden="true" />{{ acting ? t('capture.starting') : t('capture.downloadBest') }}
-          </Button>
+          <CaptureFailActions v-if="offer.failed && !editing" :reason="failure" :busy="acting" @act="onFail" />
+          <template v-else>
+            <Button type="button" variant="ghost" size="sm" :disabled="!ready" @click="act('options')">{{ t('capture.options') }}</Button>
+            <CapturePicks :picks="picks" :disabled="!ready" :acting="acting" submit @pick="pick" />
+          </template>
         </div>
       </form>
     </template>
@@ -104,13 +109,17 @@
           <template v-for="(part, index) in bestParts" :key="index"><span v-if="index > 0" class="nz-sep" aria-hidden="true" /><bdi>{{ part }}</bdi></template>
         </p>
       </template>
-      <p v-else-if="offer.failed" class="text-[12.5px] text-destructive" role="alert">{{ t('capture.failed') }}</p>
+      <div v-else-if="offer.failed" class="flex min-w-0 flex-col gap-0.5" role="alert" data-testid="capture-fail">
+        <p class="flex items-start gap-1.5 text-[12.5px] font-medium text-destructive-foreground dark:text-destructive"><TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" /><bdi>{{ t(`capture.fail.${failure}.title`, { site: offer.site || t('capture.fail.thisSite') }) }}</bdi></p>
+        <p class="ps-5 text-[12px] text-muted-foreground text-pretty">{{ t(`capture.fail.${failure}.hint`) }}</p>
+      </div>
       <p v-else class="text-[12.5px] text-muted-foreground" role="status">{{ slow ? t('capture.stillReading') : t('capture.loading') }}</p>
       <div v-if="!offer.feed" class="mt-auto flex items-center justify-end gap-2">
-        <Button variant="outline" size="sm" :disabled="!offer.url || acting" @click="act('options')">{{ t('capture.options') }}</Button>
-        <Button size="sm" :disabled="!offer.url || acting" :aria-busy="acting || undefined" @click="act('download')">
-          <LoaderCircle v-if="acting" class="animate-spin" aria-hidden="true" /><ArrowDownToLine v-else aria-hidden="true" />{{ acting ? t('capture.starting') : t('capture.downloadBest') }}
-        </Button>
+        <CaptureFailActions v-if="offer.failed" :reason="failure" :busy="acting" @act="onFail" />
+        <template v-else>
+          <Button variant="ghost" size="sm" class="me-auto px-2" :disabled="!offer.url || acting" @click="act('options')">{{ t('capture.options') }}</Button>
+          <CapturePicks :picks="picks" :disabled="!offer.url || acting" :acting="acting" compact @pick="pick" />
+        </template>
       </div>
     </template>
   </section>
@@ -120,9 +129,13 @@
 import Tooltip from '../ui/tooltip/Tooltip.vue';
 import { Input, type InputApi } from '../ui/input';
 import FileTypeIcon from './FileTypeIcon.vue';
+import CapturePicks from './CapturePicks.vue';
+import CaptureFailActions from './CaptureFailActions.vue';
+import { failReason, type FailAction } from '../../helpers/captureFailure';
+import { capturePicks, type PickKey } from '../../helpers/capturePicks';
 import { fileCategory } from '../../helpers/fileCategory';
 import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue';
-import { ArrowDownToLine, ClipboardCheck, Film, Image as ImageIcon, Link2, LoaderCircle, X } from '@lucide/vue';
+import { ClipboardCheck, Film, Image as ImageIcon, Link2, X, TriangleAlert } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import Kbd from '@/components/ui/kbd/Kbd.vue';
 import { invoke } from '@tauri-apps/api/core';
@@ -141,7 +154,7 @@ import { applyTheme } from '../../composables/useTheme';
 const { t, locale } = useI18n();
 const { isMac } = usePlatform();
 const isBar = getCurrentWindow().label === 'capture-bar';
-const offer = ref<CaptureOffer>({ id: 0, url: '', site: '', title: '', details: emptyDetails(), failed: false, resolving: false, feed: false });
+const offer = ref<CaptureOffer>({ id: 0, url: '', site: '', title: '', details: emptyDetails(), failed: false, reason: null, resolving: false, feed: false });
 const { size: formatSize } = useLocaleNumber();
 const thumbFailed = ref(false);
 const text = ref('');
@@ -244,12 +257,44 @@ function fitBar() {
   const height = Math.ceil(panel.value?.scrollHeight ?? 0);
   if (height > 0) void getCurrentWindow().setSize(new LogicalSize(window.innerWidth || BAR_WIDTH, height)).catch(() => {});
 }
+const failure = computed(() => failReason(offer.value.reason));
+/** Failed read: Retry reads the same link again in place; Report opens Report a problem in the main window. */
+async function onFail(action: FailAction) {
+  if (action === 'options' || action === 'report') return act(action);
+  acting.value = true;
+  try {
+    await invoke('capture_retry');
+  } catch {
+    error.value = 'action';
+  } finally {
+    acting.value = false;
+  }
+}
+
+/** Picks for this link: all three before the read (they work right away), then only those that apply. */
+const picks = computed(() => capturePicks(details.value, !!offer.value.title));
+/** Best sends no choice: the main window applies the user's own default (Settings), exactly like Enter. */
+function pick(key: PickKey) {
+  void act('download', key === 'best' ? undefined : key);
+}
+/** 1/2/3 start a pick (not while typing in the field); the number never changes meaning after the read. */
+function onPickKey(event: KeyboardEvent) {
+  if (!['1', '2', '3'].includes(event.key) || event.metaKey || event.ctrlKey || event.altKey) return;
+  if ((event.target as HTMLElement | null)?.closest('input, textarea')) return;
+  const key = (['best', 'audio', 'small'] as const)[Number(event.key) - 1];
+  if (!picks.value.some(p => p.key === key)) return;
+  event.preventDefault();
+  pick(key);
+}
+
 /** One action at a time: a double Enter must not start the download twice. */
-async function act(action: 'download' | 'options' | 'dismiss') {
-  if (action !== 'dismiss' && (!offer.value.url || offer.value.feed || offer.value.resolving || editing.value || acting.value)) return;
+async function act(action: 'download' | 'options' | 'dismiss' | 'report', choice?: PickKey) {
+  // A failed read never offers Download (it would fail again): Enter does nothing there.
+  if (action === 'download' && offer.value.failed) return;
+  if (action !== 'dismiss' && action !== 'report' && (!offer.value.url || offer.value.feed || offer.value.resolving || editing.value || acting.value)) return;
   if (action !== 'dismiss') acting.value = true;
   try {
-    await invoke('capture_action', { id: offer.value.id, action });
+    await invoke('capture_action', { id: offer.value.id, action, choice: choice ?? null });
   } catch {
     if (action !== 'dismiss') error.value = 'action';
   } finally {
@@ -268,9 +313,25 @@ watch(() => [offer.value.id, offer.value.url, !!offer.value.title, offer.value.f
     slow.value = true;
   }, SLOW_MS);
 });
+/** Linux can hold capture_metadata for this hidden, always-on-top window until the next input
+ * (tauri#3654): while the card still reads, ask for the snapshot instead of waiting on the event. */
+const SNAPSHOT_MS = 1500;
+let snapshotTimer: ReturnType<typeof setInterval> | undefined;
+const waitingForRead = computed(() => !!offer.value.url && !offer.value.title && !offer.value.failed && !offer.value.feed && !offer.value.resolving);
+async function pollSnapshot() {
+  const value = await invoke<CaptureOffer>('capture_snapshot');
+  // Dismissed, reported or expired: Rust has no offer (id 0) or a newer one. Take the empty one so the
+  // hidden panel stops asking; a newer one arrives through update as usual.
+  if (!value.id) offer.value = value;
+  else update(value);
+}
+watch(waitingForRead, (waiting) => {
+  clearInterval(snapshotTimer);
+  snapshotTimer = waiting ? setInterval(() => void pollSnapshot().catch(() => {}), SNAPSHOT_MS) : undefined;
+});
 onMounted(async () => {
   unlisten = await listen<CaptureOffer>('capture_update', event => update(event.payload));
-  stopMetadata = await listen<Pick<CaptureOffer, 'id' | 'title' | 'details' | 'failed'>>('capture_metadata', ({ payload }) => {
+  stopMetadata = await listen<Pick<CaptureOffer, 'id' | 'title' | 'details' | 'failed' | 'reason'>>('capture_metadata', ({ payload }) => {
     if (payload.id !== offer.value.id) return;
     Object.assign(offer.value, payload);
     void nextTick(fitBar);
@@ -288,6 +349,7 @@ onBeforeUnmount(() => {
   stopMetadata?.();
   clearTimeout(editTimer);
   clearTimeout(slowTimer);
+  clearInterval(snapshotTimer);
   sizer?.disconnect();
 });
 </script>

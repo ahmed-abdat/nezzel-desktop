@@ -188,6 +188,22 @@ def stage_linux(target):
             (staged / name).chmod(0o755)
 
 
+def sign_onedir(payload, identity):
+    magic = {bytes.fromhex(value) for value in ('feedface', 'cefaedfe', 'feedfacf', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca')}
+    files = []
+    for path in payload.rglob('*'):
+        if path.is_file() and not path.is_symlink():
+            with path.open('rb') as source:
+                if source.read(4) in magic:
+                    files.append(path)
+    frameworks = [path for path in payload.rglob('*.framework') if path.is_dir()]
+    entitlements = ROOT / 'scripts/tools-entitlements.plist'
+    for path in sorted(files, key=lambda path: len(path.parts), reverse=True) + sorted(frameworks, key=lambda path: len(path.parts), reverse=True):
+        subprocess.run(['codesign', '--force', '--sign', identity, '--options', 'runtime',
+                        '--entitlements', str(entitlements), str(path)], check=True)
+        subprocess.run(['codesign', '--verify', '--strict', str(path)], check=True)
+
+
 # Tauri signs externalBin itself, but resource executables need explicit nested signing.
 def sign_macos():
     if sys.platform != 'darwin':
@@ -204,19 +220,13 @@ def sign_macos():
         # only matters for notarized Developer ID builds.
         print('yt-dlp: ad-hoc build, keeping upstream signatures')
         return
-    magic = {bytes.fromhex(value) for value in ('feedface', 'cefaedfe', 'feedfacf', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca')}
-    files = []
-    for path in payload.rglob('*'):
-        if path.is_file():
-            with path.open('rb') as source:
-                if source.read(4) in magic:
-                    files.append(path)
-    frameworks = [path for path in payload.rglob('*.framework') if path.is_dir()]
-    entitlements = ROOT / 'scripts/tools-entitlements.plist'
-    for path in sorted(files, key=lambda path: len(path.parts), reverse=True) + sorted(frameworks, key=lambda path: len(path.parts), reverse=True):
-        subprocess.run(['codesign', '--force', '--sign', identity, '--options', 'runtime',
-                        '--entitlements', str(entitlements), str(path)], check=True)
-        subprocess.run(['codesign', '--verify', '--strict', str(path)], check=True)
+    sign_onedir(payload, identity)
+    # gallery-dl's onedir (fetch-gallery-dl.py): the app checks its entry against
+    # gallery-dl.sha256, so record the hash of the signed bytes.
+    gallery = resources / 'gallery-dl'
+    if (gallery / 'gallery-dl').is_file():
+        sign_onedir(gallery, identity)
+        (ROOT / 'src-tauri/binaries/gallery-dl.sha256').write_text(sha256(gallery / 'gallery-dl') + '\n')
     # Preserve the verified local cache after codesign rewrites Mach-O bytes.
     index_path = resources / 'index.json'
     index = json.loads(index_path.read_text())

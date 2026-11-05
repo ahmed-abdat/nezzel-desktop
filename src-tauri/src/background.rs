@@ -246,12 +246,53 @@ fn tray_anchor(app: &AppHandle) -> Option<(f64, f64, Edge)> {
       return Some((p.x + s.width / 2., p.y + s.height, Edge::Top));
     }
   }
-  // No tray rect (Linux, or a hidden menu bar): the top end of the screen.
-  Some((
-    origin.x + full.width - 60.,
-    work_pos.y.max(origin.y + 26.),
-    Edge::Top,
+  if !cfg!(target_os = "linux") {
+    // Hidden menu bar: the top end of the screen.
+    return Some((
+      origin.x + full.width - 60.,
+      work_pos.y.max(origin.y + 26.),
+      Edge::Top,
+    ));
+  }
+  // Linux has no tray rect: the end of the panel the tray lives in.
+  let screen = Area {
+    x: origin.x,
+    y: origin.y,
+    w: full.width,
+    h: full.height,
+  };
+  let work = Area {
+    x: work_pos.x,
+    y: work_pos.y,
+    w: work_size.width,
+    h: work_size.height,
+  };
+  Some(panel_anchor(
+    screen,
+    work,
+    crate::capture::clipboard::current_desktop(),
   ))
+}
+
+/// Where the tray probably is when the OS won't say: the screen edge a panel reserves (work area
+/// smaller than the screen), else the desktop's default panel (KDE Plasma: bottom; GNOME and the
+/// rest: top). Wayland reports no work area, so the default decides there.
+pub fn panel_anchor(
+  screen: Area,
+  work: Area,
+  desktop: crate::capture::clipboard::Desktop,
+) -> (f64, f64, Edge) {
+  let end_x = screen.x + screen.w - 60.;
+  let top_gap = work.y - screen.y;
+  let bottom_gap = (screen.y + screen.h) - (work.y + work.h);
+  if bottom_gap > top_gap.max(0.) && bottom_gap > 0. {
+    return (end_x, work.y + work.h + bottom_gap / 2., Edge::Bottom);
+  }
+  if top_gap <= 0. && desktop == crate::capture::clipboard::Desktop::Kde {
+    let bar = 44.;
+    return (end_x, screen.y + screen.h - bar / 2., Edge::Bottom);
+  }
+  (end_x, work.y.max(screen.y + 26.), Edge::Top)
 }
 
 fn shrink_into(
@@ -444,6 +485,64 @@ mod tests {
     // A newer close is current again.
     let again = t.begin();
     assert!(t.is_current(again));
+  }
+
+  #[test]
+  fn note_follows_the_panel_when_the_tray_rect_is_unknown() {
+    use crate::capture::clipboard::Desktop;
+    let screen = Area {
+      x: 0.,
+      y: 0.,
+      w: 1280.,
+      h: 800.,
+    };
+    let work = |y: f64, h: f64| Area { y, h, ..screen };
+    for (case, work, desktop, expected) in [
+      (
+        "KDE bottom panel, X11",
+        work(0., 756.),
+        Desktop::Kde,
+        (1220., 778., Edge::Bottom),
+      ),
+      (
+        "XFCE bottom panel",
+        work(0., 772.),
+        Desktop::Other,
+        (1220., 786., Edge::Bottom),
+      ),
+      (
+        "XFCE top panel",
+        work(28., 772.),
+        Desktop::Other,
+        (1220., 28., Edge::Top),
+      ),
+      (
+        "GNOME top bar",
+        work(32., 768.),
+        Desktop::Gnome,
+        (1220., 32., Edge::Top),
+      ),
+      (
+        "KDE on Wayland (no work area)",
+        screen,
+        Desktop::Kde,
+        (1220., 778., Edge::Bottom),
+      ),
+      (
+        "GNOME on Wayland",
+        screen,
+        Desktop::Gnome,
+        (1220., 26., Edge::Top),
+      ),
+      (
+        "unknown desktop on Wayland",
+        screen,
+        Desktop::Other,
+        (1220., 26., Edge::Top),
+      ),
+    ] {
+      assert_eq!(panel_anchor(screen, work, desktop), expected, "{case}");
+    }
   }
 
   #[test]

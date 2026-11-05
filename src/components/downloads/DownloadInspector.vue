@@ -53,7 +53,7 @@
       <div v-if="hasFormatControls" class="border-t border-hairline">
         <button
           type="button"
-          class="flex w-full items-center gap-1.5 px-4 py-3 text-start text-[13px] font-medium outline-none hover:bg-accent/70 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40"
+          class="flex w-full items-center gap-1.5 px-4 py-3 text-start text-[13px] font-medium outline-none hover:bg-accent/70 focus-visible:bg-accent focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
           :aria-expanded="advancedOpen"
           :aria-controls="advancedId"
           @click="advancedOpen = !advancedOpen; sheet.touch()"

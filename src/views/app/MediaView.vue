@@ -17,7 +17,11 @@
         <CircleAlert class="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
         <div class="min-w-0 flex-1">
           <p class="text-[13px] font-semibold text-destructive-foreground">{{ t('media.detail.failed') }}</p>
-          <p class="mt-0.5 text-[12.5px] text-destructive-foreground/90 text-pretty">{{ errorDisplay.shortMessage }}</p>
+          <i18n-t v-if="errorDisplay.action" keypath="errors.rowLine" tag="p" scope="global" class="mt-0.5 text-[12.5px] text-destructive-foreground/90 text-pretty">
+            <template #what>{{ errorDisplay.shortMessage }}</template>
+            <template #action><span class="text-foreground/85">{{ errorDisplay.action }}</span></template>
+          </i18n-t>
+          <p v-else class="mt-0.5 text-[12.5px] text-destructive-foreground/90 text-pretty">{{ errorDisplay.shortMessage }}</p>
         </div>
         <Button v-if="needsLogin" variant="outline" size="sm" @click="router.push({ name: 'settings.logins' })">{{ t('media.detail.useLogin') }}</Button>
         <Button v-else-if="group.url" variant="outline" size="sm" @click="recover">
@@ -84,7 +88,7 @@
 
       <!-- Developer output, collapsed. Empty lists never show. -->
       <Collapsible class="group mt-10 border-t border-hairline pt-3" :unmount-on-hide="false">
-        <CollapsibleTrigger class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-[6px] text-[12px] font-semibold text-foreground/65 outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+        <CollapsibleTrigger class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-[6px] text-[12px] font-semibold text-foreground/65 outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]">
           <ChevronRight class="size-3.5 transition-transform duration-150 group-data-[state=open]:rotate-90 rtl:rotate-180 rtl:group-data-[state=open]:rotate-90" aria-hidden="true" />
           {{ t('media.detail.technical') }}
         </CollapsibleTrigger>

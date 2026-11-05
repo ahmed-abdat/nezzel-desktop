@@ -116,7 +116,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
@@ -163,7 +163,7 @@ jobs:
         shell: bash
         run: |
           cargo install tauri-cli --git https://github.com/tauri-apps/tauri --rev b5573c1db2bb6118594b586a6aa51aeb37aa7d84 --locked --force
-          echo "TAURI_BUNDLER_NEW_APPIMAGE_FORMAT=true" >> $GITHUB_ENV
+          echo "TAURI_BUNDLER_NEW_APPIMAGE_FORMAT=true" >> "$GITHUB_ENV"
 
       # TEMPORARY WORKAROUND:
       # Because we use "cargo tauri" in that tauri build step, we always have to install tauri cli here.
@@ -196,6 +196,18 @@ jobs:
           # This option is needed to use the possibly overriden branch of tauri-cli, to fix appimages.
           tauriScript: 'cargo tauri'
           args: ${{ matrix.args }}
+
+      - name: Bundled tools start from the built app (macOS only)
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          shopt -s nullglob
+          apps=(src-tauri/target/*/release/bundle/macos/Nezzel.app src-tauri/target/release/bundle/macos/Nezzel.app)
+          if (( ${#apps[@]} != 1 )); then
+            echo "FAIL expected one Nezzel.app, found ${#apps[@]}"
+            exit 1
+          fi
+          bash scripts/macos-app-smoke.sh "${apps[0]}"
 
       - name: Create public PDBs (Windows only)
         if: matrix.platform == 'windows-latest' || matrix.platform == 'windows-11-arm'
@@ -355,6 +367,18 @@ jobs:
           name: nezzel-pdb-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
           path: src-tauri/target/release/public-pdb/*.pdb
 
+      - name: Upload Linux packages for the smoke job (Linux x64 only)
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nezzel-linux-x64
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+
   package-appxupload:
     # Store package: needs the WINDOWS_PFX secrets; turn on with the MSIX_ENABLED repo variable.
     if: vars.MSIX_ENABLED == 'true'
@@ -431,3 +455,54 @@ jobs:
         with:
           name: nezzel-msixupload
           path: Nezzel.msixupload
+
+  linux-smoke:
+    # Installs and runs the x64 Linux packages in clean distro containers
+    # (scripts/linux-package-smoke.sh). Runs after every upload, so it never holds back
+    # other platforms' assets; any FAIL line fails the run.
+    needs: publish-tauri
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: 'ubuntu:22.04'
+            package: '*.deb'
+          - image: 'ubuntu:24.04'
+            package: '*.deb'
+          - image: 'debian:12'
+            package: '*.deb'
+          - image: 'fedora:latest'
+            package: '*.rpm'
+          - image: 'archlinux:base'
+            package: '*.AppImage'
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/linux-package-smoke.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nezzel-linux-x64
+          path: packages
+
+      - name: Install and run the package
+        shell: bash
+        env:
+          PACKAGE_GLOB: ${{ matrix.package }}
+        run: |
+          shopt -s nullglob globstar
+          # shellcheck disable=SC2206 # the glob is the point
+          found=(packages/**/$PACKAGE_GLOB)
+          if (( ${#found[@]} != 1 )); then
+            echo "FAIL expected one $PACKAGE_GLOB package, found ${#found[@]}"
+            exit 1
+          fi
+          bash scripts/linux-package-smoke.sh "${found[0]}"

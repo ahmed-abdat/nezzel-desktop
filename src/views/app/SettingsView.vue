@@ -1,32 +1,40 @@
 <template>
-  <div class="mx-auto w-full max-w-[600px] px-6 pb-12 pt-5">
-    <div class="relative mb-6 flex justify-center">
-      <nav :aria-label="t('prefs.tabs.label')" class="inline-flex gap-0.5 rounded-lg bg-muted p-[3px]">
-        <router-link
-          v-for="tab in tabs"
-          :key="tab.label"
-          :to="tab.to"
-          class="rounded-md px-3.5 py-1 text-[13px] font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
-          :class="{ 'bg-card text-foreground shadow-xs': tab.active }"
-          :aria-current="tab.active ? 'page' : undefined"
-        >{{ tab.label }}</router-link>
-      </nav>
-      <Transition
-        enter-active-class="transition-opacity duration-150"
-        leave-active-class="transition-opacity duration-150"
-        enter-from-class="opacity-0"
-        leave-to-class="opacity-0"
+  <!-- Category list + one column, anchored at the inline start next to the app sidebar; spare width stays empty
+       at the end (System Settings / Finder), never centred. -->
+  <div class="flex w-full items-start gap-8 px-6 pb-12 pt-6">
+    <nav :aria-label="t('prefs.tabs.label')" class="sticky top-6 flex w-[176px] shrink-0 flex-col gap-0.5 self-start">
+      <router-link
+        v-for="tab in tabs"
+        :key="tab.label"
+        :to="tab.to"
+        class="flex h-8 items-center gap-2.5 rounded-[6px] px-2.5 text-[13px] text-foreground/80 outline-none transition-colors duration-100 hover:bg-foreground/[0.04] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
+        :class="{ 'bg-foreground/[0.07] font-medium text-foreground hover:bg-foreground/[0.07]': tab.active }"
+        :aria-current="tab.active ? 'page' : undefined"
       >
-        <span v-if="justSaved" class="absolute end-0 top-1/2 inline-flex -translate-y-1/2 items-center gap-1 text-[12px] font-medium text-primary" aria-hidden="true">
-          <Check class="size-3.5" aria-hidden="true" />{{ t('prefs.saved') }}
-        </span>
-      </Transition>
-      <!-- Always mounted, so screen readers hear the text change (a live region inserted with its text is often missed). -->
-      <span class="sr-only" role="status" aria-live="polite">{{ justSaved ? t('prefs.saved') : '' }}</span>
+        <component :is="tab.icon" class="size-4 shrink-0" :class="tab.active ? 'text-primary' : 'text-muted-foreground'" aria-hidden="true" />
+        <span class="truncate">{{ tab.label }}</span>
+      </router-link>
+    </nav>
+    <div class="min-w-0 max-w-[640px] flex-1">
+      <div class="relative mb-3 flex h-8 items-center">
+        <h2 class="text-[18px] font-semibold rtl:text-[20px]">{{ activeTab?.label }}</h2>
+        <Transition
+          enter-active-class="transition-opacity duration-150"
+          leave-active-class="transition-opacity duration-150"
+          enter-from-class="opacity-0"
+          leave-to-class="opacity-0"
+        >
+          <span v-if="justSaved" class="absolute end-0 top-1/2 inline-flex -translate-y-1/2 items-center gap-1 text-[12px] font-medium text-primary" aria-hidden="true">
+            <Check class="size-3.5" aria-hidden="true" />{{ t('prefs.saved') }}
+          </span>
+        </Transition>
+        <!-- Always mounted, so screen readers hear the text change (a live region inserted with its text is often missed). -->
+        <span class="sr-only" role="status" aria-live="polite">{{ justSaved ? t('prefs.saved') : '' }}</span>
+      </div>
+      <router-view v-slot="{ Component }">
+        <component :is="Component" v-model="draft" @reset="resetSettings" />
+      </router-view>
     </div>
-    <router-view v-slot="{ Component }">
-      <component :is="Component" v-model="draft" @reset="resetSettings" />
-    </router-view>
   </div>
 </template>
 
@@ -34,7 +42,7 @@
 import { computed, onBeforeUnmount, ref, toRaw, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
-import { Check } from '@lucide/vue';
+import { Check, KeyRound, Settings2, SlidersHorizontal } from '@lucide/vue';
 import { useSettingsStore } from '../../stores/settings';
 import { useToastStore } from '../../stores/toast';
 import { useTheme } from '../../composables/useTheme.ts';
@@ -46,10 +54,11 @@ const { setTheme } = useTheme();
 const { t } = useI18n();
 const route = useRoute();
 
+const activeTab = computed(() => tabs.value.find(tab => tab.active));
 const tabs = computed(() => [
-  { label: t('prefs.tabs.general'), to: { name: 'settings.general' }, active: route.name === 'settings.general' },
-  { label: t('prefs.tabs.logins'), to: { name: 'settings.logins' }, active: route.name === 'settings.logins' },
-  { label: t('prefs.tabs.advanced'), to: { name: 'settings.advanced' }, active: route.name === 'settings.advanced' },
+  { icon: Settings2, label: t('prefs.tabs.general'), to: { name: 'settings.general' }, active: route.name === 'settings.general' },
+  { icon: KeyRound, label: t('prefs.tabs.logins'), to: { name: 'settings.logins' }, active: route.name === 'settings.logins' },
+  { icon: SlidersHorizontal, label: t('prefs.tabs.advanced'), to: { name: 'settings.advanced' }, active: route.name === 'settings.advanced' },
 ]);
 
 const draft = ref<Settings>(structuredClone<Settings>(toRaw(settingsStore.settings)));

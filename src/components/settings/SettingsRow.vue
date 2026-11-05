@@ -1,6 +1,6 @@
 <template>
   <div
-    class="grid min-h-[52px] items-center gap-x-8 gap-y-1 border-b border-hairline py-3 last:border-b-0"
+    class="grid min-h-[52px] items-center gap-x-8 gap-y-1 border-b border-foreground/[0.08] py-3 last:border-b-0"
     :class="stacked ? 'grid-cols-1' : 'grid-cols-[minmax(0,1fr)_auto]'"
   >
     <component :is="forId ? 'label' : 'span'" v-if="cleanLabel || $slots.label" :for="forId" class="col-start-1 text-[13px]">

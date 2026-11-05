@@ -59,7 +59,7 @@
         </div>
 
         <div class="wl-demo flex min-w-0 flex-col border-s border-hairline bg-sidebar px-7 pt-7 pb-[22px]">
-          <welcome-demo ref="demo" :os="os" :folder="folder" @step="step = $event" />
+          <welcome-demo ref="demo" :os="os" :desktop="capturePlatform.desktop" :folder="folder" @step="step = $event" />
 
           <ol class="mt-3.5 flex gap-1.5" aria-hidden="true">
             <li v-for="s in STEPS" :key="s.k" class="wl-step" :class="{ on: step === s.k }">

@@ -42,8 +42,11 @@ export function optionsForChoice(choice: QuickChoice, formats: MediaFormat[], so
   if (audio && (choice === 'audio' || (video.length === 0 && !videoSource))) {
     return { ...BEST_AUDIO };
   }
-  // Direct videos and post attachments may have no quality list; save both tracks by default.
-  if (video.length === 0) return { ...BEST_AUDIO, trackType: TrackType.both };
+  // Direct videos and post attachments may have no quality list; save both tracks by default. Smaller still
+  // caps the height: the engine turns it into best ≤720p, else the nearest lower ([height<=720] fallbacks).
+  if (video.length === 0) return choice === 'small' && videoSource
+    ? { ...BEST_AUDIO, trackType: TrackType.both, height: SMALL_MAX_HEIGHT }
+    : { ...BEST_AUDIO, trackType: TrackType.both };
   if (choice === 'small') {
     const small = video.find(f => (f.height ?? 0) <= SMALL_MAX_HEIGHT) ?? video[video.length - 1];
     return { trackType: TrackType.both, ...small };

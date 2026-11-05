@@ -1,13 +1,15 @@
 <template>
-  <section class="mt-8 first:mt-0" :aria-labelledby="title ? headingId : undefined">
-    <h2 v-if="title" :id="headingId" class="mb-1 text-[12px] font-semibold text-foreground/65">{{ title }}</h2>
+  <section class="mt-9 first:mt-0" :aria-labelledby="title ? headingId : undefined">
+    <h2 v-if="title" :id="headingId" class="mb-1 text-[13px] font-semibold text-foreground">{{ title }}</h2>
     <p v-if="note" class="mb-1 text-[12px] leading-relaxed text-muted-foreground text-pretty">{{ note }}</p>
-    <div><slot /></div>
+    <div>
+      <slot />
+      <div v-if="$slots.more" v-show="open" :id="moreId" class="border-t border-foreground/[0.08]"><slot name="more" /></div>
+    </div>
     <template v-if="$slots.more">
-      <div v-show="open" :id="moreId" class="border-t border-hairline"><slot name="more" /></div>
       <button
         type="button"
-        class="mt-1 inline-flex h-7 items-center gap-1 rounded-[6px] text-[12.5px] font-medium text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/40"
+        class="mt-1 inline-flex h-7 items-center gap-1 rounded-[6px] text-[12.5px] font-medium text-primary outline-none hover:underline focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
         :aria-expanded="open"
         :aria-controls="moreId"
         @click="open = !open"

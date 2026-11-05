@@ -1,7 +1,7 @@
 <template>
   <!-- Developer-only options, collapsed at the very end of Advanced. -->
   <Collapsible class="group mt-8 border-t border-hairline pt-3" :unmount-on-hide="false">
-    <CollapsibleTrigger class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-[6px] text-[12px] font-semibold text-foreground/65 outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+    <CollapsibleTrigger class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-[6px] text-[12px] font-semibold text-foreground/65 outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]">
       <ChevronRight class="size-3.5 transition-transform duration-150 group-data-[state=open]:rotate-90 rtl:rotate-180 rtl:group-data-[state=open]:rotate-90" aria-hidden="true" />
       {{ t('prefs.adv.dev.title') }}
     </CollapsibleTrigger>

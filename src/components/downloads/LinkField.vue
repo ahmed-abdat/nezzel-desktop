@@ -1,6 +1,7 @@
 <template>
-  <form class="flex min-w-0 flex-1 items-center justify-end gap-2" autocomplete="off" @submit.prevent="onSubmit">
-    <div class="flex h-7 w-full min-w-28 max-w-[340px] items-center gap-1.5 rounded-[7px] bg-foreground/[0.055] ps-2 pe-0.5 transition-[background-color,box-shadow] focus-within:bg-card focus-within:ring-2 focus-within:ring-ring/30">
+  <form class="mx-auto flex min-w-0 max-w-[720px] flex-1 items-center justify-center gap-2" autocomplete="off" @submit.prevent="onSubmit">
+    <!-- Grows and centres in the toolbar, like Safari's address field. -->
+    <div class="flex h-8 w-full min-w-28 flex-1 items-center gap-1.5 rounded-[7px] ps-2.5 bg-foreground/[0.055] pe-0.5 transition-[background-color,box-shadow] focus-within:bg-card focus-within:ring-2 focus-within:ring-ring/30">
       <Link class="size-3.5 shrink-0 text-muted-foreground rtl:-scale-x-100" aria-hidden="true" />
       <label for="queue-url-input" class="sr-only">{{ t('downloads.field.label') }}</label>
       <Input variant="bare"
@@ -112,7 +113,7 @@ const input = ref<InputApi | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const menuRoot = ref<HTMLElement | null>(null);
 const menuOpen = ref(false);
-const itemCls = 'flex w-full items-start gap-2.5 rounded-[6px] px-2 py-1.5 text-start outline-none transition-colors duration-100 hover:bg-foreground/[0.05] focus-visible:bg-foreground/[0.05] focus-visible:ring-2 focus-visible:ring-ring/40 [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground';
+const itemCls = 'flex w-full items-start gap-2.5 rounded-[6px] px-2 py-1.5 text-start outline-none transition-colors duration-100 hover:bg-foreground/[0.05] focus-visible:bg-foreground/[0.05] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)] [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground';
 let immediateFromFile = false;
 
 /** With nothing to add (empty field, no copied link) the button points the user at the field instead. */

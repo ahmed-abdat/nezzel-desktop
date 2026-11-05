@@ -35,6 +35,9 @@ pub struct Offer {
   pub title: String,
   pub details: preview::PreviewDetails,
   pub failed: bool,
+  /// Why the read failed (`preview::reason_for_code` vocabulary); None while reading or after success.
+  #[serde(skip_deserializing)]
+  pub reason: Option<&'static str>,
   pub resolving: bool,
   /// Home/feed page with no specific post: no metadata fetch.
   pub feed: bool,
@@ -64,6 +67,44 @@ pub struct CaptureState {
   /// bar gives focus back to the app the user came from instead of raising the main window.
   main_was_focused: AtomicBool,
   main_is_focused: AtomicBool,
+  /// Everything sent to the main window, until it pulls it (`capture_take_pending`). Linux can hold
+  /// an event for a hidden window until the next user input (tauri#3654); the pull never waits on that.
+  pending: Mutex<Outbox>,
+}
+
+/// How long, and how many, unpulled messages the main window may have waiting: it pulls every 1.5 s,
+/// so anything older belongs to a main window that is gone or stuck.
+const OUTBOX_TTL: Duration = Duration::from_secs(120);
+const OUTBOX_CAP: usize = 50;
+
+#[derive(Default)]
+struct Outbox {
+  actions: Vec<(Instant, CaptureAction)>,
+  items: Vec<(Instant, CaptureItem)>,
+}
+
+#[derive(Default, Serialize)]
+pub struct PendingForMain {
+  actions: Vec<CaptureAction>,
+  items: Vec<CaptureItem>,
+}
+
+/// Adds `value`, dropping entries past the TTL, then the oldest past the cap.
+fn push_bounded<T>(queue: &mut Vec<(Instant, T)>, now: Instant, value: T) {
+  queue.retain(|(at, _)| now.duration_since(*at) < OUTBOX_TTL);
+  queue.push((now, value));
+  if queue.len() > OUTBOX_CAP {
+    let excess = queue.len() - OUTBOX_CAP;
+    queue.drain(..excess);
+  }
+}
+
+fn drain_fresh<T>(queue: &mut Vec<(Instant, T)>, now: Instant) -> Vec<T> {
+  std::mem::take(queue)
+    .into_iter()
+    .filter(|(at, _)| now.duration_since(*at) < OUTBOX_TTL)
+    .map(|(_, value)| value)
+    .collect()
 }
 
 impl Default for CaptureState {
@@ -85,6 +126,7 @@ impl Default for CaptureState {
       data_control: tokio::sync::OnceCell::new(),
       main_was_focused: AtomicBool::new(false),
       main_is_focused: AtomicBool::new(false),
+      pending: Mutex::default(),
     }
   }
 }
@@ -426,11 +468,15 @@ fn same_site(a: &str, b: &str) -> bool {
 }
 
 async fn preview(app: AppHandle, label: String, value: Offer) {
-  let item = preview_item(&app, &value).await;
+  let (item, reason) = match preview_item(&app, &value).await {
+    Ok(item) => (Some(item), None),
+    Err(reason) => (None, Some(reason)),
+  };
   let state = app.state::<CaptureState>();
   let mut offers = state.offers.lock().unwrap();
   if let Some(current) = offers.get_mut(&label).filter(|v| v.id == value.id) {
     current.failed = item.is_none();
+    current.reason = reason;
     if let Some(item) = &item {
       current.title = item
         .get("title")
@@ -447,32 +493,34 @@ async fn preview(app: AppHandle, label: String, value: Offer) {
       title: current.title.clone(),
       details: current.details.clone(),
       failed: current.failed,
+      reason: current.reason,
     };
     let _ = app.emit_to(&label, "capture_metadata", &status);
   }
   state.changed.notify_waiters();
 }
 
-async fn preview_item(app: &AppHandle, value: &Offer) -> Option<serde_json::Value> {
+/// The link's media item, or why it could not be read (a fixed reason word, never engine text).
+async fn preview_item(app: &AppHandle, value: &Offer) -> Result<serde_json::Value, &'static str> {
   let network = app.state::<SharedConfig>().load().network.clone();
   // Check before either engine: a configured but empty proxy must never go direct.
   if network.enable_proxy == Some(true)
     && network.proxy.as_deref().is_none_or(|p| p.trim().is_empty())
   {
-    return None;
+    return Err("network");
   }
   if crate::files::hosts::plan(&value.url, crate::files::hosts::Export::Pdf).is_some() {
     // File-share failures stay with Files; never invoke yt-dlp for their preview.
     if network.enable_proxy == Some(true) {
-      return None;
+      return Err("unknown");
     }
     return tokio::time::timeout(
       Duration::from_secs(20),
       crate::files::runner::preview(&value.url, format!("capture-{}", value.id)),
     )
     .await
-    .ok()?
-    .ok()
+    .map_err(|_| "slow")?
+    .map_err(|_| "unknown")
     .map(|item| with_engine(item, FetchEngine::Files));
   }
   let gallery_first = crate::parsers::gallery::gallery_first(&value.url);
@@ -485,20 +533,20 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Option<serde_json::Valu
     )
     .await
     {
-      Ok(Some(item)) => return Some(with_engine(item, FetchEngine::Gallery)),
+      Ok(Some(item)) => return Ok(with_engine(item, FetchEngine::Gallery)),
       // A login wall leaves the media type unknown. The foreground fetch must
       // resolve it with consented cookies instead of caching a yt-dlp preview.
-      Err(crate::parsers::gallery::GalleryError::Login) => return None,
+      Err(crate::parsers::gallery::GalleryError::Login) => return Err("login"),
       _ => {}
     }
   }
   let item = preview_ytdlp(app, value, &network)
     .await
     .map(|item| with_engine(item, FetchEngine::Ytdlp));
-  if item.is_some() || gallery_first {
-    item
-  } else {
-    crate::runners::gallery::preview_media(
+  match item {
+    Ok(item) => Ok(item),
+    Err(reason) if gallery_first => Err(reason),
+    Err(reason) => crate::runners::gallery::preview_media(
       app,
       &value.url,
       format!("capture-{}", value.id),
@@ -508,6 +556,7 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Option<serde_json::Valu
     .ok()
     .flatten()
     .map(|item| with_engine(item, FetchEngine::Gallery))
+    .ok_or(reason),
   }
 }
 
@@ -528,26 +577,26 @@ async fn preview_ytdlp(
   app: &AppHandle,
   value: &Offer,
   network: &crate::state::config_models::NetworkSettings,
-) -> Option<serde_json::Value> {
+) -> Result<serde_json::Value, &'static str> {
   let process_guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
   let manager = crate::binaries::binaries_manager::BinariesManager::for_app(app);
-  let path = manager.tool_environment().ok()?;
-  let executable = manager.tool_path("yt-dlp").ok()?;
-  let mut command = preview_command(&executable, network, &value.url)?;
+  let path = manager.tool_environment().map_err(|_| "unknown")?;
+  let executable = manager.tool_path("yt-dlp").map_err(|_| "unknown")?;
+  let mut command = preview_command(&executable, network, &value.url).ok_or("unknown")?;
   command.env("PATH", path);
-  let bytes = preview::read_output(&mut command, process_guard).await?;
-  let json = String::from_utf8(bytes).ok()?;
+  let bytes = preview::read_output_reason(&mut command, process_guard).await?;
+  let json = String::from_utf8(bytes).map_err(|_| "unknown")?;
   if serde_json::from_str::<serde_json::Value>(&json)
     .is_ok_and(|info| crate::parsers::gallery::tiktok_photo_candidate(&value.url, &info))
   {
-    return None;
+    return Err("unsupported");
   }
-  let parsed =
-    crate::parsers::ytdlp_info::parse_ytdlp_info(&json, format!("capture-{}", value.id)).ok()?;
+  let parsed = crate::parsers::ytdlp_info::parse_ytdlp_info(&json, format!("capture-{}", value.id))
+    .map_err(|_| "unknown")?;
   match parsed {
-    crate::models::ParsedMedia::Single(item) => serde_json::to_value(item).ok(),
-    crate::models::ParsedMedia::Playlist(item) => serde_json::to_value(item).ok(),
-    _ => None,
+    crate::models::ParsedMedia::Single(item) => serde_json::to_value(item).map_err(|_| "unknown"),
+    crate::models::ParsedMedia::Playlist(item) => serde_json::to_value(item).map_err(|_| "unknown"),
+    _ => Err("unsupported"),
   }
 }
 
@@ -625,6 +674,20 @@ mod action_tests {
   use super::*;
 
   #[test]
+  fn only_known_quick_picks_reach_the_main_window() {
+    for (input, out) in [
+      (Some("best"), Some("best")),
+      (Some("audio"), Some("audio")),
+      (Some("small"), Some("small")),
+      (Some("4k"), None),
+      (Some("audio; rm"), None),
+      (None, None),
+    ] {
+      assert_eq!(quick_choice(input), out, "{input:?}");
+    }
+  }
+
+  #[test]
   fn capture_previews_record_their_engine_but_playlists_keep_kind_routing() {
     let single = with_engine(serde_json::json!({ "id": "a" }), FetchEngine::Gallery);
     assert_eq!(single["fetchEngine"], "gallery");
@@ -693,6 +756,99 @@ mod action_tests {
       .url = "https://example.com".into();
     assert!(adopt_on_focus(&state).is_none());
     assert!(state.claimed.lock().unwrap().is_empty());
+  }
+
+  /// The card (id 1) and the bar (id 2) both hold the same link.
+  fn same_link_in_both_windows(state: &CaptureState) {
+    pending_offer(state, "capture-card", true);
+    let mut bar = state.offers.lock().unwrap()["capture-card"].clone();
+    bar.id = 2;
+    state
+      .offers
+      .lock()
+      .unwrap()
+      .insert("capture-bar".into(), bar);
+  }
+
+  #[test]
+  fn one_link_is_claimed_once_across_both_capture_windows() {
+    let state = CaptureState::default();
+    same_link_in_both_windows(&state);
+    let first = claim_action(&state, "capture-bar", 2, "download").unwrap();
+    assert_eq!(first.retired.as_deref(), Some("capture-card"));
+    // The racing click in the other window finds its offer settled: one queued download, not two.
+    assert_eq!(
+      claim_action(&state, "capture-card", 1, "download")
+        .err()
+        .as_deref(),
+      Some("offer expired")
+    );
+    assert!(adopt_on_focus(&state).is_none());
+    // The retired offer leaves no claim or metadata behind.
+    assert!(!state.claimed.lock().unwrap().contains_key(&1));
+    assert!(state.offers.lock().unwrap().contains_key("capture-bar"));
+  }
+
+  #[test]
+  fn a_link_focus_already_adopted_is_upgraded_not_queued_again() {
+    let state = CaptureState::default();
+    same_link_in_both_windows(&state);
+    assert_eq!(adopt_on_focus(&state).unwrap().id, 1);
+    let upgrade = claim_action(&state, "capture-bar", 2, "download").unwrap();
+    // Same row id as the adopted one: the main window upgrades it instead of adding a second row.
+    assert_eq!((upgrade.id, upgrade.action.as_str()), (1, "download"));
+    assert_eq!(
+      claim_action(&state, "capture-bar", 2, "download")
+        .err()
+        .as_deref(),
+      Some("offer already handled")
+    );
+  }
+
+  #[test]
+  fn a_different_link_in_the_other_window_stays() {
+    let state = CaptureState::default();
+    same_link_in_both_windows(&state);
+    state
+      .offers
+      .lock()
+      .unwrap()
+      .get_mut("capture-card")
+      .unwrap()
+      .url = "https://www.youtube.com/watch?v=other".into();
+    assert!(claim_action(&state, "capture-bar", 2, "download")
+      .unwrap()
+      .retired
+      .is_none());
+    assert!(state.offers.lock().unwrap().contains_key("capture-card"));
+  }
+
+  #[test]
+  fn the_outbox_forgets_old_entries_and_keeps_at_most_the_cap() {
+    let start = Instant::now();
+    let mut queue = Vec::new();
+    push_bounded(&mut queue, start, 0);
+    push_bounded(&mut queue, start + OUTBOX_TTL, 1);
+    assert_eq!(queue.iter().map(|(_, v)| *v).collect::<Vec<_>>(), [1]);
+    for n in 2..(OUTBOX_CAP as i32 + 10) {
+      push_bounded(&mut queue, start + OUTBOX_TTL, n);
+    }
+    assert_eq!(queue.len(), OUTBOX_CAP);
+    assert_eq!(queue[0].1, 10);
+    assert!(drain_fresh(&mut queue, start + OUTBOX_TTL * 3).is_empty());
+    assert!(queue.is_empty());
+  }
+
+  #[test]
+  fn main_pulls_every_sent_action_once() {
+    let state = CaptureState::default();
+    pending_offer(&state, "capture-card", true);
+    let action = claim_action(&state, "capture-card", 1, "download").unwrap();
+    queue_for_main(&state, &action);
+    let pending = take_pending(&state);
+    assert_eq!(pending.actions.len(), 1);
+    assert_eq!(pending.actions[0].id, 1);
+    assert!(take_pending(&state).actions.is_empty());
   }
 
   #[test]
@@ -832,16 +988,59 @@ pub fn capture_edit(app: AppHandle, window: WebviewWindow, text: String) -> Resu
   Ok(())
 }
 
+/// Failed read → "Retry": read the same link again in the same bar or card (a fresh offer id).
+#[tauri::command]
+pub fn capture_retry(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+  let label = window.label();
+  if !matches!(label, "capture-card" | "capture-bar") {
+    return Err("unavailable".into());
+  }
+  let state = app.state::<CaptureState>();
+  let url = state
+    .offers
+    .lock()
+    .unwrap()
+    .get(label)
+    .filter(|offer| offer.failed)
+    .map(|offer| offer.url.clone())
+    .ok_or("nothing to retry")?;
+  offer(&app, label, &url, false)?;
+  Ok(())
+}
+
+/// Failed read → "Report": the main window opens Report a problem with the reason word only;
+/// the link goes along only if the user ticks "Include the link" there.
+#[derive(Clone, Serialize)]
+struct CaptureReport {
+  url: String,
+  reason: &'static str,
+}
+
 #[derive(Clone, Serialize)]
 pub struct CaptureAction {
   pub id: u64,
   pub url: String,
   pub action: String,
   pub item: Option<serde_json::Value>,
+  /// Quick pick from the bar or card ("best", "audio", "small"); None = the user's default choice.
+  pub choice: Option<&'static str>,
+  /// The other capture window whose offer for the same link this claim settled (to hide).
+  #[serde(skip)]
+  pub retired: Option<String>,
+}
+
+/// Only the known quick picks cross into the main window; anything else means "the default choice".
+pub fn quick_choice(choice: Option<&str>) -> Option<&'static str> {
+  match choice? {
+    "best" => Some("best"),
+    "audio" => Some("audio"),
+    "small" => Some("small"),
+    _ => None,
+  }
 }
 
 #[derive(Clone, Serialize)]
-struct CaptureItem {
+pub struct CaptureItem {
   id: u64,
   item: Option<serde_json::Value>,
 }
@@ -867,21 +1066,68 @@ fn claim_action(
     "adopt" => "adopt",
     _ => "dismiss",
   };
+  let url = current.url.clone();
   let mut claimed = state.claimed.lock().unwrap();
-  match claimed.get(&id) {
-    None => {}
+  let upgrades = |claim: Option<&&str>| match claim {
+    None => Ok(()),
     // X11 can focus the main window as the card is clicked: focus adopts the row first, and the
     // click must still start it (or open its options) instead of being dropped.
-    Some(&"adopt") if matches!(action, "download" | "options") => {}
-    Some(_) => return Err("offer already handled".into()),
-  }
+    Some(&"adopt") if matches!(action, "download" | "options") => Ok(()),
+    Some(_) => Err("offer already handled".to_string()),
+  };
+  upgrades(claimed.get(&id))?;
+  // One claim per link across both capture windows, under the offers lock: two windows (or a double
+  // click racing the focus) can't both queue the same link.
+  // Adopting never settles the other window: the bar may be the user's live interaction.
+  let other = matches!(action, "download" | "options")
+    .then(|| {
+      offers
+        .iter()
+        .find(|(other, offer)| other.as_str() != label && offer.url == url)
+        .map(|(other, offer)| (other.clone(), offer.id))
+    })
+    .flatten();
+  // The other window's offer was already adopted as a row: upgrade that row instead of a second one.
+  let row_id = match &other {
+    Some((_, other_id)) if claimed.contains_key(other_id) => {
+      upgrades(claimed.get(other_id))?;
+      *other_id
+    }
+    _ => id,
+  };
   claimed.insert(id, action);
+  claimed.insert(row_id, action);
   drop(claimed);
+  let item = state
+    .metadata
+    .lock()
+    .unwrap()
+    .get(&row_id)
+    .cloned()
+    .flatten();
+  let mut offers = offers;
+  let retired = other.map(|(other, other_id)| {
+    offers.remove(&other);
+    if other_id != row_id {
+      state.claimed.lock().unwrap().remove(&other_id);
+    }
+    state.metadata.lock().unwrap().remove(&other_id);
+    if let Some(job) = state.jobs.lock().unwrap().remove(&other) {
+      job.abort();
+    }
+    other
+  });
+  drop(offers);
+  if retired.is_some() {
+    state.changed.notify_waiters();
+  }
   Ok(CaptureAction {
-    id,
-    url: current.url.clone(),
+    id: row_id,
+    url,
     action: action.into(),
-    item: state.metadata.lock().unwrap().get(&id).cloned().flatten(),
+    item,
+    choice: None,
+    retired,
   })
 }
 
@@ -916,18 +1162,55 @@ async fn wait_for_item(state: &CaptureState, id: u64) -> Option<serde_json::Valu
 fn emit_action(app: &AppHandle, action: CaptureAction) -> Result<(), String> {
   let pending = action.item.is_none();
   let id = action.id;
-  app
-    .emit_to("main", "capture_action", action)
-    .map_err(|_| "capture unavailable")?;
+  let state = app.state::<CaptureState>();
+  queue_for_main(&state, &action);
+  tracing::info!(id, action = %action.action, "Capture action sent to the main window");
+  // The pull above already holds it: an event that fails or stalls is not a lost download.
+  let _ = app.emit_to("main", "capture_action", action);
   if pending {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
       let state = app.state::<CaptureState>();
       let item = wait_for_item(&state, id).await;
-      let _ = app.emit_to("main", "capture_item", CaptureItem { id, item });
+      let item = CaptureItem { id, item };
+      push_bounded(
+        &mut state.pending.lock().unwrap().items,
+        Instant::now(),
+        item.clone(),
+      );
+      let _ = app.emit_to("main", "capture_item", item);
     });
   }
   Ok(())
+}
+
+/// What the main window has not pulled yet. It still listens for the events (the fast path) and
+/// treats both the same, by capture id.
+#[tauri::command]
+pub fn capture_take_pending(
+  app: AppHandle,
+  window: WebviewWindow,
+) -> Result<PendingForMain, String> {
+  main_only(&window)?;
+  Ok(take_pending(&app.state::<CaptureState>()))
+}
+
+fn queue_for_main(state: &CaptureState, action: &CaptureAction) {
+  push_bounded(
+    &mut state.pending.lock().unwrap().actions,
+    Instant::now(),
+    action.clone(),
+  );
+}
+
+/// The pull is the acknowledgement: what it returns is gone from the outbox.
+fn take_pending(state: &CaptureState) -> PendingForMain {
+  let now = Instant::now();
+  let mut outbox = state.pending.lock().unwrap();
+  PendingForMain {
+    actions: drain_fresh(&mut outbox.actions, now),
+    items: drain_fresh(&mut outbox.items, now),
+  }
 }
 
 #[tauri::command]
@@ -936,22 +1219,61 @@ pub async fn capture_action(
   window: WebviewWindow,
   id: u64,
   action: String,
+  choice: Option<String>,
 ) -> Result<(), String> {
   if !matches!(window.label(), "capture-card" | "capture-bar") {
     return Err("unavailable".into());
   }
-  if !matches!(action.as_str(), "download" | "options" | "dismiss") {
+  if !matches!(
+    action.as_str(),
+    "download" | "options" | "dismiss" | "report"
+  ) {
     return Err("unavailable".into());
   }
   let state = app.state::<CaptureState>();
-  let payload = claim_action(&state, window.label(), id, &action)?;
+  if action == "report" {
+    let report = {
+      let mut offers = state.offers.lock().unwrap();
+      if !offers
+        .get(window.label())
+        .is_some_and(|offer| offer.id == id && offer.failed)
+      {
+        return Err("nothing to report".into());
+      }
+      let offer = offers.remove(window.label()).ok_or("nothing to report")?;
+      CaptureReport {
+        url: offer.url,
+        reason: offer.reason.unwrap_or("unknown"),
+      }
+    };
+    state.metadata.lock().unwrap().remove(&id);
+    state.changed.notify_waiters();
+    window.hide().map_err(|_| "capture unavailable")?;
+    if let Some(main) = app.get_webview_window("main") {
+      let _ = main.show();
+      let _ = main.set_focus();
+    }
+    return app
+      .emit_to("main", "capture_report", report)
+      .map_err(|_| "capture unavailable".into());
+  }
+  let mut payload = claim_action(&state, window.label(), id, &action)?;
+  if action == "download" {
+    payload.choice = quick_choice(choice.as_deref());
+  }
+  if let Some(other) = payload.retired.as_deref() {
+    if let Some(other) = app.get_webview_window(other) {
+      let _ = other.hide();
+    }
+  }
   // macOS makes the main window key when the focused bar hides, pulling Nezzel over the browser.
   // "Options" shows the main window on purpose; otherwise go back to where the user was.
   // Read before hiding: the main window's focus event from the hide would flip the flag.
   let return_to_previous_app = window.label() == "capture-bar"
     && action != "options"
     && !state.main_was_focused.load(Ordering::Relaxed);
-  window.hide().map_err(|_| "capture unavailable")?;
+  // Claimed already: a failed hide must not lose the download.
+  let _ = window.hide();
   #[cfg(target_os = "macos")]
   if return_to_previous_app {
     let _ = app.hide();

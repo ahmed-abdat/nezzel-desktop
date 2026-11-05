@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MediaFormat } from '../../src/tauri/types/media.ts';
-import { approxAudio, approxVideo, nearestBy } from '../../src/helpers/formats.ts';
+import { approxAudio, approxVideo, nearestBy, oneFormatPerHeight, qualityLabel } from '../../src/helpers/formats.ts';
 
 describe('nearestBy', () => {
   it('selects the item with the smallest score', () => {
@@ -102,5 +102,28 @@ describe('approxVideo', () => {
 
   it('returns undefined when no video formats exist', () => {
     expect(approxVideo([], 1080)).toBeUndefined();
+  });
+});
+
+describe('qualityLabel', () => {
+  it.each([
+    [1080, 24, '1080p'], [1080, 25, '1080p'], [720, 30, '720p'], [1080, 48, '1080p'],
+    [1080, 50, '1080p50'], [1080, 60, '1080p60'], [144, 12, '144p'], [480, undefined, '480p'], [480, null, '480p'],
+  ])('%ip at %s fps → %s', (height, fps, label) => {
+    expect(qualityLabel(height, fps)).toBe(label);
+  });
+});
+
+describe('oneFormatPerHeight', () => {
+  const f = (id: string, height?: number, fps?: number) => ({ id, height, fps });
+
+  it('keeps one entry per height, the highest fps, in input order; audio passes through', () => {
+    const list = [f('a', 1080, 60), f('b', 1080, 30), f('c', 720, 24), f('d', 720, 30), f('e'), f('g', 144, 12)];
+    expect(oneFormatPerHeight(list).map(x => x.id)).toEqual(['a', 'd', 'e', 'g']);
+  });
+
+  it('pins the format `keep` matches, so a chosen lower fps stays the entry for its height', () => {
+    const list = [f('a', 1080, 60), f('b', 1080, 30)];
+    expect(oneFormatPerHeight(list, x => x.id === 'b').map(x => x.id)).toEqual(['b']);
   });
 });

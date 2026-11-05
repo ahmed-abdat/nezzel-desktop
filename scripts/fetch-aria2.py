@@ -28,6 +28,25 @@ def checked_download(asset, destination):
         raise RuntimeError(f'aria2 checksum mismatch: {actual}')
 
 
+# aria2 1.37 aborts at start when OpenSSL 3 can't load its "legacy" provider (RC4, used only
+# by BitTorrent MSE). A static build can't dlopen the distro's legacy.so, so --version fails on
+# every distro. BitTorrent is disabled here: load the legacy provider only when it is built in.
+LEGACY_LOAD = """  // RC4 is in the legacy provider.
+  legacy_provider_ = OSSL_PROVIDER_load(nullptr, "legacy");
+  if (!legacy_provider_) {
+    throw DL_ABORT_EX("OSSL_PROVIDER_load 'legacy' failed.");
+  }
+"""
+
+
+def patch_legacy_provider(source):
+    platform = source / 'src/Platform.cc'
+    text = platform.read_text()
+    if LEGACY_LOAD not in text:
+        raise RuntimeError('aria2 Platform.cc changed; review the legacy provider patch')
+    platform.write_text(text.replace(LEGACY_LOAD, '#    ifdef ENABLE_BITTORRENT\n' + LEGACY_LOAD + '#    endif // ENABLE_BITTORRENT\n'))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--target', default=os.environ.get('TAURI_ENV_TARGET_TRIPLE'))
@@ -74,6 +93,7 @@ def main():
                 else:
                     # Requires static OpenSSL, zlib and libc development archives on the native runner.
                     flags += ['--with-openssl', '--without-appletls']
+                    patch_legacy_provider(source)
                     env['ARIA2_STATIC'] = 'yes'
                 subprocess.run(['./configure', *flags], cwd=source, env=env, check=True)
                 subprocess.run(['make', '-j2'], cwd=source, env=env, check=True)

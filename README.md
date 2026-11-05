@@ -34,11 +34,11 @@ You only see qualities the site really offers. Your library keeps a list of what
 
 ## Install
 
-Download the installer for your system from the [latest release](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). On first start Nezzel downloads its tools (yt-dlp, ffmpeg) and checks each file's hash. After that it keeps them and itself up to date; you can turn both off in Settings.
+Download the installer for your system from the [latest release](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). Its tools (yt-dlp, ffmpeg and the rest) come inside the installer, so nothing is downloaded on first start. After that Nezzel keeps them and itself up to date; you can turn both off in Settings.
 
 - **macOS:** the beta isn't signed by Apple yet. Open the app once, then go to System Settings → Privacy & Security and click **Open Anyway** (older macOS: right-click the app → Open). Or run `xattr -dr com.apple.quarantine /Applications/Nezzel.app` in Terminal.
 - **Windows:** SmartScreen may warn about an unknown publisher. Click **More info → Run anyway**.
-- **Linux:** make the AppImage executable (`chmod +x Nezzel*.AppImage`) and run it, or install the `.deb`. There's no `.rpm` in the beta, because RPM rejects pre-release version numbers.
+- **Linux:** on Ubuntu or Debian, install the `.deb` (`sudo apt install ./Nezzel_*.deb`). On Fedora, install the `.rpm` (`sudo dnf install ./Nezzel-*.rpm`). On any other distro, make the AppImage executable (`chmod +x Nezzel*.AppImage`) and run it. The `.deb` and `.rpm` need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later), because the Linux builds are made on Ubuntu 22.04.
 
 ## Sites
 

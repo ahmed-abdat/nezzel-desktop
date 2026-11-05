@@ -4,6 +4,27 @@
     "externalBin": [],
     "resources": {
       "binaries/linux-tools/": "tools/"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libssl3 | libssl3t64"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "libssl.so.3()(64bit)",
+          "libcrypto.so.3()(64bit)"
+        ]
+      },
+      "appimage": {
+        "files": {
+          "shared/lib/Nezzel/tools": "binaries/linux-tools",
+          "shared/lib/Nezzel/tools/yt-dlp": "binaries/tools/yt-dlp",
+          "shared/lib/Nezzel/gallery-dl.sha256": "binaries/gallery-dl.sha256",
+          "shared/lib/Nezzel/licenses/3rdpartylicenses.txt": "../licenses/3rdpartylicenses.txt"
+        }
+      }
     }
   }
 }

@@ -66,6 +66,7 @@ import { usePlatform } from '../composables/usePlatform';
 import { localeDirection } from '../i18n';
 import { eventAccelerator, sameShortcut } from '../helpers/shortcut';
 import { runShortcutAction } from '../tauri/listeners/shortcuts';
+import { paneScrollTop } from '../helpers/paneScroll';
 
 const { t, locale } = useI18n();
 const route = useRoute();
@@ -139,6 +140,8 @@ function onKey(event: KeyboardEvent) {
     void toolbar.value?.pasteField();
   } else if (event.key === 'Escape' && sheet.open) {
     sheet.close();
+  } else if (!mod && !event.altKey && !typing && !event.defaultPrevented) {
+    scrollPaneByKey(event, target);
   } else if ((mod || event.altKey) && !typing) {
     // In-app queue shortcuts (Settings > Keyboard shortcuts), only while Nezzel is focused.
     const pressed = eventAccelerator(event, isMac.value);
@@ -151,6 +154,17 @@ function onKey(event: KeyboardEvent) {
       void runShortcutAction('media_add_and_download');
     }
   }
+}
+/** Scroll keys pressed outside the content pane still scroll it (Settings was unreachable by keyboard on Linux). */
+function scrollPaneByKey(event: KeyboardEvent, target: HTMLElement | null) {
+  const pane = document.getElementById('nz-main');
+  if (!pane) return;
+  const onPage = !target || target === document.body || target === document.documentElement;
+  const native = !onPage && (pane.contains(target) || !!target.closest('[role=dialog],[role=menu],[role=listbox],[role=slider],[role=radiogroup],[role=tablist]'));
+  const next = paneScrollTop(event.key, event.shiftKey, onPage ? 'page' : native ? 'native' : 'shell', pane);
+  if (next === null) return;
+  event.preventDefault();
+  pane.scrollTop = next;
 }
 onMounted(() => window.addEventListener('keydown', onKey));
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey));

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockWindows } from '@tauri-apps/api/mocks';
 import type { App } from 'vue';
 import { flushPromises } from '@vue/test-utils';
@@ -47,5 +47,56 @@ describe('native window entry isolation', () => {
     await mountWindow('unrecognized');
     expect(document.getElementById('app')?.childElementCount).toBe(0);
     expect(forbidden).toEqual([]);
+  });
+});
+
+describe('copied-link card', () => {
+  it('shows the title from the snapshot when capture_metadata never arrives (Linux, tauri#3654)', async () => {
+    vi.useFakeTimers();
+    const reading = { id: 4, url: 'https://www.youtube.com/watch?v=card', site: 'youtube.com', title: '', details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false, feed: false };
+    let snapshot = reading;
+    const previous = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (cmd, ...rest) => (cmd === 'capture_snapshot' ? snapshot : previous(cmd, ...rest));
+    try {
+      mockWindows('capture-card');
+      window.history.replaceState(null, '', '/');
+      app = await mountWindow('capture-card');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(document.querySelector('.capture-panel')?.textContent).not.toContain('Card title');
+      // The preview finished in Rust; its event is held, so only the next snapshot carries the title.
+      snapshot = { ...reading, title: 'Card title' };
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(document.querySelector('.capture-panel')?.textContent).toContain('Card title');
+    } finally {
+      window.__TAURI_INTERNALS__.invoke = previous;
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops asking once the offer is gone (dismissed while reading)', async () => {
+    vi.useFakeTimers();
+    const reading = { id: 5, url: 'https://www.youtube.com/watch?v=gone', site: 'youtube.com', title: '', details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false, feed: false };
+    let snapshot: typeof reading = reading;
+    let asked = 0;
+    const previous = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (cmd, ...rest) => {
+      if (cmd !== 'capture_snapshot') return previous(cmd, ...rest);
+      asked++;
+      return snapshot;
+    };
+    try {
+      mockWindows('capture-card');
+      window.history.replaceState(null, '', '/');
+      app = await mountWindow('capture-card');
+      await vi.advanceTimersByTimeAsync(0);
+      snapshot = { ...reading, id: 0, url: '', site: '' };
+      await vi.advanceTimersByTimeAsync(1600);
+      const after = asked;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(asked).toBe(after);
+    } finally {
+      window.__TAURI_INTERNALS__.invoke = previous;
+      vi.useRealTimers();
+    }
   });
 });

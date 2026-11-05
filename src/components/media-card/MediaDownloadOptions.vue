@@ -42,7 +42,7 @@ import { computed, PropType, ref, watch, toRefs, reactive, useId, ComputedRef } 
 import { DownloadOptions, MediaFormat, TrackType } from '../../tauri/types/media.ts';
 import { SelectOption } from '../../helpers/forms.ts';
 import { hasAudio } from '../../helpers/quickChoice';
-import { approxAudio, approxVideo, sortFormats } from '../../helpers/formats.ts';
+import { approxAudio, approxVideo, oneFormatPerHeight, qualityLabel, sortFormats } from '../../helpers/formats.ts';
 import { usePreferencesStore } from '../../stores/preferences.ts';
 import { SelectField } from '../ui/select';
 import SettingsRow from '../settings/SettingsRow.vue';
@@ -170,7 +170,9 @@ const filteredFormats = computed<MediaFormat[]>(() =>
 );
 
 const formatOptions = computed<SelectOption[]>(() => {
-  const options: SelectOption[] = filteredFormats.value.map(format => ({
+  // One entry per height (highest fps); the current choice keeps its own entry so it stays selected.
+  const shown = oneFormatPerHeight(filteredFormats.value, format => makeKey(format) === selectedFormatId.value);
+  const options: SelectOption[] = shown.map(format => ({
     value: makeKey(format),
     label: getFormatLabel(format, selectedTrackType.value),
   }));
@@ -318,9 +320,7 @@ function getFormatLabel(format: MediaFormat, trackType: TrackType): string {
     case TrackType.video:
     case TrackType.both:
     default:
-      return format.fps
-        ? `${format.height}p${format.fps}`
-        : `${format.height}p`;
+      return format.height != null ? qualityLabel(format.height, format.fps) : format.id;
   }
 }
 </script>

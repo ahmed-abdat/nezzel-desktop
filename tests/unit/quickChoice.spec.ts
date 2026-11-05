@@ -81,3 +81,13 @@ describe('hasRealChoice', () => {
     expect(hasRealChoice(media)).toBe(expected);
   });
 });
+
+describe('Smaller before the qualities are known', () => {
+  it('caps a video at 720p so the engine picks the best at or under it', () => {
+    expect(optionsForChoice('small', [], 'video')).toMatchObject({ trackType: TrackType.both, height: 720 });
+  });
+  it('leaves files and photos uncapped', () => {
+    expect(optionsForChoice('small', [], 'file').height).toBeUndefined();
+    expect(optionsForChoice('small', [], 'image').height).toBeUndefined();
+  });
+});

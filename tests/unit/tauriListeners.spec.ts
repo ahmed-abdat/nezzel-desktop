@@ -4,7 +4,7 @@ import { mockWindows } from '@tauri-apps/api/mocks';
 import { effectScope } from 'vue';
 import { flushPromises } from '@vue/test-utils';
 import { installTauriMock } from '../utils/tauriMock';
-import { registerCaptureListeners } from '../../src/tauri/listeners/shortcuts';
+import { CAPTURE_MEMORY_CAP, CAPTURE_MEMORY_MS, pruneCaptures, registerCaptureListeners } from '../../src/tauri/listeners/shortcuts';
 import { registerMediaListeners } from '../../src/tauri/listeners/media';
 import { useMediaStore } from '../../src/stores/media/media';
 import { useMediaGroupStore } from '../../src/stores/media/group';
@@ -43,10 +43,11 @@ describe('capture listeners', () => {
     vi.useRealTimers();
   });
 
-  async function setup() {
+  async function setup(pending: { actions: unknown[]; items: unknown[] }[] = []) {
     const info = vi.fn(() => new Promise(() => {}));
     const download = vi.fn().mockResolvedValue('started');
-    installTauriMock({ media_info: info, media_download: download });
+    const takePending = vi.fn(() => pending.shift() ?? { actions: [], items: [] });
+    installTauriMock({ media_info: info, media_download: download, capture_take_pending: takePending });
     mockWindows('main');
     activeScope = effectScope();
     registerMediaListeners();
@@ -133,5 +134,37 @@ describe('capture listeners', () => {
     expect(groups.orderedGroups).toHaveLength(1);
     expect(download).toHaveBeenCalledOnce();
     expect(states.getGroupState(groups.orderedGroups[0].id)).toBe(MediaState.downloading);
+  });
+
+  it('a card Download whose event never arrives still starts once from the pull (Linux, tauri#3654)', async () => {
+    const { download, groups, states } = await setup([{ actions: [{ id: 6, url, action: 'download', item }], items: [] }]);
+    window.dispatchEvent(new Event('focus'));
+    await flushPromises();
+    expect(groups.orderedGroups).toHaveLength(1);
+    // The held event turns up later: same capture id, no second row or download.
+    await emit('capture_action', { id: 6, url, action: 'download', item });
+    await flushPromises();
+    expect(groups.orderedGroups).toHaveLength(1);
+    expect(download).toHaveBeenCalledOnce();
+    expect(states.getGroupState(groups.orderedGroups[0].id)).toBe(MediaState.downloading);
+  });
+
+  it('focus does not adopt a card offer for a link the bar just downloaded', async () => {
+    const { download, groups } = await setup();
+    await emit('capture_action', { id: 7, url, action: 'download', item });
+    await emit('capture_action', { id: 8, url, action: 'adopt' });
+    await flushPromises();
+    expect(groups.orderedGroups).toHaveLength(1);
+    expect(download).toHaveBeenCalledOnce();
+  });
+
+  it('remembers capture ids for two minutes and at most the cap', () => {
+    const captures = new Map<number, { at: number }>([[1, { at: 0 }], [2, { at: CAPTURE_MEMORY_MS }]]);
+    pruneCaptures(captures, CAPTURE_MEMORY_MS);
+    expect([...captures.keys()]).toEqual([2]);
+    for (let id = 3; id < CAPTURE_MEMORY_CAP + 10; id++) captures.set(id, { at: CAPTURE_MEMORY_MS });
+    pruneCaptures(captures, CAPTURE_MEMORY_MS);
+    expect(captures.size).toBe(CAPTURE_MEMORY_CAP);
+    expect(captures.has(2)).toBe(false);
   });
 });

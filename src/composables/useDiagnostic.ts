@@ -5,7 +5,10 @@ import { firstSentence } from '../helpers/diagnostics.ts';
 import { useLinkify } from './useLinkify.ts';
 
 type DisplayDiagnostic = {
+  /** What happened, one short line. */
   shortMessage: string;
+  /** What to do about it (retry, wait, log in, report…). Runner codes always have one. */
+  action?: string;
   message: string;
   raw: string;
 };
@@ -47,7 +50,8 @@ export function useDiagnostic(diagnostic: Ref<MediaDiagnostic>, short = false) {
     } else if (short) {
       return {
         message: t('errors.runner.unknown.message'),
-        shortMessage: t('errors.runner.unknown.hint'),
+        shortMessage: t('errors.runner.unknown.shortMessage'),
+        action: t('errors.runner.unknown.action'),
         raw: linkifiedRaw,
       };
     } else {

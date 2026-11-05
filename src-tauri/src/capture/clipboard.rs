@@ -94,9 +94,58 @@ pub fn desktop_from(current_desktop: Option<&str>) -> Desktop {
   }
 }
 
+/// Desktop from the session environment: `XDG_CURRENT_DESKTOP` first; when that names neither
+/// GNOME nor KDE (unset in some launch paths), KDE's own `KDE_FULL_SESSION`, then the session
+/// names (`XDG_SESSION_DESKTOP=KDE`, `DESKTOP_SESSION=plasma`/`plasmawayland`/`gnome`).
+pub fn desktop_from_env(var: impl Fn(&str) -> Option<String>) -> Desktop {
+  let current = var("XDG_CURRENT_DESKTOP").filter(|value| !value.trim().is_empty());
+  let from_current = desktop_from(current.as_deref());
+  if from_current != Desktop::Other {
+    return from_current;
+  }
+  let sessions: Vec<String> = ["XDG_SESSION_DESKTOP", "DESKTOP_SESSION"]
+    .iter()
+    .filter_map(|name| var(name))
+    .flat_map(|value| {
+      value
+        .split(':')
+        // DESKTOP_SESSION may be a path to the session file.
+        .map(|part| {
+          part
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+        })
+        .collect::<Vec<_>>()
+    })
+    .collect();
+  let kde_session = sessions
+    .iter()
+    .any(|name| name == "kde" || name.starts_with("plasma"));
+  if var("KDE_FULL_SESSION").is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
+    || kde_session
+  {
+    return Desktop::Kde;
+  }
+  // GNOME only when nothing named another desktop (Budgie, Cinnamon, ... say so in XDG_CURRENT_DESKTOP).
+  let gnome_session = sessions.iter().any(|name| {
+    matches!(
+      name.as_str(),
+      "gnome" | "gnome-wayland" | "gnome-xorg" | "ubuntu" | "ubuntu-wayland" | "ubuntu-xorg"
+    )
+  });
+  if current.is_none() && gnome_session {
+    Desktop::Gnome
+  } else {
+    Desktop::Other
+  }
+}
+
 pub fn current_desktop() -> Desktop {
   if cfg!(target_os = "linux") {
-    desktop_from(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref())
+    desktop_from_env(|name| std::env::var(name).ok())
   } else {
     Desktop::Other
   }
@@ -380,6 +429,55 @@ mod tests {
       (None, Desktop::Other),
     ] {
       assert_eq!(desktop_from(value), expected, "{value:?}");
+    }
+    // Fallbacks when XDG_CURRENT_DESKTOP is missing or names neither (Fedora KDE report, #36).
+    for (vars, expected) in [
+      (&[("XDG_CURRENT_DESKTOP", "KDE")][..], Desktop::Kde),
+      (&[("KDE_FULL_SESSION", "true")][..], Desktop::Kde),
+      (
+        &[("XDG_CURRENT_DESKTOP", ""), ("XDG_SESSION_DESKTOP", "KDE")][..],
+        Desktop::Kde,
+      ),
+      (&[("DESKTOP_SESSION", "plasma")][..], Desktop::Kde),
+      (&[("DESKTOP_SESSION", "plasmawayland")][..], Desktop::Kde),
+      (
+        &[("DESKTOP_SESSION", "/usr/share/xsessions/plasmax11")][..],
+        Desktop::Kde,
+      ),
+      (&[("DESKTOP_SESSION", "gnome")][..], Desktop::Gnome),
+      (&[("XDG_SESSION_DESKTOP", "ubuntu")][..], Desktop::Gnome),
+      // An explicit other desktop wins over a GNOME session name.
+      (
+        &[
+          ("XDG_CURRENT_DESKTOP", "XFCE"),
+          ("DESKTOP_SESSION", "gnome"),
+        ][..],
+        Desktop::Other,
+      ),
+      (
+        &[
+          ("XDG_CURRENT_DESKTOP", "Budgie:GNOME"),
+          ("DESKTOP_SESSION", "budgie-desktop"),
+        ][..],
+        Desktop::Other,
+      ),
+      (
+        &[
+          ("XDG_CURRENT_DESKTOP", "ubuntu:GNOME"),
+          ("KDE_FULL_SESSION", "true"),
+        ][..],
+        Desktop::Gnome,
+      ),
+      (&[("KDE_FULL_SESSION", "false")][..], Desktop::Other),
+      (&[][..], Desktop::Other),
+    ] {
+      let found = desktop_from_env(|name| {
+        vars
+          .iter()
+          .find(|(key, _)| *key == name)
+          .map(|(_, value)| value.to_string())
+      });
+      assert_eq!(found, expected, "{vars:?}");
     }
     assert_eq!(global_shortcut_reason(Session::Wayland), Some("wayland"));
     assert_eq!(global_shortcut_reason(Session::X11), None);

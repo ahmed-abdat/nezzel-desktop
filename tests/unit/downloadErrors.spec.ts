@@ -27,6 +27,8 @@ describe('download failure presentation', () => {
     const row = mount(DownloadRow, { props: { group: groups.findGroupById('silent')! }, global: { plugins: [router, i18n] } });
     try {
       expect(row.text()).toContain(i18n.global.t('errors.runner.noAudioTrack.shortMessage'));
+      expect(row.get('[data-testid="row-error"]').text()).toBe(i18n.global.t('errors.rowLine', {
+        what: i18n.global.t('errors.runner.noAudioTrack.shortMessage'), action: i18n.global.t('errors.runner.noAudioTrack.action') }));
       const actionKey = video ? 'downloads.row.downloadVideoInstead' : 'downloads.row.retryWithBest';
       const actionText = i18n.global.t(actionKey);
       for (const key of ['downloads.row.downloadVideoInstead', 'downloads.row.retryWithBest']) {

@@ -4,6 +4,7 @@
  * nightly only: skipped in CI unless NZ_NIGHTLY=1; locally it runs when named:
  *   pnpm exec playwright test tests/e2e/ui-states.spec.ts --workers=1
  * Output: $NZ_UI_STATES_DIR, default /private/tmp/nezzel-ui-states (macOS) or <tmp>/nezzel-ui-states.
+ * NZ_RESPONSIVE=1: only the main screens (RESPONSIVE_STATES), light theme, at the common screen sizes.
  */
 import { expect, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
@@ -23,6 +24,15 @@ const LOCALES = ['en', 'ar'] as const;
 const THEMES = ['light', 'dark'] as const;
 /** tauri.conf.json: default 800x900, minimum 750x650. */
 const SIZES = { default: { width: 800, height: 900 }, min: { width: 750, height: 650 } } as const;
+/** Wide windows (owner shots were 2000 px full screen): list columns and the Settings start anchor only show there. */
+const WIDE_SIZES = { mid: { width: 1100, height: 720 }, wide: { width: 2000, height: 1100 } } as const;
+const WIDE_STATES = new Set(['list-empty', 'list-filter-all', 'row-reading', 'row-downloading', 'row-done-video', 'long-titles', 'rows-100',
+  'settings-general', 'settings-advanced', 'settings-logins-auto']);
+/** Owner priority: fully responsive. Common laptop/desktop screens, smallest supported first. */
+const RESPONSIVE = !!process.env.NZ_RESPONSIVE;
+const RESPONSIVE_SIZES = { s1024: { width: 1024, height: 640 }, s1280: { width: 1280, height: 800 }, s1440: { width: 1440, height: 900 }, s2000: { width: 2000, height: 1100 } } as const;
+const RESPONSIVE_STATES = new Set(['welcome', 'list-empty', 'row-downloading', 'row-error-rate', 'long-titles', 'rows-100', 'multi-select', 'playlist-selection',
+  'sheet-video', 'media-detail', 'settings-general', 'settings-advanced', 'settings-logins-auto', 'settings-about-idle', 'report-dialog', 'install-failed']);
 const CAPTURE_SIZES = { 'capture-bar': { width: 620, height: 230 }, 'capture-card': { width: 360, height: 180 } } as const;
 
 type Locale = typeof LOCALES[number];
@@ -56,19 +66,30 @@ const capture = (window: keyof typeof CAPTURE_SIZES, name: string, data: MockDat
 });
 const VIDEO_OFFER = {
   url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', site: 'youtube.com', title: 'How to make bread at home — full recipe',
-  details: { thumbnail: '/src/assets/placeholder.png', mediaKind: 'video', photos: null, duration: 754, uploader: 'Nezzel Kitchen', views: 120_000, bestHeight: 1080, bestExt: 'mp4', size: 120_000_000 },
+  details: { thumbnail: '/src/assets/placeholder.png', mediaKind: 'video', photos: null, duration: 754, uploader: 'Nezzel Kitchen', views: 120_000, bestHeight: 1080, bestExt: 'mp4', size: 120_000_000, hasAudio: true, audioSize: 4_200_000, smallHeight: 720, smallSize: 48_000_000 },
 };
 const PHOTO_OFFER = {
   url: 'https://www.instagram.com/p/abc123/', site: 'instagram.com', title: 'صور من حفل التخرج',
-  details: { thumbnail: null, mediaKind: 'carousel', photos: 4, duration: null, uploader: '@nezzel', views: null, bestHeight: null, bestExt: '', size: null },
+  details: { thumbnail: null, mediaKind: 'carousel', photos: 4, duration: null, uploader: '@nezzel', views: null, bestHeight: null, bestExt: '', size: null, hasAudio: false, audioSize: null, smallHeight: null, smallSize: null },
 };
 const FILE_OFFER = {
   url: 'https://example.com/annual-report-2026.pdf', site: 'example.com', title: 'annual-report-2026.pdf',
-  details: { thumbnail: null, mediaKind: 'file', photos: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: 2_400_000 },
+  details: { thumbnail: null, mediaKind: 'file', photos: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: 2_400_000, hasAudio: false, audioSize: null, smallHeight: null, smallSize: null },
+};
+const SINGLE_OFFER = { ...VIDEO_OFFER, title: 'A short clip in one quality', details: { ...VIDEO_OFFER.details, bestHeight: 720, smallHeight: null, smallSize: null } };
+const AUDIO_OFFER = {
+  url: 'https://soundcloud.com/nezzel/episode-12', site: 'soundcloud.com', title: 'الحلقة ١٢: كيف نحفظ الصوت',
+  details: { ...VIDEO_OFFER.details, thumbnail: null, mediaKind: 'audio', bestHeight: null, bestExt: 'm4a', size: 18_000_000, audioSize: 18_000_000, smallHeight: null, smallSize: null },
+};
+const LONG_OFFER = {
+  ...VIDEO_OFFER,
+  title: 'A very long video title that keeps going and going so the card has to clamp it — مع نص عربي طويل جدًا في المنتصف (full uncut version, 4K)',
 };
 const LOADING_OFFER = { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', site: 'youtube.com' };
 
-const STATES: GalleryState[] = [
+const ALL_STATES: GalleryState[] = [
+  // First run
+  { name: 'welcome', seed: false, mockData: { preferences: { onboarding: { welcomeDone: false, closeNoteDone: false } } } },
   // Main list
   ...seedsOnly(['list-empty', 'list-filter-all', 'list-filter-active', 'list-filter-done', 'list-filter-failed']),
   { name: 'list-cleared', act: async page => page.locator('section[aria-labelledby="ledger-finished"] header button').click() },
@@ -85,6 +106,10 @@ const STATES: GalleryState[] = [
   ]),
   { name: 'rows-100-scrolled', seed: 'rows-100', act: scrollMain(2400) },
   { name: 'row-menu', seed: 'row-done-video', act: async page => page.locator('li.row').first().getByRole('button').last().click() },
+  { name: 'media-detail', seed: 'row-done-video', act: async (page) => {
+    await page.locator('li.row').first().click({ button: 'right' });
+    await page.getByRole('menuitem', { name: /^(Details|التفاصيل)$/ }).click();
+  } },
 
   // Download options sheet
   ...seedsOnly(['sheet-video', 'sheet-audio', 'sheet-playlist', 'sheet-waiting']),
@@ -118,8 +143,13 @@ const STATES: GalleryState[] = [
     capture(window, 'ready-video', { offer: VIDEO_OFFER }),
     capture(window, 'ready-photo', { offer: PHOTO_OFFER }),
     capture(window, 'ready-file', { offer: FILE_OFFER }),
+    capture(window, 'ready-single', { offer: SINGLE_OFFER }),
+    capture(window, 'ready-audio', { offer: AUDIO_OFFER }),
+    capture(window, 'ready-long', { offer: LONG_OFFER }),
     capture(window, 'feed', { offer: { url: 'https://www.instagram.com/nezzel/', site: 'instagram.com', feed: true } }),
     capture(window, 'error', { offer: { url: 'https://example.com/x', site: 'example.com', failed: true } }),
+    ...(['login', 'unsupported', 'protected', 'slow'] as const).map(reason =>
+      capture(window, `error-${reason}`, { offer: { url: 'https://www.instagram.com/p/abc/', site: 'instagram.com', failed: true, reason } })),
     capture(window, 'busy', { offer: VIDEO_OFFER, action: 'pending' }, {
       act: async page => page.locator(window === 'capture-bar' ? 'button[type=submit]' : 'section button').last().click(),
     }),
@@ -128,11 +158,15 @@ const STATES: GalleryState[] = [
   capture('capture-bar', 'empty', { offer: {} }),
 ];
 
+const STATES = RESPONSIVE ? ALL_STATES.filter(state => RESPONSIVE_STATES.has(state.name)) : ALL_STATES;
+
 interface IndexEntry { state: string; locale: string; theme: string; size: string; file: string }
 
 async function shoot(page: Page, state: GalleryState, locale: Locale, entries: IndexEntry[]) {
-  const sizes = state.window ? { native: CAPTURE_SIZES[state.window] } : SIZES;
-  for (const theme of THEMES) {
+  const sizes = RESPONSIVE
+    ? RESPONSIVE_SIZES
+    : state.window ? { native: CAPTURE_SIZES[state.window] } : WIDE_STATES.has(state.name) ? { ...SIZES, ...WIDE_SIZES } : SIZES;
+  for (const theme of RESPONSIVE ? (['light'] as const) : THEMES) {
     await page.evaluate(t => document.body.setAttribute('data-theme', t), theme);
     for (const [size, viewport] of Object.entries(sizes)) {
       await page.setViewportSize(viewport);

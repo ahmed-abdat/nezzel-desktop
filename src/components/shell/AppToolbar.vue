@@ -5,7 +5,8 @@
     data-tauri-drag-region
   >
     <sidebar-toggle v-if="showToggle" :collapsed="collapsed" @toggle="emit('toggleSidebar')" />
-    <h1 class="shrink-0 truncate text-[15px] font-semibold" data-tauri-drag-region>{{ title }}</h1>
+    <!-- The sidebar already names the view (and Settings has its own page heading): the title is for screen readers. -->
+    <h1 class="sr-only">{{ title }}</h1>
     <!-- v-show, not v-if: the field owns clipboard watching, which must keep running on Settings. -->
     <link-field v-show="!isSettings" ref="field" />
     <template v-if="!isSettings">

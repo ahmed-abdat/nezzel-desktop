@@ -3,7 +3,7 @@
   <div
     ref="screen"
     class="wd-screen"
-    :class="[`os-${os}`, { 'is-rtl': rtl, sel, 'keys-in': keysIn, 'card-in': cardIn, press, resting }]"
+    :class="[`os-${os}`, bottomBar ? 'bar-bottom' : 'bar-top', { 'is-rtl': rtl, sel, 'keys-in': keysIn, 'card-in': cardIn, press, resting }]"
     :data-p="phase"
     data-testid="welcome-demo"
     role="img"
@@ -20,13 +20,24 @@
       <Battery class="wd-ic" />
       <span class="wd-nowrap">{{ t('welcome.demo.clock') }}</span>
     </div>
-    <div v-else-if="os === 'linux'" class="wd-bar wd-gbar" aria-hidden="true">
+    <div v-else-if="os === 'linux' && desktop === 'gnome'" class="wd-bar wd-gbar" aria-hidden="true">
       <span>{{ t('welcome.demo.activities') }}</span>
       <span class="wd-clk">{{ t('welcome.demo.clockGnome') }}</span>
       <span class="wd-sp" />
       <span class="wd-tray" :class="{ on: cardIn, ping }"><svg viewBox="27 31 59 49"><path :d="GLYPH" /></svg></span>
       <Wifi class="wd-ic" />
       <Power class="wd-ic" />
+    </div>
+    <!-- KDE Plasma and most other Linux desktops: a bottom panel, launcher at the start, tray at the end. -->
+    <div v-else-if="os === 'linux'" class="wd-bar wd-taskbar wd-lpanel" aria-hidden="true">
+      <span class="wd-launch"><LayoutGrid class="wd-ic" /></span>
+      <span class="wd-apps"><i class="br" /><i class="fo" /></span>
+      <span class="wd-traywin">
+        <span class="wd-tray" :class="{ on: cardIn, ping }"><svg viewBox="27 31 59 49"><path :d="GLYPH" /></svg></span>
+        <Wifi class="wd-ic" />
+        <Volume1 class="wd-ic" />
+        <span class="wd-clock"><span>9:41</span></span>
+      </span>
     </div>
     <div v-else class="wd-bar wd-taskbar" aria-hidden="true">
       <span class="wd-apps"><i class="win11"><b><span /><span /><span /><span /></b></i><i class="br" /><i class="fo" /></span>
@@ -88,11 +99,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { localeDirection } from '../../i18n';
 import { useI18n } from 'vue-i18n';
-import { Battery, Check, ChevronDown, ChevronUp, Download, Lock, Play, Power, RotateCcw, Volume1, Wifi, X } from '@lucide/vue';
+import { Battery, Check, ChevronDown, ChevronUp, Download, LayoutGrid, Lock, Play, Power, RotateCcw, Volume1, Wifi, X } from '@lucide/vue';
 import nezzelMark from '../../assets/brand/nezzel-mark.svg';
-import type { DesktopOs } from './desktopOs';
+import type { DesktopOs, LinuxDesktop } from './desktopOs';
 
-const props = defineProps<{ os: DesktopOs; folder: string }>();
+const props = withDefaults(defineProps<{ os: DesktopOs; desktop?: LinuxDesktop; folder: string }>(), { desktop: 'gnome' });
+/** Windows taskbar and non-GNOME Linux panels sit at the bottom; the tray card opens above them. */
+const bottomBar = computed(() => props.os === 'windows' || (props.os === 'linux' && props.desktop !== 'gnome'));
 const emit = defineEmits<{ step: [step: number] }>();
 const { t, locale } = useI18n();
 const rtl = computed(() => localeDirection(locale.value) === 'rtl');
@@ -161,7 +174,7 @@ function rest() {
   ping.value = false;
   phase.value = 'saved';
   setStep(3);
-  move(at(cardEl.value, 0.78, props.os === 'windows' ? -0.14 : 1.08), true);
+  move(at(cardEl.value, 0.78, bottomBar.value ? -0.14 : 1.08), true);
   resting.value = true;
 }
 /** ~5s cycle, 2 cycles, then it rests on "Saved". */
@@ -260,7 +273,7 @@ onBeforeUnmount(clearTimers);
   font-size: 12px; font-weight: 500; opacity: 0; transition: opacity 150ms ease-out;
 }
 .is-rtl .wd-replay { font-size: 13px; }
-.os-windows .wd-replay { bottom: auto; top: 10px; }
+.bar-bottom .wd-replay { bottom: auto; top: 10px; }
 .wd-screen:hover .wd-replay, .wd-replay:focus-visible { opacity: 1; }
 
 /* OS bars */
@@ -289,6 +302,8 @@ onBeforeUnmount(clearTimers);
 .wd-traywin .wd-tray.on { background: rgb(0 0 0 / .08); }
 .wd-clock { display: flex; flex-direction: column; align-items: flex-end; font-size: 11px; line-height: 1.2; padding-inline-start: 4px; direction: ltr; }
 .is-rtl .wd-clock { align-items: flex-start; }
+.wd-lpanel { justify-content: flex-start; background: rgb(236 239 241 / .9); }
+.wd-launch { width: 22px; height: 22px; border-radius: 5px; display: grid; place-items: center; color: #1F7AE0; }
 .wd-gbar { top: 0; height: 20px; padding-inline: 10px; background: #16191a; color: #eef1f0; font-size: 10.5px; font-weight: 600; }
 .wd-clk { position: absolute; inset-inline: 0; width: max-content; margin-inline: auto; }
 .wd-gbar .wd-ic { width: 12px; height: 12px; }
@@ -296,8 +311,8 @@ onBeforeUnmount(clearTimers);
 
 /* browser */
 .wd-browser { position: absolute; inset-inline: 22px; top: 36px; bottom: 16px; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 10px 24px -8px rgb(0 30 25 / .28), 0 0 0 1px rgb(0 0 0 / .08); display: flex; flex-direction: column; z-index: 1; }
-.os-windows .wd-browser { top: 14px; bottom: 48px; border-radius: 6px; }
-.os-linux .wd-browser { top: 32px; }
+.bar-bottom .wd-browser { top: 14px; bottom: 48px; border-radius: 6px; }
+.os-linux.bar-top .wd-browser { top: 32px; }
 .wd-btool { height: 32px; flex: none; display: flex; align-items: center; gap: 8px; padding-inline: 10px; background: #F4F6F5; border-bottom: 1px solid #E5EAE8; }
 .wd-dots { display: flex; gap: 5px; direction: ltr; }
 .wd-dots i { width: 8px; height: 8px; border-radius: 50%; background: #D4DAD8; }
@@ -324,8 +339,8 @@ onBeforeUnmount(clearTimers);
 .wd-keys { position: absolute; z-index: 6; inset-inline-start: 96px; top: 66px; opacity: 0; transform: translateY(-4px); display: flex; align-items: center; gap: 5px; padding: 7px 10px 7px 8px; border-radius: 9px; background: rgb(20 26 24 / .88); color: #fff; font-size: 11px; font-weight: 500; transition: opacity 150ms ease-out, transform 200ms var(--e-out); direction: ltr; }
 .wd-keys kbd { min-width: 22px; height: 22px; padding: 0 6px; display: grid; place-items: center; border-radius: 5px; background: #fff; color: #111; font: 600 11px/1 Inter, system-ui, sans-serif; box-shadow: 0 2px 0 #9aa6a3; }
 .wd-keys span { padding-inline-start: 4px; }
-.os-windows .wd-keys { top: 44px; }
-.os-linux .wd-keys { top: 62px; }
+.bar-bottom .wd-keys { top: 44px; }
+.os-linux.bar-top .wd-keys { top: 62px; }
 .keys-in .wd-keys { opacity: 1; transform: none; }
 
 /* the copied-link card */
@@ -334,9 +349,9 @@ onBeforeUnmount(clearTimers);
   opacity: 0; transform: translateY(-8px) scale(.97); transform-origin: top right; pointer-events: none;
   transition: opacity 150ms ease-out, transform 0s linear 150ms; }
 .is-rtl .wd-card { transform-origin: top left; }
-.os-windows .wd-card { top: auto; bottom: 42px; transform: translateY(8px) scale(.97); transform-origin: bottom right; }
-.is-rtl.os-windows .wd-card { transform-origin: bottom left; }
-.os-linux .wd-card { top: 26px; }
+.bar-bottom .wd-card { top: auto; bottom: 42px; transform: translateY(8px) scale(.97); transform-origin: bottom right; }
+.is-rtl.bar-bottom .wd-card { transform-origin: bottom left; }
+.os-linux.bar-top .wd-card { top: 26px; }
 .card-in .wd-card { opacity: 1; transform: none; transition: opacity 240ms var(--e-out), transform 240ms var(--e-out); }
 .wd-hd { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted-foreground); margin-bottom: 8px; }
 .wd-x { width: 11px; height: 11px; margin-inline-start: auto; }
@@ -378,7 +393,7 @@ onBeforeUnmount(clearTimers);
 /* Reduced motion: no movement, only short opacity crossfades driven by the steps. */
 @media (prefers-reduced-motion: reduce) {
   .wd-cursor { display: none; }
-  .wd-keys, .wd-card, .os-windows .wd-card, .card-in .wd-card { transform: none !important; }
+  .wd-keys, .wd-card, .bar-bottom .wd-card, .card-in .wd-card { transform: none !important; }
   .card-in .wd-card, .wd-card { transition: opacity 150ms ease-out !important; }
   .wd-keys { transition: opacity 150ms ease-out; }
   [data-p=dl] .wd-prog i { transition: none; }

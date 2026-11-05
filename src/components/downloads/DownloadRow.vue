@@ -2,7 +2,7 @@
   <context-menu>
     <context-menu-trigger as-child>
       <li
-        class="row group relative flex items-start gap-3 border-b border-hairline pe-4 ps-8 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40 animate-in fade-in-0 slide-in-from-top-1 duration-200"
+        class="row group relative flex items-start gap-3 border-b border-hairline pe-4 ps-8 outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--nz-focus)] animate-in fade-in-0 slide-in-from-top-1 duration-200"
         :class="[tint, compactRows ? 'py-1.5' : 'py-2.5']"
         :aria-selected="selected"
         :data-phase="phase"
@@ -47,7 +47,7 @@
           </template>
         </figure>
 
-        <div class="min-w-0 flex-1" :class="!compactRows && 'min-h-10'">
+        <div class="min-w-0 flex-1 @min-[1040px]/list:min-h-0 @min-[1040px]/list:self-center" :class="!compactRows && 'min-h-10'">
           <Tooltip :content="title" side="top" :disabled="!titleClipped">
             <!-- The flex line packs at the UI start; the title is its own dir=auto box, so a Latin title in Arabic UI cuts at its own end. -->
             <p class="flex min-w-0 font-medium leading-5" @pointerenter="measureTitle">
@@ -58,7 +58,12 @@
           <login-needed v-if="loginCard" class="mt-1" :card="loginCard" :site="site" @retry="retry" />
           <p v-else-if="phase === 'error'" class="mt-0.5 flex items-start gap-1.5 text-[12.5px] font-medium text-destructive-foreground">
             <triangle-alert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span class="line-clamp-2 text-pretty">{{ errorDisplay.shortMessage }}</span>
+            <!-- What happened, then what to do (muted): every runner error carries both. -->
+            <i18n-t v-if="errorDisplay.action" keypath="errors.rowLine" tag="span" scope="global" class="line-clamp-2 text-pretty" data-testid="row-error">
+              <template #what>{{ errorDisplay.shortMessage }}</template>
+              <template #action><span class="font-normal text-foreground/85">{{ errorDisplay.action }}</span></template>
+            </i18n-t>
+            <span v-else class="line-clamp-2 text-pretty" data-testid="row-error">{{ errorDisplay.shortMessage }}</span>
           </p>
           <div v-else-if="showProgress || phase === 'reading'" class="mt-1 flex min-w-0 items-center gap-2.5 text-[12px] text-muted-foreground">
             <nz-progress :value="phase === 'reading' ? null : percent" :muted="phase === 'paused'" class="max-w-[180px] flex-[1_1_120px]" />
@@ -69,7 +74,7 @@
               </template>
             </span>
           </div>
-          <p v-else class="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-[12px] text-muted-foreground">
+          <p v-else class="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-[12px] text-muted-foreground" :class="(phase === 'done' || phase === 'ready') && '@min-[1040px]/list:hidden'">
             <template v-for="(part, index) in metaLine" :key="index">
               <span v-if="index > 0" class="nz-sep" aria-hidden="true" />
               <bdi>{{ part }}</bdi>
@@ -83,8 +88,16 @@
           </div>
         </div>
 
+        <!-- Finder-style columns when the list is wide (labels in HomeView). Unknown yet: a skeleton while
+             reading, a dash after, never a blank hole. -->
+        <span v-for="cell in cells" :key="cell.key" :class="[colCls, cell.cls]">
+          <span v-if="cell.value"><bdi :class="cell.num && 'tnum'">{{ cell.value }}</bdi></span>
+          <span v-else-if="phase === 'reading'" class="inline-block h-2.5 w-10 rounded-full bg-foreground/[0.12] align-middle animate-pulse motion-reduce:animate-none" aria-hidden="true" />
+          <span v-else class="text-muted-foreground/45" aria-hidden="true">{{ EMPTY_CELL }}</span>
+        </span>
+
         <!-- Trailing actions: one column, same inset on every row. -->
-        <div class="flex shrink-0 items-center gap-1 self-center">
+        <div class="flex shrink-0 items-center gap-1 self-center @min-[1040px]/list:w-[200px] @min-[1040px]/list:justify-end">
           <template v-if="phase === 'ready'">
             <Button variant="outline" @click="sheet.show(group.id)">{{ t('downloads.row.options') }}</Button>
             <Button @click="download">{{ t('downloads.row.download') }}</Button>
@@ -235,7 +248,16 @@ const group = toRef(props, 'group');
 
 const { t } = useI18n();
 const sheet = useDownloadSheetStore();
-const { phase, site, percent, metaLine, needsLogin, lastDiagnostic, lastFatal, destination, fileKind, readingStuck, processing } = useDownloadRow(group);
+const colCls = 'hidden shrink-0 self-center truncate text-[12.5px] text-muted-foreground @min-[1040px]/list:block';
+const { phase, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, fileKind, readingStuck, processing } = useDownloadRow(group);
+/** Not known (yet): a typographic placeholder, not copy, so it needs no translation. */
+const EMPTY_CELL = '\u2014';
+const cells = computed(() => [
+  { key: 'site', value: site.value, cls: 'w-32', num: false },
+  { key: 'quality', value: columns.value.quality, cls: 'w-24', num: false },
+  { key: 'size', value: columns.value.size, cls: 'w-20 text-end', num: true },
+  { key: 'length', value: columns.value.length, cls: 'w-16 text-end', num: true },
+]);
 const { download, pause, retry, recover, recoveryLabel, recoveryIsSwitch, remove, openFile, revealFile, openPage, copyLink, deleteFile, canTrash } = useDownloadActions(group);
 /** Finished with a known file: double-click, thumbnail, title and Enter open it. Nothing else opens. */
 /** A file that only reveals its folder (installer, archive, unknown): the primary action says so. */

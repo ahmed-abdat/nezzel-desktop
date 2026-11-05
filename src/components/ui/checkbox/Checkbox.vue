@@ -13,7 +13,7 @@ const forwarded = useForwardPropsEmits(props, emits);
   <CheckboxRoot
     v-bind="forwarded"
     data-slot="checkbox"
-    :class="cn('peer grid size-4 shrink-0 place-items-center rounded-[4px] border border-foreground/30 bg-card shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground', props.class)"
+    :class="cn('peer grid size-4 shrink-0 place-items-center rounded-[4px] border border-foreground/30 bg-card shadow-xs outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)] disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground', props.class)"
   >
     <CheckboxIndicator><Check class="size-3" :stroke-width="3" /></CheckboxIndicator>
   </CheckboxRoot>

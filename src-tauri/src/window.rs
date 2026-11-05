@@ -244,7 +244,90 @@ pub fn restore_main_window(app: &AppHandle<Wry>) {
     if let Err(e) = window.maximize() {
       tracing::warn!("Failed to restore maximized state: {e}");
     }
+  } else {
+    fit_main_window_on_screen(&window);
   }
+}
+
+/// The window rect (outer, physical px) moved and shrunk to lie inside `area`, or None when it already
+/// fits. A 1280x800 screen has less height than the default 900 px window: Get started sat below the
+/// screen edge. Shrinks only as far as the area allows; the OS minimum size still applies.
+fn fit_rect(
+  rect: (i32, i32, u32, u32),
+  area: (i32, i32, u32, u32),
+) -> Option<(i32, i32, u32, u32)> {
+  let (x, y, w, h) = rect;
+  let (ax, ay, aw, ah) = area;
+  let fits = x >= ax && y >= ay && x + w as i32 <= ax + aw as i32 && y + h as i32 <= ay + ah as i32;
+  if fits || aw == 0 || ah == 0 {
+    return None;
+  }
+  let (w, h) = (w.min(aw), h.min(ah));
+  let x = x.clamp(ax, ax + (aw - w) as i32);
+  let y = y.clamp(ay, ay + (ah - h) as i32);
+  Some((x, y, w, h))
+}
+
+/// New position (None: leave it to the compositor) and new outer size.
+type FitPlan = (Option<(i32, i32)>, (u32, u32));
+
+/// What to change so the window fits `area`: a new position (only when it is known, i.e. not on
+/// Wayland) and a new outer size; None when it already fits.
+fn fit_plan(
+  position: Option<(i32, i32)>,
+  size: (u32, u32),
+  area: (i32, i32, u32, u32),
+) -> Option<FitPlan> {
+  let (x, y) = position.unwrap_or((area.0, area.1));
+  let (nx, ny, w, h) = fit_rect((x, y, size.0, size.1), area)?;
+  Some((position.map(|_| (nx, ny)), (w, h)))
+}
+
+fn fit_main_window_on_screen(window: &WebviewWindow) {
+  let monitor = window
+    .current_monitor()
+    .ok()
+    .flatten()
+    .or_else(|| window.primary_monitor().ok().flatten());
+  let (Some(monitor), Ok(outer), Ok(inner)) = (monitor, window.outer_size(), window.inner_size())
+  else {
+    return;
+  };
+  let area = monitor.work_area();
+  // Wayland never reveals a window's real position (tao reports cached numbers) and ignores moves:
+  // fit the size only and let the compositor place it.
+  let wayland =
+    crate::capture::clipboard::current_session() == crate::capture::clipboard::Session::Wayland;
+  let known = (!wayland)
+    .then(|| window.outer_position().ok().map(|p| (p.x, p.y)))
+    .flatten();
+  let Some((position, (w, h))) = fit_plan(
+    known,
+    (outer.width, outer.height),
+    (
+      area.position.x,
+      area.position.y,
+      area.size.width,
+      area.size.height,
+    ),
+  ) else {
+    return;
+  };
+  // set_size takes the inner size: keep the frame the OS adds around it.
+  let frame_w = outer.width.saturating_sub(inner.width);
+  let frame_h = outer.height.saturating_sub(inner.height);
+  let size = PhysicalSize::new(w.saturating_sub(frame_w), h.saturating_sub(frame_h));
+  if let Err(e) = window.set_size(size) {
+    tracing::warn!("Failed to fit the window on the screen: {e}");
+  }
+  if let Some((x, y)) = position {
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+  }
+  tracing::info!(
+    width = size.width,
+    height = size.height,
+    "Window shrunk to fit the screen"
+  );
 }
 
 pub fn track_main_window(app: &AppHandle<Wry>) {
@@ -413,6 +496,31 @@ fn window_rect_is_on_some_monitor(
 mod tests {
   use super::*;
   use crate::capture::clipboard::Session;
+
+  #[test]
+  fn the_window_is_moved_and_shrunk_onto_the_screen_only_when_it_spills() {
+    let area = (0, 32, 1280, 736); // 1280x800 with a 32 px top panel
+    for (rect, expected) in [
+      // Default 800x900 centred: taller than the work area.
+      ((240, -50, 800, 900), Some((240, 32, 800, 736))),
+      // Fits already: untouched.
+      ((100, 100, 800, 600), None),
+      // Off the right edge: moved back, same size.
+      ((900, 100, 800, 600), Some((480, 100, 800, 600))),
+      // Wider and taller than the screen.
+      ((0, 0, 2000, 1200), Some((0, 32, 1280, 736))),
+    ] {
+      assert_eq!(fit_rect(rect, area), expected, "{rect:?}");
+    }
+    assert_eq!(fit_rect((0, 0, 800, 900), (0, 0, 0, 0)), None);
+    // Wayland (position unknown): size only, never a move.
+    assert_eq!(fit_plan(None, (800, 900), area), Some((None, (800, 736))));
+    assert_eq!(fit_plan(None, (800, 600), area), None);
+    assert_eq!(
+      fit_plan(Some((240, -50)), (800, 900), area),
+      Some((Some((240, 32)), (800, 736)))
+    );
+  }
 
   #[test]
   fn geometry_is_saved_only_from_a_batch_that_never_saw_a_maximize() {

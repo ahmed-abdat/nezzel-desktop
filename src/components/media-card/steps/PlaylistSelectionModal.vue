@@ -37,7 +37,7 @@
                   <div class="inline-flex h-7 items-center gap-0.5 rounded-[7px] bg-foreground/[0.06] p-0.5" role="group">
                     <button
                       type="button"
-                      class="h-6 rounded-[5px] px-3 text-[12.5px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                      class="h-6 rounded-[5px] px-3 text-[12.5px] font-medium outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
                       :class="row.type === 'single' ? 'bg-card text-foreground shadow-xs dark:bg-foreground/15' : 'text-muted-foreground hover:text-foreground'"
                       :aria-pressed="row.type === 'single'"
                       @click="setRowType(row.id, 'single')"
@@ -46,7 +46,7 @@
                     </button>
                     <button
                       type="button"
-                      class="h-6 rounded-[5px] px-3 text-[12.5px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                      class="h-6 rounded-[5px] px-3 text-[12.5px] font-medium outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
                       :class="row.type === 'range' ? 'bg-card text-foreground shadow-xs dark:bg-foreground/15' : 'text-muted-foreground hover:text-foreground'"
                       :aria-pressed="row.type === 'range'"
                       @click="setRowType(row.id, 'range')"

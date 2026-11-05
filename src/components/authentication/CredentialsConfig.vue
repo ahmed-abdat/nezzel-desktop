@@ -1,7 +1,7 @@
 <template>
   <!-- Native disclosure (keeps open state for tests and screen readers), flat like the per-download Advanced. -->
   <Collapsible data-testid="auth-details" class="group mt-8" v-model:open="open" :unmount-on-hide="false">
-    <CollapsibleTrigger class="-ms-1 inline-flex h-7 cursor-pointer items-center gap-1 rounded-[6px] px-1 text-[12px] font-semibold text-foreground/65 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40">
+    <CollapsibleTrigger class="-ms-1 inline-flex h-7 cursor-pointer items-center gap-1 rounded-[6px] px-1 text-[12px] font-semibold text-foreground/65 outline-none hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]">
       <ChevronRight class="size-3.5 transition-transform duration-(--nz-dur-fast) group-data-[state=open]:rotate-90 rtl:rotate-180 rtl:group-data-[state=open]:rotate-90" aria-hidden="true" />
       {{ t('accounts.saved') }}
     </CollapsibleTrigger>

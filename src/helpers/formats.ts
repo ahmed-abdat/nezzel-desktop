@@ -96,3 +96,28 @@ export function approxVideo(
       || ((a.fps ?? 0) - (b.fps ?? 0)),
   );
 }
+
+/** Frame rates below this are the normal rate for a height and say nothing worth reading (24/25/30/48). */
+const HIGH_FPS = 50;
+
+/** Display label for a video quality: `1080p`, with the frame rate only when it is high (`1080p60`). */
+export function qualityLabel(height: number, fps?: number | null): string {
+  return fps != null && fps >= HIGH_FPS ? `${height}p${fps}` : `${height}p`;
+}
+
+/**
+ * One entry per height for a quality list: the highest frame rate wins, so `1080p24 / 1080p30`
+ * shows once. Formats without a height (audio) pass through. Order follows the input.
+ * `keep` pins a specific format (e.g. the current selection) as its height's entry.
+ */
+export function oneFormatPerHeight<T extends Pick<MediaFormat, 'height' | 'fps'>>(formats: T[], keep?: (format: T) => boolean): T[] {
+  const best = new Map<number, T>();
+  for (const format of formats) {
+    if (format.height == null) continue;
+    const current = best.get(format.height);
+    if (!current) best.set(format.height, format);
+    else if (keep?.(current)) continue;
+    else if (keep?.(format) || (format.fps ?? 0) > (current.fps ?? 0)) best.set(format.height, format);
+  }
+  return formats.filter(format => format.height == null || best.get(format.height) === format);
+}

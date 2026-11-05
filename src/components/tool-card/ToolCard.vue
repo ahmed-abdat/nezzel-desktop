@@ -49,7 +49,7 @@
         </p>
       </template>
       <Collapsible v-else class="group" :unmount-on-hide="false">
-        <CollapsibleTrigger class="flex w-fit cursor-pointer items-center gap-1 rounded-[6px] text-nz-caption outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+        <CollapsibleTrigger class="flex w-fit cursor-pointer items-center gap-1 rounded-[6px] text-nz-caption outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]">
           {{ t('components.base.toolCard.failed') }}
           <ChevronDown class="size-3.5 transition-transform duration-150 group-data-[state=open]:rotate-180" aria-hidden="true" />
         </CollapsibleTrigger>

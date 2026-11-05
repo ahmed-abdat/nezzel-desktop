@@ -57,6 +57,9 @@ for (const locale of ['en', 'ar'] as const) {
     const selectedRows = page.locator('li.row[aria-selected="true"]');
 
     await expect(bar).toHaveCount(0);
+    // The options panel from the last add must be gone: its close widens the list past the column
+    // breakpoint and the header row shifts every row under the pointer.
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await rows.nth(1).hover();
     await expect(rows.nth(1).getByRole('checkbox')).toHaveCSS('opacity', '1');
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/${locale}-hover.png` });

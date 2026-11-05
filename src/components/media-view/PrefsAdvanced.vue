@@ -3,7 +3,7 @@
   <section class="mt-8">
     <button
       type="button"
-      class="-ms-1 inline-flex h-7 items-center gap-1 rounded-[6px] px-1 text-[12px] font-semibold text-foreground/65 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+      class="-ms-1 inline-flex h-7 items-center gap-1 rounded-[6px] px-1 text-[12px] font-semibold text-foreground/65 outline-none hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
       :aria-expanded="open"
       :aria-controls="panelId"
       @click="open = !open"

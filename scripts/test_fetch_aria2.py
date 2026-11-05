@@ -75,6 +75,22 @@ class BootstrapTests(unittest.TestCase):
             self.assertTrue(payload.startswith(b'NEZZEL_ARIA2_UNAVAILABLE\n'))
             self.assertNotEqual(payload, b'untrusted payload')
 
+    def test_openssl_build_loads_the_legacy_provider_only_with_bittorrent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)
+            (source / 'src').mkdir()
+            platform = source / 'src/Platform.cc'
+            platform.write_text('#  if OPENSSL_VERSION_NUMBER >= 0x30000000L\n' + bootstrap.LEGACY_LOAD + '  default_provider_ = OSSL_PROVIDER_load(nullptr, "default");\n')
+            bootstrap.patch_legacy_provider(source)
+            text = platform.read_text()
+            guarded = text.split('#    ifdef ENABLE_BITTORRENT\n', 1)[1].split('#    endif', 1)[0]
+            self.assertIn('OSSL_PROVIDER_load(nullptr, "legacy")', guarded)
+            self.assertNotIn('"default"', guarded)
+            # An unexpected upstream source fails loudly (the caller then ships the disabled stub).
+            platform.write_text('changed')
+            with self.assertRaises(RuntimeError):
+                bootstrap.patch_legacy_provider(source)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -6,6 +6,30 @@ import { createPinia } from 'pinia';
 import { defineComponent, h, ref } from 'vue';
 import { useDiagnostic } from '../../src/composables/useDiagnostic';
 import en from '../../src/locales/en.json';
+import ar from '../../src/locales/ar.json';
+import fr from '../../src/locales/fr.json';
+
+type RunnerCopy = { shortMessage?: string; action?: string; message?: string };
+const runnerLocales = { en, ar, fr } as unknown as Record<string, { errors: { runner: Record<string, RunnerCopy> } }>;
+/** Tool and engine names mean nothing to people; error copy names what happened and what to do. */
+const ENGINE_WORDS = /yt-dlp|gallery-dl|ffmpeg|aria2|deno|\bengine\b|moteur|محرك/i;
+
+describe('download error copy', () => {
+  const cases = Object.entries(runnerLocales).flatMap(([locale, messages]) =>
+    Object.entries(messages.errors.runner).map(([code, copy]) => [locale, code, copy] as const));
+
+  it.each(cases)('%s %s says what happened and what to do, without engine names', (_locale, _code, copy) => {
+    expect(copy.shortMessage?.trim()).toBeTruthy();
+    expect(copy.action?.trim()).toBeTruthy();
+    expect(copy.action).not.toBe(copy.shortMessage);
+    for (const text of [copy.shortMessage, copy.action, copy.message]) expect(text ?? '').not.toMatch(ENGINE_WORDS);
+  });
+
+  it('has the same error codes in every locale', () => {
+    const codes = Object.keys(en.errors.runner).sort();
+    for (const messages of Object.values(runnerLocales)) expect(Object.keys(messages.errors.runner).sort()).toEqual(codes);
+  });
+});
 
 describe('locale direction', () => {
   it('falls back to English for a new diagnostic key in an older locale', () => {

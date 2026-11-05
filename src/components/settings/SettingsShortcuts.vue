@@ -49,7 +49,7 @@
     <button
       v-if="!allDefault"
       type="button"
-      class="mt-1 inline-flex h-7 items-center rounded-[6px] text-[12.5px] font-medium text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/40"
+      class="mt-1 inline-flex h-7 items-center rounded-[6px] text-[12.5px] font-medium text-primary outline-none hover:underline focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
       @click="resetAll"
     >{{ t('prefs.adv.keys.resetAll') }}</button>
   </settings-section>

@@ -1,6 +1,6 @@
 import { TrackType, DownloadOptions, MediaCodec, MediaFormat, MediaTrack } from '../tauri/types/media';
 import { SelectOption } from './forms';
-import { approxAudio, approxVideo, sortFormats } from './formats';
+import { approxAudio, approxVideo, oneFormatPerHeight, qualityLabel, sortFormats } from './formats';
 import { languageOptionsLookup } from './subtitles/languages';
 
 function normalizeCodec(codec: string): string {
@@ -126,19 +126,26 @@ export function buildTrackResolutionLabels(
   formats: MediaFormat[] | undefined,
   trackKey: 'audioTrackIds' | 'videoTrackIds',
 ): Map<string, string[]> {
-  const labelsByTrack = new Map<string, string[]>();
+  // Group by track first, then keep one entry per height inside each track: a global pass could drop a
+  // track's only 1080p when another track has a 1080p60 at the same height.
+  const formatsByTrack = new Map<string, MediaFormat[]>();
   for (const format of sortFormats(formats ?? [])) {
-    const label = formatResolutionLabel(format);
     for (const trackId of format[trackKey] ?? []) {
       const trimmed = trackId.trim();
       if (!trimmed || trimmed === 'auto') continue;
-
-      const labels = labelsByTrack.get(trimmed) ?? [];
-      if (!labels.includes(label)) {
-        labels.push(label);
-      }
-      labelsByTrack.set(trimmed, labels);
+      const list = formatsByTrack.get(trimmed) ?? [];
+      list.push(format);
+      formatsByTrack.set(trimmed, list);
     }
+  }
+  const labelsByTrack = new Map<string, string[]>();
+  for (const [trackId, trackFormats] of formatsByTrack) {
+    const labels: string[] = [];
+    for (const format of oneFormatPerHeight(trackFormats)) {
+      const label = formatResolutionLabel(format);
+      if (!labels.includes(label)) labels.push(label);
+    }
+    labelsByTrack.set(trackId, labels);
   }
 
   return labelsByTrack;
@@ -173,7 +180,7 @@ function resolveLanguageName(language: string | undefined): string | undefined {
 
 function formatResolutionLabel(format: MediaFormat): string {
   if (format.height != null) {
-    return format.fps ? `${format.height}p${format.fps}` : `${format.height}p`;
+    return qualityLabel(format.height, format.fps);
   }
 
   if (format.abr != null) {

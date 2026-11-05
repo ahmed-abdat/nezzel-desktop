@@ -21,7 +21,7 @@
             v-for="tab in tabs"
             :key="tab.name"
             :to="{ name: tab.name, params: { groupId } }"
-            class="shrink-0 rounded-md px-3.5 py-1 text-nz-meta font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+            class="shrink-0 rounded-md px-3.5 py-1 text-nz-meta font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
             :class="{ 'bg-card text-foreground shadow-xs': route.name === tab.name }"
             :aria-current="route.name === tab.name ? 'page' : undefined"
           >{{ tab.label }}</router-link>

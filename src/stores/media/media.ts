@@ -17,6 +17,7 @@ import { Group } from '../../tauri/types/group.ts';
 import { notify, notifyGroup } from '../../tauri/notifications';
 import { NotificationKind } from '../../tauri/types/app';
 import { resolvePlaylistIndex } from '../../helpers/playlistNumbering';
+import { optionsForChoice, type QuickChoice } from '../../helpers/quickChoice';
 import { settingsToInputFilterOverride } from '../../helpers/inputFilters.ts';
 import {
   applyPlaylistSelectionToEntries,
@@ -463,9 +464,14 @@ export const useMediaStore = defineStore('media', () => {
     return readyGroupIds;
   }
 
-  async function downloadPreparedGroup(groupId: string) {
+  /** `choice`: a quick pick from the bar or card; it decides this download's options once the link is read. */
+  async function downloadPreparedGroup(groupId: string, choice?: QuickChoice) {
     const ready = await waitForGroupReady(groupId);
-    await Promise.all(ready.map(id => downloadGroup(id, getDownloadOptions(id))));
+    await Promise.all(ready.map((id) => {
+      const group = groupStore.findGroupById(id);
+      if (choice && group) optionsStore.setOptions(id, optionsForChoice(choice, group.formats ?? [], group.mediaKind));
+      return downloadGroup(id, getDownloadOptions(id));
+    }));
   }
 
   async function downloadGroup(

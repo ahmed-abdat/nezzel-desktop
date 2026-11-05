@@ -14,7 +14,7 @@
         <button
           v-if="toast.action"
           type="button"
-          class="-my-1 shrink-0 rounded-md px-2 py-1 font-semibold text-primary outline-none hover:bg-primary-soft focus-visible:ring-2 focus-visible:ring-ring/40"
+          class="-my-1 shrink-0 rounded-md px-2 py-1 font-semibold text-primary outline-none hover:bg-primary-soft focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
           @click.stop="runAction(toast)"
         >
           {{ toast.action.label }}

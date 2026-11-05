@@ -21,7 +21,8 @@ struct Receipt {
 
 /// Where a bundled single-file tool may live, in lookup order. `name` carries the exe suffix.
 /// macOS (`Contents/MacOS`) and Windows ship tools next to the app binary. Linux packages
-/// ship them as resources (`/usr/lib/Nezzel/tools/`, `$APPDIR/usr/lib/Nezzel/tools/`):
+/// ship them as resources (`/usr/lib/Nezzel/tools/`, `$APPDIR/usr/lib/Nezzel/tools/`, or
+/// `$APPDIR/shared/lib/Nezzel/tools/` in the sharun AppImage, see tauri.linux.conf.json):
 /// the binary sits in `/usr/bin`, so a tool next to it is the distro's, never ours.
 pub(crate) fn sidecar_candidates(
   exe: Option<&Path>,
@@ -234,6 +235,9 @@ mod tests {
     tool("deb/usr/lib/Nezzel/tools/ffmpeg");
     tool("nodeb/usr/bin/ffmpeg");
     tool("appimage/usr/lib/Nezzel/tools/ffmpeg");
+    // sharun AppImage: Tauri's resource dir is <exe>/../lib/Nezzel = shared/lib/Nezzel.
+    tool("sharun/bin/ffmpeg");
+    tool("sharun/shared/lib/Nezzel/tools/ffmpeg");
     tool("cargo/target/debug/tools/ffmpeg");
     tool("Nezzel.app/Contents/MacOS/ffmpeg");
     tool("win/ffmpeg.exe");
@@ -261,6 +265,14 @@ mod tests {
         "appimage/usr/lib/Nezzel",
         "ffmpeg",
         Some("appimage/usr/lib/Nezzel/tools/ffmpeg"),
+      ),
+      (
+        "AppImage (sharun)",
+        true,
+        "sharun/shared/bin/nezzel",
+        "sharun/shared/lib/Nezzel",
+        "ffmpeg",
+        Some("sharun/shared/lib/Nezzel/tools/ffmpeg"),
       ),
       (
         "linux dev",

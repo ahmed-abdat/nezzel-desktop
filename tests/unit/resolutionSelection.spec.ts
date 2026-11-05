@@ -85,7 +85,7 @@ describe('buildTrackOptions', () => {
       },
       {
         value: 'lang:fr|channels:2',
-        label: 'French - 2ch (Available in 1080p60, 720p30)',
+        label: 'French - 2ch (Available in 1080p60, 720p)',
         disabled: true,
       },
     ]);
@@ -150,5 +150,20 @@ describe('matchDownloadOptionsToFormat', () => {
   it('matches an exact video format', () => {
     const options: DownloadOptions = { trackType: TrackType.video, height: 720, fps: 30 };
     expect(matchDownloadOptionsToFormat(formats, options)).toEqual(formats[0]);
+  });
+});
+
+describe('buildTrackResolutionLabels', () => {
+  const f = (id: string, height: number, fps: number, tracks: string[]): MediaFormat => ({
+    id, height, fps, audioCodecs: [], videoCodecs: [], audioTrackIds: tracks, videoTrackIds: tracks,
+  });
+
+  it.each([
+    ['a track keeps its own 1080p when another track has 1080p60',
+      [f('1080p60-en', 1080, 60, ['en']), f('1080p30-fr', 1080, 30, ['fr'])], { en: ['1080p60'], fr: ['1080p'] }],
+    ['one entry per height inside a track (highest fps wins)',
+      [f('1080p30', 1080, 30, ['en']), f('1080p60', 1080, 60, ['en']), f('720p30', 720, 30, ['en'])], { en: ['1080p60', '720p'] }],
+  ] as const)('%s', (_name, formats, expected) => {
+    expect(Object.fromEntries(buildTrackResolutionLabels([...formats], 'audioTrackIds'))).toEqual(expected);
   });
 });

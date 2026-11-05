@@ -56,6 +56,11 @@ def install(target, allow_unavailable=False, source_archive=None):
     directory.mkdir(parents=True, exist_ok=True)
     out = directory / ('gallery-dl-' + target + ('.exe' if 'windows' in target else ''))
     metadata = out.with_name(out.name + '.json')
+    # macOS: a onefile build extracts Python.framework to $TMPDIR at every start, and the
+    # bundle's hardened-runtime signature then refuses to load it (library validation).
+    # Ship a PyInstaller onedir as a resource instead, like yt-dlp: tools/gallery-dl/gallery-dl.
+    onedir = directory / 'tools/gallery-dl' if 'apple-darwin' in target else None
+    entry = onedir / 'gallery-dl' if onedir else out
     lock = ROOT / 'scripts/gallery-dl-build-requirements.txt'
     recipe = json.dumps(MANIFEST, sort_keys=True).encode() + lock.read_bytes() + Path(__file__).read_bytes()
     identity = hashlib.sha256(target.encode() + recipe).hexdigest()
@@ -65,13 +70,13 @@ def install(target, allow_unavailable=False, source_archive=None):
             raise ValueError(f'Unsupported gallery-dl target: {target}')
         expected = MANIFEST['assets'][variant]['sha256'] if variant != 'native' else None
         cached = json.loads(metadata.read_text()) if metadata.is_file() else {}
-        if out.is_file() and out.stat().st_size > len(STUB):
-            actual = hashlib.sha256(out.read_bytes()).hexdigest()
+        if entry.is_file() and entry.stat().st_size > len(STUB):
+            actual = hashlib.sha256(entry.read_bytes()).hexdigest()
             if actual == expected or (variant == 'native' and cached.get('identity') == identity and cached.get('sha256') == actual):
                 if target == host_target():
-                    smoke(out)
+                    smoke(entry)
                 (directory / 'gallery-dl.sha256').write_text(actual + '\n')
-                return out
+                return entry
         if variant == 'native' and target != host_target():
             raise ValueError('gallery-dl must be built on a native target runner')
         if variant == 'native' and not os.environ.get('CI') and not os.environ.get('HEAVY_HELD'):
@@ -80,7 +85,7 @@ def install(target, allow_unavailable=False, source_archive=None):
             if source_archive:
                 command += ['--source-archive', str(source_archive)]
             subprocess.run(command, check=True)
-            return out
+            return entry
         with tempfile.TemporaryDirectory(prefix='nezzel-gallery-build-') as tmp:
             work = Path(tmp)
             binary = work / 'gallery-dl'
@@ -103,28 +108,49 @@ def install(target, allow_unavailable=False, source_archive=None):
                 subprocess.run([python, '-m', 'venv', str(environment)], check=True)
                 interpreter = str(environment / 'bin/python')
                 subprocess.run([interpreter, '-m', 'pip', '--disable-pip-version-check', '--no-cache-dir', 'install', '--require-hashes', '--only-binary=:all:', '-r', str(lock)], check=True)
-                subprocess.run([interpreter, '-m', 'PyInstaller', '--noconfirm', '--onefile', '--console', '--name', 'gallery-dl', '--paths', str(source), '--collect-submodules', 'gallery_dl', '--additional-hooks-dir', str(source / 'scripts'), '--exclude-module', 'pkg_resources', '--distpath', str(work / 'dist'), '--workpath', str(work / 'build'), '--specpath', str(work), str(source / 'gallery_dl/__main__.py')], cwd=source, check=True)
-                shutil.copyfile(work / 'dist/gallery-dl', binary)
+                subprocess.run([interpreter, '-m', 'PyInstaller', '--noconfirm', '--onedir' if onedir else '--onefile', '--console', '--name', 'gallery-dl', '--paths', str(source), '--collect-submodules', 'gallery_dl', '--additional-hooks-dir', str(source / 'scripts'), '--exclude-module', 'pkg_resources', '--distpath', str(work / 'dist'), '--workpath', str(work / 'build'), '--specpath', str(work), str(source / 'gallery_dl/__main__.py')], cwd=source, check=True)
+                if onedir:
+                    binary = work / 'dist/gallery-dl/gallery-dl'
+                else:
+                    shutil.copyfile(work / 'dist/gallery-dl', binary)
             binary.chmod(0o755)
             if target == host_target():
                 smoke(binary)
             digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-            temporary = out.with_name(out.name + '.tmp')
-            shutil.copyfile(binary, temporary)
-            temporary.chmod(0o755)
-            temporary.replace(out)
+            if onedir:
+                install_onedir(binary.parent, onedir)
+            else:
+                temporary = out.with_name(out.name + '.tmp')
+                shutil.copyfile(binary, temporary)
+                temporary.chmod(0o755)
+                temporary.replace(out)
             metadata.write_text(json.dumps({'identity': identity, 'sha256': digest}) + '\n')
             (directory / 'gallery-dl.sha256').write_text(digest + '\n')
-            print(f'{out.name}: {digest}')
-            return out
+            print(f'{entry.name}: {digest}')
+            return entry
     except Exception:
         if not allow_unavailable:
             raise
-        out.write_bytes(STUB)
-        out.chmod(0o755)
+        if onedir:
+            if onedir.exists():
+                shutil.rmtree(onedir)
+            onedir.mkdir(parents=True)
+        entry.write_bytes(STUB)
+        entry.chmod(0o755)
         (directory / 'gallery-dl.sha256').write_text(hashlib.sha256(STUB).hexdigest() + '\n')
         print('warning: gallery-dl unavailable for this development/test build', file=sys.stderr)
-        return out
+        return entry
+
+
+def install_onedir(source, destination):
+    # Replace atomically enough for a build tree: copy beside, then swap.
+    staging = destination.with_name(destination.name + '.tmp')
+    if staging.exists():
+        shutil.rmtree(staging)
+    shutil.copytree(source, staging, symlinks=True)
+    if destination.exists():
+        shutil.rmtree(destination)
+    staging.rename(destination)
 
 
 def main():

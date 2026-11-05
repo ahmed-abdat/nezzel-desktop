@@ -62,7 +62,12 @@ pub fn find_bundled(executable: &Path, resources: &Path) -> Result<PathBuf, Gall
   } else {
     "gallery-dl"
   };
-  for path in sidecar_candidates(Some(executable), Some(resources), name) {
+  // macOS ships a PyInstaller onedir resource (tools/gallery-dl/gallery-dl): a onefile build
+  // extracts Python to $TMPDIR, which the hardened-runtime signature refuses to load.
+  let onedir = resources.join("tools").join("gallery-dl").join(name);
+  let candidates =
+    std::iter::once(onedir).chain(sidecar_candidates(Some(executable), Some(resources), name));
+  for path in candidates {
     let Ok(metadata) = path.metadata() else {
       continue;
     };
@@ -234,6 +239,18 @@ mod tests {
     assert_eq!(find_bundled(&root.join("app"), &root).unwrap(), binary);
     std::fs::write(&binary, b"tampered").unwrap();
     assert!(find_bundled(&root.join("app"), &root).is_err());
+    // macOS onedir resource layout: <resources>/tools/gallery-dl/gallery-dl.
+    let onedir = root
+      .join("tools/gallery-dl")
+      .join(binary.file_name().unwrap());
+    std::fs::create_dir_all(onedir.parent().unwrap()).unwrap();
+    std::fs::write(&onedir, b"verified executable").unwrap();
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      std::fs::set_permissions(&onedir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert_eq!(find_bundled(&root.join("app"), &root).unwrap(), onedir);
     std::fs::remove_dir_all(root).unwrap();
   }
 

@@ -553,4 +553,32 @@ describe('media store', () => {
     expect(useMediaStateStore().getState('capture-1')).toBe(MediaState.downloading);
     expect(useWatchClipboardStore().isActive).toBe(true);
   });
+
+  it.each([
+    ['small', 720, 'both'],
+    ['audio', undefined, 'audio'],
+  ] as const)('starts a captured video with the quick pick %s once it is read', async (choice, height, trackType) => {
+    const writes: unknown[] = [];
+    installTauriMock({
+      media_info: () => { throw new Error('must reuse prepared metadata'); },
+      media_download: (_cmd, payload) => {
+        writes.push(payload);
+        return 'ok';
+      },
+    });
+    const media = useMediaStore();
+    const fmt = (id: string, h: number) => ({ id, height: h, fps: 30, audioCodecs: [], videoCodecs: [] });
+    const item = {
+      id: 'capture-2', url: 'https://www.youtube.com/watch?v=abc', title: 'Captured video',
+      audioCodecs: [], videoCodecs: [], filesize: 0, mediaKind: 'video' as const,
+      formats: [fmt('v1080', 1080), fmt('v720', 720), fmt('v480', 480), { id: 'a', abr: 128, audioCodecs: [], videoCodecs: [] }],
+    };
+    const id = await media.dispatchMediaInfoFetch(item.url, true, true, item);
+    await media.downloadPreparedGroup(id, choice);
+    expect(writes).toHaveLength(1);
+    const sent = JSON.stringify(writes[0]);
+    expect(sent).toContain(`"trackType":"${trackType}"`);
+    if (height) expect(sent).toContain(`"height":${height}`);
+    else expect(sent).not.toContain('"height":1080');
+  });
 });

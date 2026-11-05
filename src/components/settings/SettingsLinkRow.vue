@@ -2,7 +2,7 @@
   <!-- A row that navigates (Logins ›, Subtitles ›): the whole row is the link, chevron at the end. -->
   <router-link
     :to="to"
-    class="group grid min-h-[52px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-8 gap-y-0.5 border-b border-hairline py-3 outline-none last:border-b-0 focus-visible:ring-2 focus-visible:ring-ring/40"
+    class="group grid min-h-[52px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-8 gap-y-0.5 border-b border-hairline py-3 outline-none last:border-b-0 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
   >
     <span class="col-start-1 text-[13px] group-hover:text-primary">{{ label }}</span>
     <span v-if="help" class="col-start-1 text-[12px] leading-relaxed text-muted-foreground text-pretty">{{ help }}</span>

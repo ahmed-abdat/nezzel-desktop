@@ -18,7 +18,7 @@
     <tooltip v-if="downloadDir" :content="downloadDir" side="top">
       <button
         type="button"
-        class="ms-auto inline-flex min-w-0 max-w-[50%] items-center gap-1.5 rounded px-1 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+        class="ms-auto inline-flex min-w-0 max-w-[50%] items-center gap-1.5 rounded px-1 outline-none transition-colors hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
         :aria-label="`${t('shell.status.openFolder')}: ${downloadDir}`"
         @click="openFolder"
       >

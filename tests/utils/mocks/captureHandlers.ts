@@ -12,13 +12,14 @@ export type CaptureMockData = {
 };
 
 const offer = (): CaptureOffer => ({
-  id: 1, url: '', site: '', title: '', details: emptyDetails(), failed: false, resolving: false, feed: false,
+  id: 1, url: '', site: '', title: '', details: emptyDetails(), failed: false, reason: null, resolving: false, feed: false,
   ...window.E2E.capture?.offer,
 });
 
 const captureHandlers: Record<string, IPCHandler> = {
   capture_snapshot: () => offer(),
   capture_edit: () => undefined,
+  capture_retry: () => undefined,
   capture_action: () => {
     if (window.E2E.capture?.action === 'pending') return new Promise(() => {});
     if (window.E2E.capture?.action === 'fail') return Promise.reject(new Error('capture_action failed'));
