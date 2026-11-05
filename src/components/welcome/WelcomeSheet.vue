@@ -4,6 +4,9 @@
       ref="sheet"
       class="nz-welcome outline-none fixed inset-0 z-[60] flex flex-col bg-background text-foreground"
       :class="dir === 'rtl' && 'is-rtl'"
+      :data-keyboard="keyboard || undefined"
+      @keydown.capture="onKey"
+      @pointerdown.capture="keyboard = false"
       role="dialog"
       aria-modal="true"
       aria-labelledby="welcome-title"
@@ -129,6 +132,12 @@ const step = ref(0);
 const copied = ref(false);
 const demo = ref<{ showTry: () => void }>();
 const sheet = ref<HTMLElement>();
+/** Keyboard in use: WebKitGTK left :focus-visible unmatched on most welcome stops (#36), so the
+ * sheet decides itself and rings every focused control while the keyboard drives. */
+const keyboard = ref(false);
+function onKey(event: KeyboardEvent) {
+  if (!event.metaKey && !event.ctrlKey) keyboard.value = true;
+}
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Crash and error reports: on by default, saved at once like the card switch. */
@@ -176,6 +185,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* Own keyboard ring (see `keyboard`): the DESIGN.md focus outline on whatever has focus. */
+.nz-welcome[data-keyboard] :deep(:is(button, a, input, [role="switch"], [tabindex="0"]):focus) {
+  outline: 2px solid var(--nz-focus);
+  outline-offset: 2px;
+}
+.nz-welcome[data-keyboard] :deep(.wd-replay:focus) { opacity: 1; }
+
 .wl-title { font-size: 24px; line-height: 1.22; font-weight: 600; letter-spacing: -.015em; margin: 20px 0 10px; text-wrap: balance; }
 .wl-lead { font-size: 14px; line-height: 1.6; color: var(--muted-foreground); max-width: 46ch; text-wrap: pretty; }
 .wl-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--hairline); }

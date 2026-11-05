@@ -143,9 +143,75 @@ pub fn desktop_from_env(var: impl Fn(&str) -> Option<String>) -> Desktop {
   }
 }
 
+/// The running shell when the environment names no desktop at all (launched from a terminal outside
+/// the session, `sudo -u`, a remote shell, some autostart paths): Plasma's or GNOME's own processes.
+pub fn desktop_from_processes<S: AsRef<str>>(names: impl IntoIterator<Item = S>) -> Desktop {
+  let mut found = Desktop::Other;
+  for name in names {
+    match name.as_ref().trim() {
+      "plasmashell" | "kwin_wayland" | "kwin_x11" | "ksmserver" => return Desktop::Kde,
+      "gnome-shell" => found = Desktop::Gnome,
+      _ => {}
+    }
+  }
+  found
+}
+
+/// No session variable says which desktop this is.
+fn desktop_env_unset(var: &impl Fn(&str) -> Option<String>) -> bool {
+  [
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_DESKTOP",
+    "DESKTOP_SESSION",
+    "KDE_FULL_SESSION",
+  ]
+  .iter()
+  .all(|name| var(name).is_none_or(|value| value.trim().is_empty()))
+}
+
+/// Environment first; the process list only when the environment is silent.
+pub fn detect_desktop<S: AsRef<str>>(
+  var: impl Fn(&str) -> Option<String>,
+  processes: impl FnOnce() -> Vec<S>,
+) -> Desktop {
+  let found = desktop_from_env(&var);
+  if found == Desktop::Other && desktop_env_unset(&var) {
+    desktop_from_processes(processes())
+  } else {
+    found
+  }
+}
+
+/// Short process names (`/proc/<pid>/comm`), bounded.
+fn process_names() -> Vec<String> {
+  let Ok(entries) = std::fs::read_dir("/proc") else {
+    return Vec::new();
+  };
+  entries
+    .flatten()
+    .filter(|entry| {
+      entry
+        .file_name()
+        .to_string_lossy()
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+    })
+    .take(8192)
+    .filter_map(|entry| std::fs::read_to_string(entry.path().join("comm")).ok())
+    .collect()
+}
+
+/// `current_desktop` for async callers: the first call may scan /proc, so it runs off the runtime.
+pub async fn current_desktop_blocking() -> Desktop {
+  tauri::async_runtime::spawn_blocking(current_desktop)
+    .await
+    .unwrap_or(Desktop::Other)
+}
+
 pub fn current_desktop() -> Desktop {
+  static DESKTOP: std::sync::OnceLock<Desktop> = std::sync::OnceLock::new();
   if cfg!(target_os = "linux") {
-    desktop_from_env(|name| std::env::var(name).ok())
+    *DESKTOP.get_or_init(|| detect_desktop(|name| std::env::var(name).ok(), process_names))
   } else {
     Desktop::Other
   }
@@ -482,6 +548,34 @@ mod tests {
     assert_eq!(global_shortcut_reason(Session::Wayland), Some("wayland"));
     assert_eq!(global_shortcut_reason(Session::X11), None);
     assert_eq!(global_shortcut_reason(Session::Other), None);
+  }
+
+  /// Fedora KDE re-test (#36): the app saw no desktop variables and said "notification area".
+  #[test]
+  fn silent_environment_falls_back_to_the_running_shell() {
+    let none = |_: &str| None::<String>;
+    let plasma = || vec!["systemd\n", "kwin_wayland\n", "plasmashell\n"];
+    assert_eq!(detect_desktop(none, plasma), Desktop::Kde);
+    assert_eq!(
+      detect_desktop(none, || vec!["gnome-shell\n"]),
+      Desktop::Gnome
+    );
+    assert_eq!(
+      detect_desktop(none, || vec!["xfce4-panel\n"]),
+      Desktop::Other
+    );
+    assert_eq!(detect_desktop(none, Vec::<String>::new), Desktop::Other);
+    // A named desktop wins over the process list (XFCE with a stray gnome-shell stays XFCE).
+    let xfce = |name: &str| (name == "XDG_CURRENT_DESKTOP").then(|| "XFCE".to_string());
+    assert_eq!(
+      detect_desktop(xfce, || vec!["gnome-shell\n"]),
+      Desktop::Other
+    );
+    let kde = |name: &str| (name == "XDG_CURRENT_DESKTOP").then(|| "KDE".to_string());
+    assert_eq!(
+      detect_desktop(kde, || -> Vec<String> { panic!("env is enough") }),
+      Desktop::Kde
+    );
   }
 
   #[test]

@@ -127,10 +127,20 @@ pub fn summarize(item: &Value) -> PreviewDetails {
     .filter(|_| !photos_only)
     .map(|f| f.iter().take(400).collect())
     .unwrap_or_default();
+  // Raw yt-dlp formats name codecs (`acodec: "mp4a"`, `"none"`); the app's parsed model lists them
+  // (`audioCodecs: [...]`). Gallery previews arrive parsed, so both shapes count.
   let codec = |f: &Value, key: &str| {
+    let listed = match key {
+      "acodec" => "audioCodecs",
+      _ => "videoCodecs",
+    };
     f.get(key)
       .and_then(Value::as_str)
       .is_some_and(|c| c != "none")
+      || f
+        .get(listed)
+        .and_then(Value::as_array)
+        .is_some_and(|codecs| !codecs.is_empty())
   };
   let height = |f: &Value| f.get("height").and_then(Value::as_u64).filter(|h| *h > 0);
   let best_video = formats
@@ -197,7 +207,9 @@ pub fn summarize(item: &Value) -> PreviewDetails {
       .into_iter()
       .find(|s| !s.is_empty())
       .unwrap_or_default(),
-    views: item.get("view_count").and_then(Value::as_u64),
+    views: ["view_count", "views"]
+      .iter()
+      .find_map(|key| item.get(*key).and_then(Value::as_u64)),
     best_height,
     best_ext,
     size,

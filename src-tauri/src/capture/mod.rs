@@ -205,11 +205,13 @@ async fn watch_clipboard(app: AppHandle) {
   let session = clipboard::current_session();
   let data_control = data_control(&app).await;
   let order = clipboard::read_order(session, data_control);
+  let desktop = clipboard::current_desktop_blocking().await;
   tracing::info!(
     session = ?session,
     data_control,
     background = clipboard::background_clipboard(session, data_control),
     readers = ?order,
+    desktop = desktop.as_str(),
     "Clipboard watch started"
   );
   let mut diag = clipboard::Diagnostics::default();
@@ -371,18 +373,60 @@ fn offer(app: &AppHandle, label: &str, text: &str, resolving: bool) -> Result<Of
   if label == "capture-card" {
     let app = app.clone();
     let id = value.id;
+    let reads = !value.url.is_empty() && !value.feed;
     tauri::async_runtime::spawn(async move {
-      tokio::time::sleep(Duration::from_secs(8)).await;
       let state = app.state::<CaptureState>();
-      let offers = state.offers.lock().unwrap();
-      if offers.get("capture-card").is_some_and(|v| v.id == id) {
-        if let Some(window) = app.get_webview_window("capture-card") {
-          let _ = window.hide();
+      let shown = std::time::Instant::now();
+      let mut read_after = (!reads).then_some(Duration::ZERO);
+      loop {
+        let changed = state.changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        if !state
+          .offers
+          .lock()
+          .unwrap()
+          .get("capture-card")
+          .is_some_and(|v| v.id == id)
+        {
+          return;
         }
+        if read_after.is_none() && state.metadata.lock().unwrap().contains_key(&id) {
+          read_after = Some(shown.elapsed());
+        }
+        let due = card_hide_after(read_after);
+        let elapsed = shown.elapsed();
+        if elapsed >= due {
+          break;
+        }
+        tokio::select! {
+          _ = changed => {}
+          _ = tokio::time::sleep(due - elapsed) => {}
+        }
+      }
+      tracing::info!(
+        read_ms = read_after.map(|d| d.as_millis() as u64),
+        "Capture card timed out"
+      );
+      if let Some(window) = app.get_webview_window("capture-card") {
+        let _ = window.hide();
       }
     });
   }
   Ok(value)
+}
+
+/// How long the copied-link card stays up untouched. It never leaves while it still reads the link
+/// (the body used to vanish unread on slow reads, #36): at least 8 s, and 5 s after the read lands,
+/// up to the 20 s read limit plus that grace.
+fn card_hide_after(read_after: Option<Duration>) -> Duration {
+  const SHOWN: Duration = Duration::from_secs(8);
+  const AFTER_READ: Duration = Duration::from_secs(5);
+  const CAP: Duration = Duration::from_secs(25);
+  match read_after {
+    Some(read) => SHOWN.max(read + AFTER_READ).min(CAP),
+    None => CAP,
+  }
 }
 
 pub fn open_quick_bar(app: &AppHandle, browser_first: bool) {
@@ -468,10 +512,18 @@ fn same_site(a: &str, b: &str) -> bool {
 }
 
 async fn preview(app: AppHandle, label: String, value: Offer) {
-  let (item, reason) = match preview_item(&app, &value).await {
-    Ok(item) => (Some(item), None),
-    Err(reason) => (None, Some(reason)),
+  let started = std::time::Instant::now();
+  let (item, details, reason) = match preview_item(&app, &value).await {
+    Ok((item, details)) => (Some(item), details, None),
+    Err(reason) => (None, None, Some(reason)),
   };
+  tracing::info!(
+    window = %label,
+    ms = started.elapsed().as_millis() as u64,
+    ok = item.is_some(),
+    reason = reason.unwrap_or(""),
+    "Capture preview read"
+  );
   let state = app.state::<CaptureState>();
   let mut offers = state.offers.lock().unwrap();
   if let Some(current) = offers.get_mut(&label).filter(|v| v.id == value.id) {
@@ -485,7 +537,7 @@ async fn preview(app: AppHandle, label: String, value: Offer) {
         .chars()
         .take(300)
         .collect();
-      current.details = preview::summarize(item);
+      current.details = details.unwrap_or_else(|| preview::summarize(item));
     }
     state.metadata.lock().unwrap().insert(value.id, item);
     let status = preview::PreviewStatus {
@@ -500,8 +552,12 @@ async fn preview(app: AppHandle, label: String, value: Offer) {
   state.changed.notify_waiters();
 }
 
-/// The link's media item, or why it could not be read (a fixed reason word, never engine text).
-async fn preview_item(app: &AppHandle, value: &Offer) -> Result<serde_json::Value, &'static str> {
+/// The link's media item (plus the card facts when they come from a richer source than the item),
+/// or why it could not be read (a fixed reason word, never engine text).
+async fn preview_item(
+  app: &AppHandle,
+  value: &Offer,
+) -> Result<(serde_json::Value, Option<preview::PreviewDetails>), &'static str> {
   let network = app.state::<SharedConfig>().load().network.clone();
   // Check before either engine: a configured but empty proxy must never go direct.
   if network.enable_proxy == Some(true)
@@ -521,7 +577,7 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<serde_json::Valu
     .await
     .map_err(|_| "slow")?
     .map_err(|_| "unknown")
-    .map(|item| with_engine(item, FetchEngine::Files));
+    .map(|item| (with_engine(item, FetchEngine::Files), None));
   }
   let gallery_first = crate::parsers::gallery::gallery_first(&value.url);
   if gallery_first {
@@ -533,7 +589,7 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<serde_json::Valu
     )
     .await
     {
-      Ok(Some(item)) => return Ok(with_engine(item, FetchEngine::Gallery)),
+      Ok(Some(item)) => return Ok((with_engine(item, FetchEngine::Gallery), None)),
       // A login wall leaves the media type unknown. The foreground fetch must
       // resolve it with consented cookies instead of caching a yt-dlp preview.
       Err(crate::parsers::gallery::GalleryError::Login) => return Err("login"),
@@ -542,9 +598,9 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<serde_json::Valu
   }
   let item = preview_ytdlp(app, value, &network)
     .await
-    .map(|item| with_engine(item, FetchEngine::Ytdlp));
+    .map(|(item, details)| (with_engine(item, FetchEngine::Ytdlp), details));
   match item {
-    Ok(item) => Ok(item),
+    Ok(found) => Ok(found),
     Err(reason) if gallery_first => Err(reason),
     Err(reason) => crate::runners::gallery::preview_media(
       app,
@@ -555,7 +611,7 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<serde_json::Valu
     .await
     .ok()
     .flatten()
-    .map(|item| with_engine(item, FetchEngine::Gallery))
+    .map(|item| (with_engine(item, FetchEngine::Gallery), None))
     .ok_or(reason),
   }
 }
@@ -577,7 +633,7 @@ async fn preview_ytdlp(
   app: &AppHandle,
   value: &Offer,
   network: &crate::state::config_models::NetworkSettings,
-) -> Result<serde_json::Value, &'static str> {
+) -> Result<(serde_json::Value, Option<preview::PreviewDetails>), &'static str> {
   let process_guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
   let manager = crate::binaries::binaries_manager::BinariesManager::for_app(app);
   let path = manager.tool_environment().map_err(|_| "unknown")?;
@@ -586,16 +642,45 @@ async fn preview_ytdlp(
   command.env("PATH", path);
   let bytes = preview::read_output_reason(&mut command, process_guard).await?;
   let json = String::from_utf8(bytes).map_err(|_| "unknown")?;
-  if serde_json::from_str::<serde_json::Value>(&json)
-    .is_ok_and(|info| crate::parsers::gallery::tiktok_photo_candidate(&value.url, &info))
+  ytdlp_preview(&value.url, &json, value.id)
+}
+
+/// yt-dlp's dump → the item the download uses (the app's parsed model) and the card facts. The facts
+/// come from the raw dump: the parsed formats drop per-format codecs, sizes and extensions, so
+/// summarizing them lost Audio and the sizes once the card had read the link (#36).
+fn ytdlp_preview(
+  url: &str,
+  json: &str,
+  id: u64,
+) -> Result<(serde_json::Value, Option<preview::PreviewDetails>), &'static str> {
+  let raw = serde_json::from_str::<serde_json::Value>(json).ok();
+  if raw
+    .as_ref()
+    .is_some_and(|info| crate::parsers::gallery::tiktok_photo_candidate(url, info))
   {
     return Err("unsupported");
   }
-  let parsed = crate::parsers::ytdlp_info::parse_ytdlp_info(&json, format!("capture-{}", value.id))
+  let parsed = crate::parsers::ytdlp_info::parse_ytdlp_info(json, format!("capture-{id}"))
     .map_err(|_| "unknown")?;
   match parsed {
-    crate::models::ParsedMedia::Single(item) => serde_json::to_value(item).map_err(|_| "unknown"),
-    crate::models::ParsedMedia::Playlist(item) => serde_json::to_value(item).map_err(|_| "unknown"),
+    crate::models::ParsedMedia::Single(item) => {
+      let item = serde_json::to_value(item).map_err(|_| "unknown")?;
+      let from_item = preview::summarize(&item);
+      let details = raw.map(|raw| {
+        let mut details = preview::summarize(&raw);
+        details.media_kind = from_item.media_kind.clone();
+        details.photos = from_item.photos;
+        details.thumbnail = details.thumbnail.or(from_item.thumbnail.clone());
+        if details.uploader.is_empty() {
+          details.uploader = from_item.uploader.clone();
+        }
+        details
+      });
+      Ok((item, details))
+    }
+    crate::models::ParsedMedia::Playlist(item) => serde_json::to_value(item)
+      .map(|item| (item, None))
+      .map_err(|_| "unknown"),
     _ => Err("unsupported"),
   }
 }
@@ -672,6 +757,71 @@ mod login_privacy_tests {
 #[cfg(test)]
 mod action_tests {
   use super::*;
+
+  #[test]
+  fn card_stays_while_it_reads_the_link() {
+    let s = Duration::from_secs;
+    for (read_after, due) in [
+      (Some(s(0)), s(8)), // no read (feed, unsupported) or instant: the usual 8 s
+      (Some(s(2)), s(8)),
+      (Some(s(6)), s(11)), // slow read: 5 s to act on the body
+      (Some(s(30)), s(25)),
+      (None, s(25)), // still reading: never before the read limit
+    ] {
+      assert_eq!(card_hide_after(read_after), due, "{read_after:?}");
+    }
+  }
+
+  /// The card's facts after a yt-dlp read keep Audio, Smaller and sizes (#36: the row lost Audio).
+  #[test]
+  fn ytdlp_preview_keeps_audio_and_sizes_after_the_read() {
+    let dump = serde_json::json!({
+      "id": "jNQXAC9IVRw", "title": "Me at the zoo", "extractor": "youtube",
+      "webpage_url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+      "uploader": "jawed", "view_count": 300, "duration": 19,
+      "thumbnail": "https://i.ytimg.com/vi/jNQXAC9IVRw/hq.jpg",
+      "formats": [
+        {"format_id": "139", "ext": "m4a", "acodec": "mp4a.40.5", "vcodec": "none", "abr": 48.0, "filesize": 100},
+        {"format_id": "140", "ext": "m4a", "acodec": "mp4a.40.2", "vcodec": "none", "abr": 129.0, "filesize": 300},
+        {"format_id": "160", "ext": "mp4", "acodec": "none", "vcodec": "avc1.4d400b", "height": 144, "filesize": 200},
+        {"format_id": "133", "ext": "mp4", "acodec": "none", "vcodec": "avc1.4d400c", "height": 240, "filesize": 400},
+        {"format_id": "18", "ext": "mp4", "acodec": "mp4a.40.2", "vcodec": "avc1.42001E", "height": 240, "filesize": 500}
+      ]
+    });
+    let (item, details) = ytdlp_preview(
+      "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+      &dump.to_string(),
+      7,
+    )
+    .unwrap();
+    let details = details.unwrap_or_else(|| preview::summarize(&item));
+    assert!(details.has_audio, "Audio stays after the read");
+    assert_eq!(details.audio_size, Some(300));
+    assert_eq!(details.best_height, Some(240));
+    assert_eq!(details.small_height, Some(144));
+    assert_eq!(details.size, Some(500));
+    assert_eq!(details.views, Some(300));
+    assert_eq!(
+      item["title"], "Me at the zoo",
+      "the stored item stays the parsed model"
+    );
+  }
+
+  /// Gallery previews arrive in the parsed shape: listed codecs still count as sound.
+  #[test]
+  fn summarize_reads_the_parsed_shape() {
+    let item = serde_json::json!({
+      "views": 9,
+      "formats": [
+        {"id": "v", "height": 720, "audioCodecs": [], "videoCodecs": [{"id": "avc1", "label": "H.264"}]},
+        {"id": "a", "abr": 128, "audioCodecs": [{"id": "aac", "label": "AAC"}], "videoCodecs": []}
+      ]
+    });
+    let details = preview::summarize(&item);
+    assert!(details.has_audio);
+    assert_eq!(details.best_height, Some(720));
+    assert_eq!(details.views, Some(9));
+  }
 
   #[test]
   fn only_known_quick_picks_reach_the_main_window() {
@@ -963,7 +1113,7 @@ pub async fn capture_platform(app: AppHandle) -> CapturePlatform {
   CapturePlatform {
     session,
     background_clipboard: clipboard::background_clipboard(session, data_control(&app).await),
-    desktop: clipboard::current_desktop(),
+    desktop: clipboard::current_desktop_blocking().await,
   }
 }
 

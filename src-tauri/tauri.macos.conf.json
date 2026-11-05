@@ -4,6 +4,14 @@
     "externalBin": ["binaries/aria2c", "binaries/ffmpeg", "binaries/ffprobe", "binaries/deno"],
     "resources": {
       "binaries/tools/gallery-dl/": "tools/gallery-dl/"
+    },
+    "macOS": {
+      "dmg": {
+        "background": "dmg/background.tiff",
+        "windowSize": { "width": 720, "height": 500 },
+        "appPosition": { "x": 190, "y": 112 },
+        "applicationFolderPosition": { "x": 530, "y": 112 }
+      }
     }
   },
   "app": {

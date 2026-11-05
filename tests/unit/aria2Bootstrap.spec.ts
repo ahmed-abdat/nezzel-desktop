@@ -21,3 +21,10 @@ describe('installer tool bootstrap', () => {
     expect(result.status, result.stderr).toBe(0);
   });
 });
+
+describe('updater manifest', () => {
+  it('lists every shipped platform with the primary installer per OS', () => {
+    const result = spawnSync('python3', ['-B', 'scripts/test_updater_json.py'], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+  });
+});

@@ -29,6 +29,10 @@ pub fn create_tray_for(app: &AppHandle, cfg: &crate::state::config_models::Confi
     return;
   }
 
+  if !indicator_available() {
+    return;
+  }
+
   let i18n_handle = app.state::<I18nManager>();
 
   let quit_i = match MenuItem::with_id(app, "quit", i18n_handle.t("tray.quit"), true, None::<&str>)
@@ -227,6 +231,60 @@ pub fn create_tray_for(app: &AppHandle, cfg: &crate::state::config_models::Confi
   *guard = Some(tray.id().clone());
 }
 
+/// True when a tray icon is live, so hiding the window leaves a way back.
+pub fn tray_present(app: &AppHandle) -> bool {
+  app
+    .try_state::<TrayState>()
+    .is_some_and(|s| s.tray.lock().unwrap().is_some())
+}
+
+/// Linux tray icons go through libappindicator, which `dlopen`s one of these at first use and
+/// panics (an abort in release) when none loads. Same names, same order as libappindicator-sys
+/// 0.9 with its `backcompat` feature (on through tray-icon's defaults): versioned, then bare `.so`.
+#[cfg(any(target_os = "linux", test))]
+const INDICATOR_LIBS: [&str; 4] = [
+  "libayatana-appindicator3.so.1",
+  "libappindicator3.so.1",
+  "libayatana-appindicator3.so",
+  "libappindicator3.so",
+];
+
+/// Whether a tray icon can be built here. On Linux without an appindicator library we skip the
+/// tray (logged once) instead of letting the app die at startup.
+fn indicator_available() -> bool {
+  #[cfg(target_os = "linux")]
+  {
+    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+      let found = first_loadable(&INDICATOR_LIBS, dlopen_probe).is_some();
+      if !found {
+        tracing::warn!(
+          "No appindicator library ({}); running without a tray icon",
+          INDICATOR_LIBS.join(" or ")
+        );
+      }
+      found
+    })
+  }
+  #[cfg(not(target_os = "linux"))]
+  true
+}
+
+#[cfg(target_os = "linux")]
+fn dlopen_probe(name: &str) -> bool {
+  let Ok(c) = std::ffi::CString::new(name) else {
+    return false;
+  };
+  // SAFETY: c is a valid NUL-terminated string. The handle stays open on purpose: the crate opens
+  // the same library right after, so this costs nothing and runs no unload code.
+  !unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_LAZY) }.is_null()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn first_loadable<'a>(names: &[&'a str], probe: impl Fn(&str) -> bool) -> Option<&'a str> {
+  names.iter().copied().find(|n| probe(n))
+}
+
 pub fn destroy_tray(app: &AppHandle) {
   let tray_state = app.state::<TrayState>();
   let mut guard = tray_state.tray.lock().unwrap();
@@ -278,5 +336,36 @@ fn active_text(app: &AppHandle, count: usize, titles: &[String]) -> String {
     label
   } else {
     format!("{label}: {details}")
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn any_library_the_backend_can_load_counts_as_a_tray() {
+    for (present, found) in [
+      (
+        &["libayatana-appindicator3.so.1"][..],
+        Some("libayatana-appindicator3.so.1"),
+      ),
+      (
+        &["libappindicator3.so.1", "libayatana-appindicator3.so"][..],
+        Some("libappindicator3.so.1"),
+      ),
+      // Only an unversioned .so (some bundles ship just that): the backend loads it, so do we.
+      (
+        &["libayatana-appindicator3.so"][..],
+        Some("libayatana-appindicator3.so"),
+      ),
+      (&["libappindicator3.so"][..], Some("libappindicator3.so")),
+      (&[][..], None),
+    ] {
+      assert_eq!(
+        first_loadable(&INDICATOR_LIBS, |n| present.contains(&n)),
+        found
+      );
+    }
   }
 }

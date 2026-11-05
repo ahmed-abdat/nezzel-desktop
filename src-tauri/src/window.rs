@@ -283,6 +283,23 @@ fn fit_plan(
   Some((position.map(|_| (nx, ny)), (w, h)))
 }
 
+/// Logical px kept free when Linux reports no work area: a panel (KDE 44, GNOME 32) plus a
+/// client-side title bar that the outer size does not include.
+const LINUX_UNKNOWN_CHROME: f64 = 96.;
+
+type Rect = (i32, i32, u32, u32);
+
+/// The area the window may cover. GDK has no work area on Wayland and returns the whole monitor,
+/// so panels are not subtracted (#36: Get started sat under the KDE taskbar at 1280x800). X11 has
+/// a real work area (_NET_WORKAREA); a monitor without panels there keeps its full height.
+fn usable_area(work: Rect, monitor: Rect, scale: f64, wayland: bool) -> Rect {
+  if !wayland || work != monitor {
+    return work;
+  }
+  let reserve = (LINUX_UNKNOWN_CHROME * scale).round() as u32;
+  (work.0, work.1, work.2, work.3.saturating_sub(reserve))
+}
+
 fn fit_main_window_on_screen(window: &WebviewWindow) {
   let monitor = window
     .current_monitor()
@@ -293,24 +310,31 @@ fn fit_main_window_on_screen(window: &WebviewWindow) {
   else {
     return;
   };
-  let area = monitor.work_area();
   // Wayland never reveals a window's real position (tao reports cached numbers) and ignores moves:
   // fit the size only and let the compositor place it.
-  let wayland =
-    crate::capture::clipboard::current_session() == crate::capture::clipboard::Session::Wayland;
+  let wayland = cfg!(target_os = "linux")
+    && crate::capture::clipboard::current_session() == crate::capture::clipboard::Session::Wayland;
+  let work = monitor.work_area();
+  let area = usable_area(
+    (
+      work.position.x,
+      work.position.y,
+      work.size.width,
+      work.size.height,
+    ),
+    (
+      monitor.position().x,
+      monitor.position().y,
+      monitor.size().width,
+      monitor.size().height,
+    ),
+    monitor.scale_factor(),
+    wayland,
+  );
   let known = (!wayland)
     .then(|| window.outer_position().ok().map(|p| (p.x, p.y)))
     .flatten();
-  let Some((position, (w, h))) = fit_plan(
-    known,
-    (outer.width, outer.height),
-    (
-      area.position.x,
-      area.position.y,
-      area.size.width,
-      area.size.height,
-    ),
-  ) else {
+  let Some((position, (w, h))) = fit_plan(known, (outer.width, outer.height), area) else {
     return;
   };
   // set_size takes the inner size: keep the frame the OS adds around it.
@@ -444,16 +468,29 @@ pub fn setup_close_behaviour(app: &AppHandle<Wry>) {
       return;
     };
 
-    use crate::state::config_models::CloseBehavior;
     use crate::SharedConfig;
     let cfg = app_handle.state::<SharedConfig>().load();
     api.prevent_close();
-    if cfg.system.tray_enabled && matches!(cfg.system.close_behavior, CloseBehavior::Hide) {
+    if close_hides(
+      cfg.system.tray_enabled,
+      &cfg.system.close_behavior,
+      crate::tray::tray_present(&app_handle),
+    ) {
       crate::background::close_to_tray(&app_handle);
     } else {
       app_handle.exit(0);
     }
   });
+}
+
+/// Close hides into the tray only when a tray icon exists; otherwise there'd be no way back.
+fn close_hides(
+  tray_enabled: bool,
+  behavior: &crate::state::config_models::CloseBehavior,
+  tray_present: bool,
+) -> bool {
+  use crate::state::config_models::CloseBehavior;
+  tray_enabled && tray_present && matches!(behavior, CloseBehavior::Hide)
 }
 
 fn rect_intersects_monitor(x: i32, y: i32, w: u32, h: u32, m: &Monitor) -> bool {
@@ -496,6 +533,38 @@ fn window_rect_is_on_some_monitor(
 mod tests {
   use super::*;
   use crate::capture::clipboard::Session;
+
+  #[test]
+  fn close_hides_only_into_a_tray_that_exists() {
+    use crate::state::config_models::CloseBehavior::{Exit, Hide};
+    for (enabled, behavior, present, hides) in [
+      (true, Hide, true, true),
+      // Tray setting on, but no appindicator library: no icon, so quit instead of vanishing.
+      (true, Hide, false, false),
+      (false, Hide, false, false),
+      (true, Exit, true, false),
+    ] {
+      assert_eq!(close_hides(enabled, &behavior, present), hides);
+    }
+  }
+
+  #[test]
+  fn linux_without_a_work_area_keeps_room_for_the_panel_and_title_bar() {
+    let screen = (0, 0, 1280, 800);
+    // Fedora KDE Wayland at 1280x800: GDK reports the whole monitor as the work area.
+    let area = usable_area(screen, screen, 1., true);
+    let (_, (_, h)) = fit_plan(None, (800, 900), area).unwrap();
+    assert!(h + 44 + 37 <= 800, "panel 44 + title bar 37 must fit: {h}");
+    assert!(h >= 650, "still above the minimum height: {h}");
+    assert_eq!(usable_area(screen, screen, 2., true).3, 800 - 192);
+    // A real work area (X11, macOS, Windows) is used as it is.
+    let work = (0, 32, 1280, 768);
+    assert_eq!(usable_area(work, screen, 1., true), work);
+    // X11 (or any non-Wayland session) reporting the whole monitor: no panels there, keep it.
+    assert_eq!(usable_area(screen, screen, 1., false), screen);
+    let second = (1280, 0, 1920, 1080);
+    assert_eq!(usable_area(second, second, 1., false), second);
+  }
 
   #[test]
   fn the_window_is_moved_and_shrunk_onto_the_screen_only_when_it_spills() {

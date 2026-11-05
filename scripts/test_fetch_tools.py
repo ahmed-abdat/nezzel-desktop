@@ -125,13 +125,30 @@ class FetchToolsTests(unittest.TestCase):
             (payload / 'yt-dlp').write_bytes(bytes.fromhex('cffaedfe') + b'executable')
             index = payload.parent / 'index.json'
             index.write_text(json.dumps({'tools': {'yt-dlp': {}}}))
+            gallery = payload.parent / 'gallery-dl'
+            (gallery / '_internal').mkdir(parents=True)
+            (gallery / 'gallery-dl').write_bytes(bytes.fromhex('cffaedfe') + b'gallery')
+            (gallery / '_internal/Python').write_bytes(bytes.fromhex('cffaedfe') + b'library')
+            checksum = root / 'src-tauri/binaries/gallery-dl.sha256'
+            checksum.write_text('unsigned-hash\n')
             with patch.object(bootstrap, 'ROOT', root), patch.object(bootstrap.sys, 'platform', 'darwin'), patch.dict(bootstrap.os.environ, {'APPLE_SIGNING_IDENTITY': '-'}), patch.object(bootstrap.subprocess, 'run') as run:
                 bootstrap.sign_macos()
             self.assertEqual(run.call_args_list, [], 'ad-hoc builds keep upstream signatures')
-            with patch.object(bootstrap, 'ROOT', root), patch.object(bootstrap.sys, 'platform', 'darwin'), patch.dict(bootstrap.os.environ, {'APPLE_SIGNING_IDENTITY': 'Developer ID Application: Test'}), patch.object(bootstrap.subprocess, 'run') as run:
+            self.assertEqual(checksum.read_text(), 'unsigned-hash\n')
+
+            def sign(command, **_):
+                # codesign rewrites the bytes: the recorded hash must be of the signed entry.
+                if '--sign' in command:
+                    path = Path(command[-1])
+                    if path.is_file():
+                        path.write_bytes(path.read_bytes() + b'+signed')
+            with patch.object(bootstrap, 'ROOT', root), patch.object(bootstrap.sys, 'platform', 'darwin'), patch.dict(bootstrap.os.environ, {'APPLE_SIGNING_IDENTITY': 'Developer ID Application: Test'}), patch.object(bootstrap.subprocess, 'run', side_effect=sign) as run:
                 bootstrap.sign_macos()
             signed = [Path(call.args[0][-1]) for call in run.call_args_list if '--sign' in call.args[0]]
-            self.assertEqual(signed, [framework / 'Python', payload / 'yt-dlp', framework])
+            self.assertEqual(signed[:3], [framework / 'Python', payload / 'yt-dlp', framework])
+            self.assertEqual(sorted(signed[3:]), sorted([gallery / '_internal/Python', gallery / 'gallery-dl']))
+            self.assertTrue(all('Developer ID Application: Test' in call.args[0] for call in run.call_args_list if '--sign' in call.args[0]))
+            self.assertEqual(checksum.read_text(), hashlib.sha256(bytes.fromhex('cffaedfe') + b'gallery+signed').hexdigest() + '\n')
             self.assertIn('_internal/Python.framework/Python', json.loads(index.read_text())['tools']['yt-dlp']['files'])
 
     def test_checksum_mismatch_and_archive_traversal_fail_closed(self):

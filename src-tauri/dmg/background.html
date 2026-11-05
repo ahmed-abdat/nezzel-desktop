@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<!--
+  Source of the .dmg window background. Rebuild the PNGs + HiDPI TIFF with
+  `sh src-tauri/dmg/render.sh`. Size and icon spots must match
+  bundle.macOS.dmg in tauri.macos.conf.json (window 720x500 incl. the
+  28 pt title bar, so the art is 720x472; icons at 190,112 and 530,112, icon centres in points).
+  Keep the bottom 24 pt free of anything essential: a Finder path bar can cover it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face { font-family: Inter; font-weight: 400 700; src: url(../../src/assets/fonts/Inter-400-700-latin.woff2) format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans Arabic"; font-weight: 400; src: url(../../src/assets/fonts/IBMPlexSansArabic-400-arabic.woff2) format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans Arabic"; font-weight: 600; src: url(../../src/assets/fonts/IBMPlexSansArabic-600-arabic.woff2) format("woff2"); }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 720px; height: 472px; overflow: hidden; }
+  body {
+    position: relative;
+    background: #FAFCFB;
+    color: #0E1614;
+    font-family: Inter, "IBM Plex Sans Arabic", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Arrow between the two icon spots (icons are drawn by Finder on top). */
+  .arrow { position: absolute; top: 94px; left: 288px; width: 144px; height: 36px; }
+
+  .steps {
+    position: absolute; inset-inline: 0; top: 214px; height: 190px;
+    background: #E3F4F0;
+    border-block: 1px solid #CDE8E1;
+    display: grid; grid-template-columns: 1fr 1px 1fr;
+    padding-block: 18px;
+  }
+  .rule { background: #C3E2DA; }
+  .col { padding-inline: 32px; }
+  .col h2 { font-size: 14px; font-weight: 600; color: #00514A; margin-block-end: 10px; }
+  .col ol { list-style: none; display: grid; gap: 8px; }
+  .col li { display: flex; gap: 10px; align-items: baseline; font-size: 13px; line-height: 1.4; }
+  .n {
+    flex: none; width: 20px; height: 20px; border-radius: 10px;
+    background: #006B5E; color: #fff;
+    font: 600 12px/20px Inter, sans-serif; text-align: center;
+    font-variant-numeric: tabular-nums;
+    transform: translateY(-1px);
+  }
+  b { font-weight: 600; }
+
+  [lang="ar"] { font-family: "IBM Plex Sans Arabic", Inter, system-ui, sans-serif; }
+  [lang="ar"] h2 { font-size: 15px; }
+  [lang="ar"] li { font-size: 14px; line-height: 1.45; }
+
+  .link {
+    position: absolute; inset-inline: 0; top: 416px;
+    text-align: center; font-size: 13px; color: #5C6966;
+  }
+  .link .url { color: #006B5E; font-weight: 600; }
+</style>
+</head>
+<body>
+  <svg class="arrow" viewBox="0 0 144 36" aria-hidden="true">
+    <path d="M8 18 H128" stroke="#006B5E" stroke-width="3" stroke-linecap="round" stroke-dasharray="1 9" fill="none"/>
+    <path d="M118 7 L134 18 L118 29" stroke="#006B5E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </svg>
+
+  <section class="steps">
+    <div class="col" lang="en" dir="ltr">
+      <h2>Free beta, not signed by Apple yet</h2>
+      <ol>
+        <li><span class="n">1</span><span>Drag <b>Nezzel</b> to <b>Applications</b>.</span></li>
+        <li><span class="n">2</span><span>Open it. macOS warns you once. Click <b>Done</b>.</span></li>
+        <li><span class="n">3</span><span><b>System Settings → Privacy &amp; Security</b>, then <b>Open Anyway</b> and enter your password.</span></li>
+      </ol>
+    </div>
+    <div class="rule"></div>
+    <div class="col" lang="ar" dir="rtl">
+      <h2>نسخة تجريبية مجانية، لم توقّعها Apple بعد</h2>
+      <ol>
+        <li><span class="n">1</span><span>اسحب <b>Nezzel</b> إلى مجلد <b>التطبيقات</b>.</span></li>
+        <li><span class="n">2</span><span>افتحه. سيحذّرك macOS مرة واحدة. اضغط <b>تم</b>.</span></li>
+        <li><span class="n">3</span><span><b>إعدادات النظام ← الخصوصية والأمن</b>، ثم «<b>فتح على أي حال</b>» وأدخل كلمة المرور.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <p class="link" dir="ltr"><bdi>Help</bdi> · <bdi dir="rtl">المساعدة</bdi>: <bdi dir="ltr" class="url">nezzel.hululsoft.mr/desktop/install</bdi></p>
+</body>
+</html>
