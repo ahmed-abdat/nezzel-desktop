@@ -26,6 +26,7 @@ pub async fn updater_download(app: AppHandle, store: State<'_, Mutex<UpdateStore
   let app_for_progress = app.clone();
   let app_for_error = app.clone();
 
+  crate::usage::count(&app, crate::usage::keys::UPDATE_TAPPED);
   let mut received: usize = 0;
   tracing::info!("[updater] Downloading update: {}", update.version);
   let bytes = update
@@ -48,12 +49,14 @@ pub async fn updater_download(app: AppHandle, store: State<'_, Mutex<UpdateStore
 
   match bytes {
     Ok(bytes) => {
+      crate::usage::count(&app, crate::usage::keys::UPDATE_READY);
       let mut s = store.lock().await;
       s.bytes = Some(bytes);
       Ok(())
     }
     Err(e) => {
       tracing::info!("[updater] Update download failed: {e}");
+      crate::usage::count(&app, crate::usage::update_failed_key(&e));
       let _ = app_for_error.emit("updater_error", e.to_string());
       Err(e)
     }

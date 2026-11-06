@@ -24,7 +24,11 @@ export const useMediaProgressStore = defineStore('media-progress', () => {
   const recentGroupSpeedBps = new Map<string, { speedBps: number; expiresAt: number }>();
   const speedHoldMs = 1500;
 
+  // The backend cancel is fire-and-forget, so events can arrive after the download was removed.
+  const isRemoved = (groupId: string) => !groupStore.findGroupById(groupId);
+
   function processMediaProgressPayload(payload: MediaProgressPayload) {
+    if (isRemoved(payload.groupId)) return;
     const existing = progress.value[payload.id];
     if (existing) {
       Object.assign(existing, {
@@ -43,6 +47,7 @@ export const useMediaProgressStore = defineStore('media-progress', () => {
   }
 
   function processMediaProgressStagePayload(payload: MediaProgressStagePayload) {
+    if (isRemoved(payload.groupId)) return;
     const existing = progress.value[payload.id];
     if (existing) {
       existing.stage = payload.stage;
@@ -55,8 +60,9 @@ export const useMediaProgressStore = defineStore('media-progress', () => {
   }
 
   function processMediaCompletePayload(payload: MediaProgressCompletePayload) {
-    stateStore.setState(payload.id, MediaState.done);
     const group = groupStore.findGroupById(payload.groupId);
+    if (!group) return;
+    stateStore.setState(payload.id, MediaState.done);
     if (group.isCombined) {
       const items = Object.values(group.items);
       const allItemsAreTerminal = !items.some((item) => {
@@ -166,6 +172,37 @@ export const useMediaProgressStore = defineStore('media-progress', () => {
     return progress;
   }
 
+  // Same totals as findAllProgress, but reads only item states, never the (fast-changing) progress map.
+  function findAllCounts(): Required<MediaItemsProgress> {
+    const counts: Required<MediaItemsProgress> = { total: 0, done: 0, ready: 0, downloading: 0 };
+    let hasDownloading = false;
+    for (const group of Object.values(groupStore.groups)) {
+      const itemIds = Object.values(group.items)
+        .filter(item => !group.isCombined || !item.isLeader)
+        .map(i => i.id);
+      if (itemIds.length === 0) continue;
+
+      const states = itemIds.map(id => stateStore.getState(id));
+      const done = states.filter(s => s === MediaState.done || s === MediaState.error).length;
+      const downloading = states.filter(s =>
+        s === MediaState.downloading
+        || s === MediaState.downloadingList
+        || s === MediaState.paused
+        || s === MediaState.pausedList,
+      ).length;
+      let ready = states.filter(s => s === MediaState.configure).length;
+      if (Object.keys(group.items).length > 1 && downloading === 0 && !group.isCombined) {
+        ready = 0;
+      }
+      counts.ready += ready;
+      counts.done += done;
+      counts.downloading += downloading;
+      if (downloading > 0) hasDownloading = true;
+    }
+    counts.total = hasDownloading ? counts.downloading + counts.done : counts.ready + counts.done;
+    return counts;
+  }
+
   function findDownloadProgress(groupId: string): MediaProgress | undefined {
     const group = groupStore.findGroupById(groupId);
     if (!group) return;
@@ -186,6 +223,7 @@ export const useMediaProgressStore = defineStore('media-progress', () => {
     findGroupProgress,
     findDownloadProgress,
     findAllProgress,
+    findAllCounts,
     deleteProgress,
   };
 });

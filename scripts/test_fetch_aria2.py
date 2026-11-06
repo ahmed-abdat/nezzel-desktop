@@ -1,4 +1,4 @@
-"""Offline optional-sidecar bootstrap checks, invoked by the Vitest push suite."""
+"""Offline optional-sidecar bootstrap checks (`pnpm run test:tools`: Rust CI + nightly)."""
 import contextlib
 import importlib.util
 import io

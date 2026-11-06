@@ -91,18 +91,49 @@ fn ensure_parent(path: &Path) -> io::Result<()> {
   Ok(())
 }
 
-fn atomic_file_replace(tmp: &Path, dst: &Path) -> io::Result<()> {
-  if dst.exists() {
-    std::fs::remove_file(dst)?;
-  }
-  std::fs::rename(tmp, dst)
+fn backup_path(path: &Path) -> PathBuf {
+  let mut name = path.as_os_str().to_owned();
+  name.push(format!(".old-{}", uuid::Uuid::new_v4()));
+  PathBuf::from(name)
 }
 
-fn atomic_dir_replace(tmp_dir: &Path, dst_dir: &Path) -> io::Result<()> {
-  if dst_dir.exists() {
-    std::fs::remove_dir_all(dst_dir)?;
+// Windows can rename a running or scanned image but not delete or overwrite it, so the live
+// file is moved aside first. A failed swap restores it; a crash leaves it as `<file>.old-<uuid>`,
+// which `cleanup_leftovers` restores or removes at startup.
+fn atomic_file_replace(tmp: &Path, dst: &Path) -> io::Result<()> {
+  if !dst.exists() {
+    return std::fs::rename(tmp, dst);
   }
-  std::fs::rename(tmp_dir, dst_dir)
+  let backup = backup_path(dst);
+  std::fs::rename(dst, &backup)?;
+  if let Err(e) = std::fs::rename(tmp, dst) {
+    if let Err(restore) = std::fs::rename(&backup, dst) {
+      tracing::warn!("Could not restore the previous tool after a failed swap: {restore}");
+    }
+    return Err(e);
+  }
+  // A running image cannot be deleted on Windows; startup cleanup removes it later.
+  let _ = std::fs::remove_file(&backup);
+  Ok(())
+}
+
+// The old directory is moved aside, not deleted, so a failed swap restores it.
+fn atomic_dir_replace(tmp_dir: &Path, dst_dir: &Path) -> io::Result<()> {
+  if !dst_dir.exists() {
+    return std::fs::rename(tmp_dir, dst_dir);
+  }
+  let backup = backup_path(dst_dir);
+  std::fs::rename(dst_dir, &backup)?;
+  if let Err(e) = std::fs::rename(tmp_dir, dst_dir) {
+    if let Err(restore) = std::fs::rename(&backup, dst_dir) {
+      tracing::warn!("Could not restore the previous tool folder after a failed swap: {restore}");
+    }
+    return Err(e);
+  }
+  if std::fs::remove_dir_all(&backup).is_err() {
+    tracing::warn!("Could not remove the previous tool folder after the swap");
+  }
+  Ok(())
 }
 
 fn safe_join(root: &Path, candidate: &Path) -> Result<PathBuf, ExtractError> {
@@ -514,10 +545,71 @@ fn list_tree(root: &Path, max: usize) -> EntriesDisplay {
 
 #[cfg(test)]
 mod tests {
-  use super::{extract_zip, extract_zip_bundle};
+  use super::{atomic_dir_replace, atomic_file_replace, extract_zip, extract_zip_bundle};
   use std::io::Write;
   use std::path::Path;
   use zip::write::SimpleFileOptions;
+
+  fn swap_dir() -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("nezzel-swap-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+  }
+
+  #[test]
+  fn file_replace_overwrites_existing_file() {
+    let root = swap_dir();
+    let (tmp, dst) = (root.join("tool.tmp"), root.join("tool"));
+    std::fs::write(&dst, b"old").unwrap();
+    std::fs::write(&tmp, b"new").unwrap();
+    atomic_file_replace(&tmp, &dst).unwrap();
+    assert_eq!(std::fs::read(&dst).unwrap(), b"new");
+    assert!(!tmp.exists());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    std::fs::remove_dir_all(root).unwrap();
+  }
+
+  #[test]
+  fn failed_file_replace_keeps_the_original() {
+    let root = swap_dir();
+    let dst = root.join("tool");
+    std::fs::write(&dst, b"old").unwrap();
+    assert!(atomic_file_replace(&root.join("missing"), &dst).is_err());
+    assert_eq!(std::fs::read(&dst).unwrap(), b"old");
+    let names = std::fs::read_dir(&root).unwrap().count();
+    assert_eq!(names, 1);
+    std::fs::remove_dir_all(root).unwrap();
+  }
+
+  #[test]
+  fn dir_replace_swaps_and_leaves_no_backup() {
+    let root = swap_dir();
+    let (tmp, dst) = (root.join("tmp"), root.join("deno"));
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(&dst).unwrap();
+    std::fs::write(tmp.join("new.txt"), b"new").unwrap();
+    std::fs::write(dst.join("old.txt"), b"old").unwrap();
+    atomic_dir_replace(&tmp, &dst).unwrap();
+    assert!(dst.join("new.txt").exists());
+    assert!(!dst.join("old.txt").exists());
+    let names: Vec<_> = std::fs::read_dir(&root)
+      .unwrap()
+      .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+      .collect();
+    assert_eq!(names, vec!["deno".to_string()]);
+    std::fs::remove_dir_all(root).unwrap();
+  }
+
+  #[test]
+  fn failed_dir_replace_keeps_the_original() {
+    let root = swap_dir();
+    let dst = root.join("deno");
+    std::fs::create_dir_all(&dst).unwrap();
+    std::fs::write(dst.join("old.txt"), b"old").unwrap();
+    assert!(atomic_dir_replace(&root.join("missing"), &dst).is_err());
+    assert_eq!(std::fs::read(dst.join("old.txt")).unwrap(), b"old");
+    std::fs::remove_dir_all(root).unwrap();
+  }
 
   #[tokio::test]
   async fn extracts_exact_xz_manifest_entry_without_installing_other_members() {

@@ -2,13 +2,14 @@
  * Global shortcut accelerators (Tauri global-shortcut syntax, e.g. "CommandOrControl+Shift+D") to and from
  * keyboard events and display keycaps. The raw accelerator string is never shown to the user.
  */
+import { DEFAULT_CAPTURE_SHORTCUT, FALLBACK_CAPTURE_SHORTCUT } from '@/generated/contract';
+import type { ShortcutAction } from '../tauri/types/shortcuts';
 
-/** Quick download: ⌥⌘N on macOS, Ctrl+Alt+N elsewhere. Mirrors DEFAULT_CAPTURE_SHORTCUT in config_models.rs. */
-export const DEFAULT_CAPTURE_SHORTCUT = 'CommandOrControl+Alt+N';
+/** Quick download: ⌥⌘N on macOS, Ctrl+Alt+N elsewhere; FALLBACK is what the backend registers when the default
+ *  is taken (or types AltGr+N on Windows). Both come from config_models.rs. */
+export { DEFAULT_CAPTURE_SHORTCUT, FALLBACK_CAPTURE_SHORTCUT };
 /** What a Wayland system shortcut runs to open Quick download (handled by the single-instance hand-off). */
 export const CAPTURE_COMMAND = 'nezzel --capture';
-/** What the backend registers when the default is taken (or types AltGr+N on Windows). */
-export const FALLBACK_CAPTURE_SHORTCUT = 'CommandOrControl+Alt+Shift+D';
 
 type Mod = 'CommandOrControl' | 'Control' | 'Alt' | 'Shift' | 'Super';
 const MOD_ORDER: Mod[] = ['CommandOrControl', 'Control', 'Alt', 'Shift', 'Super'];
@@ -146,21 +147,12 @@ export function sameShortcut(a: string, b: string): boolean {
   return pa.key === pb.key && pa.mods.join('+') === pb.mods.join('+');
 }
 
-// Shortcuts the OS or every app already owns. Canonical accelerator form (see parseAccelerator).
-const COMMON_EDIT = ['A', 'C', 'V', 'X', 'Z', 'S', 'F', 'N', 'T', 'W', 'P', 'O'].map(key => `CommandOrControl+${key}`);
+// Shortcuts the OS or every app already owns, in canonical accelerator form (see parseAccelerator).
 const RESERVED_MAC = [
-  ...COMMON_EDIT, 'CommandOrControl+Q', 'CommandOrControl+H', 'CommandOrControl+M', 'CommandOrControl+Tab',
-  'CommandOrControl+Space', 'CommandOrControl+,', 'CommandOrControl+Shift+Z', 'CommandOrControl+Shift+3',
-  'CommandOrControl+Shift+4', 'CommandOrControl+Shift+5', 'CommandOrControl+Alt+Escape', 'CommandOrControl+Alt+H',
-  'CommandOrControl+Alt+M', 'CommandOrControl+Alt+D', 'CommandOrControl+Control+Q', 'CommandOrControl+Control+F',
-  'CommandOrControl+Control+Space', 'CommandOrControl+Control+D', 'Control+Space', 'Control+Alt+Space',
-  'CommandOrControl+Shift+D', 'CommandOrControl+Alt+Shift+V', 'CommandOrControl+`',
+  'CommandOrControl+A', 'CommandOrControl+C', 'CommandOrControl+V', 'CommandOrControl+X', 'CommandOrControl+Z', 'CommandOrControl+S', 'CommandOrControl+F', 'CommandOrControl+N', 'CommandOrControl+T', 'CommandOrControl+W', 'CommandOrControl+P', 'CommandOrControl+O', 'CommandOrControl+Q', 'CommandOrControl+H', 'CommandOrControl+M', 'CommandOrControl+Tab', 'CommandOrControl+Space', 'CommandOrControl+,', 'CommandOrControl+Shift+Z', 'CommandOrControl+Shift+3', 'CommandOrControl+Shift+4', 'CommandOrControl+Shift+5', 'CommandOrControl+Alt+Escape', 'CommandOrControl+Alt+H', 'CommandOrControl+Alt+M', 'CommandOrControl+Alt+D', 'CommandOrControl+Control+Q', 'CommandOrControl+Control+F', 'CommandOrControl+Control+Space', 'CommandOrControl+Control+D', 'Control+Space', 'Control+Alt+Space', 'CommandOrControl+Shift+D', 'CommandOrControl+Alt+Shift+V', 'CommandOrControl+`',
 ];
 const RESERVED_PC = [
-  ...COMMON_EDIT, 'CommandOrControl+Y', 'CommandOrControl+Shift+Z', 'CommandOrControl+Escape',
-  'CommandOrControl+Shift+Escape', 'CommandOrControl+Alt+Delete', 'CommandOrControl+Tab', 'CommandOrControl+Shift+Tab',
-  'Alt+F4', 'Alt+Tab', 'Alt+Shift+Tab', 'Alt+Space', 'Alt+Escape', 'CommandOrControl+Shift+D', 'CommandOrControl+Alt+D',
-  'CommandOrControl+,',
+  'CommandOrControl+A', 'CommandOrControl+C', 'CommandOrControl+V', 'CommandOrControl+X', 'CommandOrControl+Z', 'CommandOrControl+S', 'CommandOrControl+F', 'CommandOrControl+N', 'CommandOrControl+T', 'CommandOrControl+W', 'CommandOrControl+P', 'CommandOrControl+O', 'CommandOrControl+Y', 'CommandOrControl+Shift+Z', 'CommandOrControl+Escape', 'CommandOrControl+Shift+Escape', 'CommandOrControl+Alt+Delete', 'CommandOrControl+Tab', 'CommandOrControl+Shift+Tab', 'Alt+F4', 'Alt+Tab', 'Alt+Shift+Tab', 'Alt+Space', 'Alt+Escape', 'CommandOrControl+Shift+D', 'CommandOrControl+Alt+D', 'CommandOrControl+,',
 ];
 
 /** True when the OS (or every app, like copy/paste) already uses this shortcut. Windows-key combos are all OS. */
@@ -175,4 +167,41 @@ export function isReservedShortcut(accelerator: string, mac: boolean): boolean {
 export function eventAccelerator(event: KeyLike, mac: boolean): string | null {
   const result = recordKey(event, mac);
   return result.kind === 'ok' ? result.accelerator : null;
+}
+
+/** Nezzel's own in-app keys (only while the window is focused). ⌘ on macOS, Ctrl elsewhere. */
+export const BUILT_IN_KEYS = {
+  paste: 'CommandOrControl+V',
+  sidebar: 'CommandOrControl+B',
+  sidebarAlt: 'CommandOrControl+\\',
+  settings: 'CommandOrControl+,',
+} as const;
+export type BuiltInKey = keyof typeof BUILT_IN_KEYS;
+
+/** Queue shortcuts a user can rebind (Settings > Keyboard shortcuts), only while Nezzel is focused. Empty = off. */
+export const IN_APP_SHORTCUT_DEFAULTS = {
+  downloadAll: 'CommandOrControl+Enter',
+  addAndDownload: 'CommandOrControl+Shift+Enter',
+} as const;
+/** The queue action each rebindable in-app key runs. */
+export const IN_APP_ACTIONS: Record<keyof typeof IN_APP_SHORTCUT_DEFAULTS, ShortcutAction> = {
+  downloadAll: 'download_all',
+  addAndDownload: 'media_add_and_download',
+};
+
+/** Which built-in key a keydown is (⌘ or Ctrl on any platform, as before), or null. */
+export function builtInKeyOf(event: KeyLike): BuiltInKey | null {
+  if (!(event.metaKey || event.ctrlKey)) return null;
+  const plain = !event.shiftKey && !event.altKey;
+  const key = event.key.toLowerCase();
+  if (plain && (key === '\\' || key === 'b')) return 'sidebar';
+  if (key === ',') return 'settings';
+  if (key === 'v') return 'paste';
+  return null;
+}
+
+/** `aria-keyshortcuts` value for a built-in key on either platform: "Meta+B Control+B". */
+export function ariaKeyShortcuts(accelerator: string): string {
+  const parsed = parseAccelerator(accelerator);
+  return parsed ? `Meta+${parsed.key} Control+${parsed.key}` : '';
 }

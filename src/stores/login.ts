@@ -6,9 +6,7 @@ import { useMediaDiagnosticsStore } from './media/diagnostics';
 import { useMediaGroupStore } from './media/group';
 import { useToastStore } from './toast';
 import { i18n } from '../i18n';
-
-/** Engine forgets a request after 15 minutes (`LOGIN_TTL` in runners/login.rs). */
-export const LOGIN_TTL_MS = 15 * 60 * 1000;
+import { LOGIN_APP_BOUND_REASON, LOGIN_TTL_MS } from '@/generated/contract';
 
 /**
  * Why a row that needed a login ended up failed. Drives the plain failure line.
@@ -27,6 +25,11 @@ export interface FailedLogin {
   hint?: string;
 }
 
+interface TriedProfile {
+  id: string;
+  browser?: string;
+}
+
 export type LoginCard
   = | { kind: 'needed'; request: LoginNeeded; preselect: string }
     | { kind: 'failed'; failure: FailedLogin };
@@ -40,9 +43,8 @@ export const useLoginStore = defineStore('login', () => {
   const pending = ref<Record<string, LoginNeeded>>({});
   /** Terminal state per group, until the group is removed or asks again. */
   const failed = ref<Record<string, FailedLogin>>({});
-  /** Last browser the user picked per host, so "Try another browser" does not offer it first. */
-  const tried = ref<Record<string, string>>({});
-  const triedBrowsers = new Map<string, string>();
+  /** Last profile the user picked per host (opaque id + browser family), so "Try another browser" does not offer it first. */
+  const tried = ref<Record<string, TriedProfile>>({});
   const using = ref<Record<string, LoginUsing>>({});
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -50,13 +52,15 @@ export const useLoginStore = defineStore('login', () => {
     if (request.status === 'exhausted') {
       dropGroup(request.groupId);
       const candidate = using.value[request.groupId]?.candidate;
-      const browser = candidate?.browser ?? triedBrowsers.get(request.host);
-      failed.value[request.groupId] = { groupId: request.groupId, host: request.host, reason: 'exhausted', tried: candidate?.id ?? tried.value[request.host], ...(browser ? { browser } : {}), ...(request.reason === 'browserAppBound' ? { hint: request.reason } : {}) };
+      const last = tried.value[request.host];
+      const browser = candidate?.browser ?? last?.browser;
+      failed.value[request.groupId] = { groupId: request.groupId, host: request.host, reason: 'exhausted', tried: candidate?.id ?? last?.id, ...(browser ? { browser } : {}), ...(request.reason === LOGIN_APP_BOUND_REASON ? { hint: request.reason } : {}) };
       return;
     }
     if (!request.changeOnly) delete failed.value[request.groupId];
     pending.value[request.requestId] = request;
     clearTimer(request.requestId);
+    // The engine forgets a request after LOGIN_TTL_MS; drop it here at the same time.
     timers.set(request.requestId, setTimeout(() => expire(request.requestId), LOGIN_TTL_MS));
   }
 
@@ -91,9 +95,8 @@ export const useLoginStore = defineStore('login', () => {
     if (!request) return;
     const batch = siblings(request, browserId);
     batch.forEach(r => forget(r.requestId));
-    tried.value[request.host] = browserId;
     const candidate = request.candidates.find(c => c.id === browserId);
-    if (candidate) triedBrowsers.set(request.host, candidate.browser);
+    tried.value[request.host] = { id: browserId, ...(candidate ? { browser: candidate.browser } : {}) };
     const results = await Promise.allSettled(batch.map(r => acceptBrowserLogin(r.requestId, browserId)));
     if (results.some(r => r.status === 'rejected')) {
       useToastStore().showToast(i18n.global.t('downloads.login.expired'), { style: 'error' });

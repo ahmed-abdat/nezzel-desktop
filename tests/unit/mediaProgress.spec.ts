@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaStateStore, MediaState } from '../../src/stores/media/state';
+import { ProgressStage } from '../../src/tauri/types/progress';
 import { useMediaProgressStore } from '../../src/stores/media/progress';
 import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
 
@@ -33,17 +34,20 @@ describe('media progress store', () => {
     stateStore.setState('b', MediaState.configure);
 
     let progress = progressStore.findAllProgress();
+    expect(progressStore.findAllCounts()).toEqual(progress);
     expect(progress.total).toBe(1);
     expect(progress.ready).toBe(1);
     expect(progress.downloading).toBe(0);
 
     stateStore.setState('b', MediaState.downloading);
     progress = progressStore.findAllProgress();
+    expect(progressStore.findAllCounts()).toEqual(progress);
     expect(progress.downloading).toBe(1);
     expect(progress.ready).toBe(0);
 
     stateStore.setState('b', MediaState.done);
     progress = progressStore.findAllProgress();
+    expect(progressStore.findAllCounts()).toEqual(progress);
     expect(progress.done).toBe(1);
     expect(progress.downloading).toBe(0);
   });
@@ -82,6 +86,7 @@ describe('media progress store', () => {
     stateStore.setState('b', MediaState.configure);
 
     const progress = progressStore.findAllProgress();
+    expect(progressStore.findAllCounts()).toEqual(progress);
     expect(progress.total).toBe(1);
     expect(progress.downloading).toBe(1);
     expect(progress.ready).toBe(1);
@@ -256,5 +261,40 @@ describe('media progress store', () => {
     expect(groupStore.findGroupById('g-attempts')?.errored).toBe(1);
     diagnosticsStore.removeDiagnostics('a');
     expect(diagnosticsStore.findAttemptsByGroupId('g-attempts')).toEqual([]);
+  });
+
+  describe('events for removed downloads', () => {
+    const makeGroup = (id: string) => useMediaGroupStore().createGroup({
+      id,
+      url: id,
+      total: 1,
+      processed: 1,
+      errored: 0,
+      isCombined: false,
+      audioCodecs: [],
+      formats: [],
+      filesize: 0,
+      items: { [`${id}-item`]: { id: `${id}-item`, url: id, audioCodecs: [], formats: [], filesize: 0 } },
+    });
+
+    it('ignores a complete event for a removed group', () => {
+      const progressStore = useMediaProgressStore();
+      expect(() => progressStore.processMediaCompletePayload({ id: 'gone-item', groupId: 'gone' } as never)).not.toThrow();
+      expect(useMediaStateStore().getState('gone-item')).toBeUndefined();
+    });
+
+    it('does not re-create progress for a removed group', () => {
+      const progressStore = useMediaProgressStore();
+      progressStore.processMediaProgressPayload({ id: 'gone-item', groupId: 'gone', percentage: 50 } as never);
+      progressStore.processMediaProgressStagePayload({ id: 'gone-item', groupId: 'gone', stage: ProgressStage.downloading });
+      expect(progressStore.progress['gone-item']).toBeUndefined();
+    });
+
+    it('still records progress for an existing group', () => {
+      const progressStore = useMediaProgressStore();
+      makeGroup('live');
+      progressStore.processMediaProgressPayload({ id: 'live-item', groupId: 'live', percentage: 50 } as never);
+      expect(progressStore.progress['live-item']?.percentage).toBe(50);
+    });
   });
 });

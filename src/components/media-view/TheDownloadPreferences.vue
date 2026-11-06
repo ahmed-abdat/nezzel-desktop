@@ -19,7 +19,7 @@
         :audio-help="t('perDownload.quality.audioTrackHint')"
       />
     </settings-section>
-    <prefs-advanced v-if="hasCodecs">
+    <base-disclosure v-if="hasCodecs" class="mt-8" :label="t('perDownload.advanced')">
       <media-encoding-options
         v-model="selectedEncodings"
         rows
@@ -29,7 +29,7 @@
         :track-type="selectedTrackType"
         :video-help="t('perDownload.quality.codecHint')"
       />
-    </prefs-advanced>
+    </base-disclosure>
   </div>
 </template>
 
@@ -43,7 +43,7 @@ import { DownloadOptions, EncodingOptions, TrackOptions, TrackType } from '../..
 import { useMediaOptionsStore } from '../../stores/media/options.ts';
 import { computed, watch } from 'vue';
 import SettingsSection from '../settings/SettingsSection.vue';
-import PrefsAdvanced from './PrefsAdvanced.vue';
+import BaseDisclosure from '../base/BaseDisclosure.vue';
 import { useI18n } from 'vue-i18n';
 import { useMediaResolutionSelection } from '../../composables/useMediaResolutionSelection';
 

@@ -69,7 +69,7 @@ async fn reddit_share_image_preserves_its_readable_permalink_for_download_refres
     ]
     .into(),
   ));
-  let Outcome::Verified(Resolution::Attachments { metadata }) = read_site(source, &transport).await
+  let Verdict::Verified(Resolution::Attachments { metadata }) = read_site(source, &transport).await
   else {
     panic!("image post expected");
   };
@@ -80,7 +80,7 @@ async fn reddit_share_image_preserves_its_readable_permalink_for_download_refres
   ));
   assert!(matches!(
     read_site(media["url"].as_str().unwrap(), &refresh).await,
-    Outcome::Verified(Resolution::Attachments { .. })
+    Verdict::Verified(Resolution::Attachments { .. })
   ));
 }
 
@@ -177,7 +177,7 @@ async fn reddit_challenge_is_answered_once_on_the_same_page_without_cookies() {
   ));
   assert!(matches!(
     read_site(CANONICAL, &transport).await,
-    Outcome::Verified(Resolution::Attachments { .. })
+    Verdict::Verified(Resolution::Attachments { .. })
   ));
 }
 
@@ -202,7 +202,7 @@ async fn reddit_video_shortlink_binds_its_media_id_after_the_post_redirect() {
     .into(),
   ));
   assert!(
-    matches!(read_site("https://v.redd.it/abcdefgh1234", &transport).await, Outcome::Verified(Resolution::PostMedia { url, .. }) if url == "https://v.redd.it/abcdefgh1234/DASHPlaylist.mpd")
+    matches!(read_site("https://v.redd.it/abcdefgh1234", &transport).await, Verdict::Verified(Resolution::PostMedia { url, .. }) if url == "https://v.redd.it/abcdefgh1234/DASHPlaylist.mpd")
   );
 }
 

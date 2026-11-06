@@ -9,6 +9,8 @@ import { useMediaOptionsStore } from '../../src/stores/media/options';
 import { useMediaStateStore, MediaState } from '../../src/stores/media/state';
 import { useSettingsStore } from '../../src/stores/settings';
 import { useWatchClipboardStore } from '../../src/stores/watchClipboard';
+import { useLoginStore } from '../../src/stores/login';
+import type { LoginUsing } from '../../src/tauri/types/login';
 import { defaultSettings } from '../../src/tauri/types/config';
 import type { EntryItem, MediaAddPayload } from '../../src/tauri/types/media';
 import { TrackType } from '../../src/tauri/types/media';
@@ -167,6 +169,13 @@ describe('media store', () => {
     expect(useMediaStateStore().getState('library:saved')).toBeUndefined();
   });
 
+  it('ignores a destination event for a removed download', () => {
+    installTauriMock({});
+    const store = useMediaStore();
+    store.processMediaDestinationPayload({ id: 'gone-item', groupId: 'gone', destination: { path: '/downloads/gone.mp4', confidence: 100 } });
+    expect(useMediaDestinationStore().getDestinations('gone')).toEqual([]);
+  });
+
   it('keeps durable history when disposing stores for hot reload', async () => {
     const removed: unknown[] = [];
     installTauriMock({
@@ -224,6 +233,15 @@ describe('media store', () => {
     await store.pauseGroup(id);
     store.deleteGroup(id);
     expect(calls).toEqual([{ groupId: id, discardFiles: false }, { groupId: id, discardFiles: true }]);
+  });
+
+  it('drops a waiting login card even when its row is already gone', () => {
+    const login = useLoginStore();
+    login.using['gone-row'] = { groupId: 'gone-row' } as LoginUsing;
+    login.failed['gone-row'] = { groupId: 'gone-row', host: 'x.com', reason: 'exhausted' };
+    useMediaStore().deleteGroup('gone-row');
+    expect(login.using['gone-row']).toBeUndefined();
+    expect(login.failed['gone-row']).toBeUndefined();
   });
 
   it.each(['image', 'file'] as const)('keeps %s routing when prepared metadata has no attachment manifest', async (mediaKind) => {
@@ -551,13 +569,13 @@ describe('media store', () => {
       items: [{ id: 'capture-1', url: item.url, mediaKind: 'carousel', attachmentIds: ['photo-1', 'photo-2'] }],
     });
     expect(useMediaStateStore().getState('capture-1')).toBe(MediaState.downloading);
-    expect(useWatchClipboardStore().isActive).toBe(true);
+    expect(useWatchClipboardStore().enabled).toBe(true);
   });
 
   it.each([
     ['small', 720, 'both'],
     ['audio', undefined, 'audio'],
-  ] as const)('starts a captured video with the quick pick %s once it is read', async (choice, height, trackType) => {
+  ] as const)('starts a captured video with the quick pick %s once it is read', async (kind, height, trackType) => {
     const writes: unknown[] = [];
     installTauriMock({
       media_info: () => { throw new Error('must reuse prepared metadata'); },
@@ -574,7 +592,7 @@ describe('media store', () => {
       formats: [fmt('v1080', 1080), fmt('v720', 720), fmt('v480', 480), { id: 'a', abr: 128, audioCodecs: [], videoCodecs: [] }],
     };
     const id = await media.dispatchMediaInfoFetch(item.url, true, true, item);
-    await media.downloadPreparedGroup(id, choice);
+    await media.downloadPreparedGroup(id, { kind });
     expect(writes).toHaveLength(1);
     const sent = JSON.stringify(writes[0]);
     expect(sent).toContain(`"trackType":"${trackType}"`);

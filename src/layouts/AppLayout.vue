@@ -1,7 +1,7 @@
 <template>
   <config-provider :dir="dir">
     <tooltip-provider :delay-duration="500">
-      <a href="#nz-main" class="nz-skip">{{ t('shell.skipToContent') }}</a>
+      <a :href="`#${MAIN_PANE_ID}`" class="nz-skip">{{ t('shell.skipToContent') }}</a>
       <div class="relative flex h-full min-h-0 bg-background text-[13px] text-foreground" :class="dir === 'rtl' && 'text-[14px]'">
         <app-sidebar :collapsed="collapsed" :can-toggle="!narrowWindow" :inert="overlayOpen || undefined" @toggle="toggleSidebar" />
         <!-- macOS (LTR): the toggle sits in the title strip right after the traffic lights and stays put when the
@@ -12,7 +12,7 @@
 
         <div class="flex min-w-0 flex-1 flex-col" :inert="overlayOpen || undefined">
           <app-toolbar ref="toolbar" :lights-inset="lightsInset" :show-toggle="!toggleInStrip && !narrowWindow" :collapsed="collapsed" @toggle-sidebar="toggleSidebar" />
-          <main id="nz-main" class="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden outline-none" tabindex="-1">
+          <main :id="MAIN_PANE_ID" class="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden outline-none" tabindex="-1">
             <router-view :key="$route.matched[1]?.path ?? $route.fullPath" />
             <the-updater />
             <Transition name="nz-drop">
@@ -64,9 +64,10 @@ import { useDownloadSheetStore } from '../stores/downloadSheet';
 import { useUiPrefs } from '../composables/useUiPrefs';
 import { usePlatform } from '../composables/usePlatform';
 import { localeDirection } from '../i18n';
-import { eventAccelerator, sameShortcut } from '../helpers/shortcut';
+import { builtInKeyOf, eventAccelerator, IN_APP_ACTIONS, sameShortcut } from '../helpers/shortcut';
 import { runShortcutAction } from '../tauri/listeners/shortcuts';
 import { paneScrollTop } from '../helpers/paneScroll';
+import { MAIN_PANE_ID } from '../helpers/domIds';
 
 const { t, locale } = useI18n();
 const route = useRoute();
@@ -128,13 +129,14 @@ function onKey(event: KeyboardEvent) {
   const mod = event.metaKey || event.ctrlKey;
   const target = event.target as HTMLElement | null;
   const typing = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
-  if (mod && !event.shiftKey && !event.altKey && (event.key === '\\' || event.key.toLowerCase() === 'b')) {
+  const builtIn = builtInKeyOf(event);
+  if (builtIn === 'sidebar') {
     event.preventDefault();
     toggleSidebar();
-  } else if (mod && event.key === ',') {
+  } else if (builtIn === 'settings') {
     event.preventDefault();
     void router.push({ name: 'settings.general' });
-  } else if (mod && event.key.toLowerCase() === 'v' && !typing) {
+  } else if (builtIn === 'paste' && !typing) {
     // A paste dispatched to the old target need not follow a keydown focus change.
     event.preventDefault();
     void toolbar.value?.pasteField();
@@ -146,18 +148,19 @@ function onKey(event: KeyboardEvent) {
     // In-app queue shortcuts (Settings > Keyboard shortcuts), only while Nezzel is focused.
     const pressed = eventAccelerator(event, isMac.value);
     if (!pressed) return;
-    if (inAppShortcuts.downloadAll.value && sameShortcut(pressed, inAppShortcuts.downloadAll.value)) {
-      event.preventDefault();
-      void runShortcutAction('download_all');
-    } else if (inAppShortcuts.addAndDownload.value && sameShortcut(pressed, inAppShortcuts.addAndDownload.value)) {
-      event.preventDefault();
-      void runShortcutAction('media_add_and_download');
+    for (const name of Object.keys(IN_APP_ACTIONS) as (keyof typeof IN_APP_ACTIONS)[]) {
+      const bound = inAppShortcuts[name].value;
+      if (bound && sameShortcut(pressed, bound)) {
+        event.preventDefault();
+        void runShortcutAction(IN_APP_ACTIONS[name]);
+        break;
+      }
     }
   }
 }
 /** Scroll keys pressed outside the content pane still scroll it (Settings was unreachable by keyboard on Linux). */
 function scrollPaneByKey(event: KeyboardEvent, target: HTMLElement | null) {
-  const pane = document.getElementById('nz-main');
+  const pane = document.getElementById(MAIN_PANE_ID);
   if (!pane) return;
   const onPage = !target || target === document.body || target === document.documentElement;
   const native = !onPage && (pane.contains(target) || !!target.closest('[role=dialog],[role=menu],[role=listbox],[role=slider],[role=radiogroup],[role=tablist]'));

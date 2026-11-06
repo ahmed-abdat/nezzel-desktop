@@ -27,7 +27,7 @@
 
 <script setup lang="ts">
 import Tooltip from '../ui/tooltip/Tooltip.vue';
-import { computed, ref, type Ref, nextTick } from 'vue';
+import { computed, ref, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { X } from '@lucide/vue';
@@ -36,9 +36,10 @@ import type { Group } from '../../tauri/types/group';
 import { useMediaStateStore, MediaState } from '../../stores/media/state';
 import { useMediaDestinationStore } from '../../stores/media/destination';
 import { useToastStore } from '../../stores/toast';
-import { useDownloadList } from '../../composables/useDownloadList';
-import { isTrashRefused, useDownloadActions } from '../../composables/useDownloadActions';
-import { phaseOf } from '../../composables/useDownloadRow';
+import { useListRemoval } from '../../composables/useListRemoval';
+import { isTrashRefused, trashBinKind, trashGroupFile, useGroupActions } from '../../composables/useDownloadActions';
+import { LIST_SEARCH_ID, ROW_SELECTOR } from '../../helpers/domIds';
+import { phaseOf } from '../../helpers/groupView';
 import { useDownloadSelection } from '../../composables/useDownloadSelection';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import { batchTargets } from '../../helpers/selection';
@@ -51,7 +52,7 @@ const { count, total, selectAll, clear } = useDownloadSelection();
 const stateStore = useMediaStateStore();
 const destinationStore = useMediaDestinationStore();
 const toastStore = useToastStore();
-const { removeRows } = useDownloadList();
+const { removeRows } = useListRemoval();
 const busy = ref(false);
 
 const targets = computed(() => batchTargets(props.groups.map(group => ({
@@ -61,22 +62,17 @@ const targets = computed(() => batchTargets(props.groups.map(group => ({
   hasFile: !!destinationStore.getPrimaryDestination(group.id)?.path && !isTrashRefused(group.id),
 }))));
 
-/** The per-row actions read their group from this ref; each batch step points it at the next row first. */
-const current = ref(props.groups[0]) as Ref<Group>;
-const actions = useDownloadActions(current, { reportErrors: false });
+const actions = useGroupActions({ reportErrors: false });
 
 function forIds(ids: string[]): Group[] {
   const wanted = new Set(ids);
   return props.groups.filter(group => wanted.has(group.id));
 }
-async function batch(ids: string[], run: () => Promise<boolean>, message: string) {
+async function batch(ids: string[], run: (group: Group) => Promise<boolean>, message: string) {
   if (busy.value) return;
   busy.value = true;
   try {
-    const results = await Promise.allSettled(forIds(ids).map((group) => {
-      current.value = group;
-      return run();
-    }));
+    const results = await Promise.allSettled(forIds(ids).map(run));
     const succeeded = results.filter(result => result.status === 'fulfilled' && result.value).length;
     const failed = results.length - succeeded;
     if (succeeded) toastStore.showToast(t(message, { n: countLabel(succeeded) }), { style: 'success' });
@@ -84,13 +80,13 @@ async function batch(ids: string[], run: () => Promise<boolean>, message: string
   } finally { busy.value = false; }
 }
 
-const downloadAll = () => batch(targets.value.download, actions.download, 'feedback.started');
-const resumeAll = () => batch(targets.value.resume, actions.download, 'feedback.started');
-const pauseAll = () => batch(targets.value.pause, actions.pause, 'feedback.paused');
-const retryAll = () => batch(targets.value.retry, actions.retry, 'feedback.retrying');
+const downloadAll = () => batch(targets.value.download, actions.downloadGroup, 'feedback.started');
+const resumeAll = () => batch(targets.value.resume, actions.downloadGroup, 'feedback.started');
+const pauseAll = () => batch(targets.value.pause, actions.pauseGroup, 'feedback.paused');
+const retryAll = () => batch(targets.value.retry, actions.retryGroup, 'feedback.retrying');
 /** The bar (and the button that had focus) unmounts with the selection: keep the keyboard in the list. */
 function refocusList() {
-  void nextTick(() => (document.querySelector<HTMLElement>('li.row') ?? document.getElementById('list-search'))?.focus());
+  void nextTick(() => (document.querySelector<HTMLElement>(ROW_SELECTOR) ?? document.getElementById(LIST_SEARCH_ID))?.focus());
 }
 
 function removeAll() {
@@ -103,7 +99,7 @@ function removeAll() {
 async function deleteAll() {
   const ids = targets.value.deleteFiles;
   const n = ids.length;
-  const bin = /windows/i.test(navigator.userAgent) ? 'recycleBin' : 'trash';
+  const bin = trashBinKind();
   const ok = await confirm(t(`downloads.selection.deleteConfirm.body.${bin}`, { n: countLabel(n) }, n), {
     title: t('downloads.selection.deleteConfirm.title', { n: countLabel(n) }, n),
     kind: 'warning',
@@ -113,8 +109,7 @@ async function deleteAll() {
   if (!ok) return;
   let failed = 0;
   for (const group of forIds(ids)) {
-    current.value = group;
-    const result = await actions.trashFile();
+    const result = await trashGroupFile(group.id, destinationStore.getPrimaryDestination(group.id)?.path);
     if (result !== 'ok' && result !== 'missing') failed += 1;
   }
   if (failed) toastStore.showToast(t('downloads.selection.deleteSomeFailed', { n: countLabel(failed) }, failed), { style: 'error' });

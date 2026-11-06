@@ -2,32 +2,21 @@ import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from './App.vue';
 import router from './router';
-import { clearMocks } from '@tauri-apps/api/mocks';
-import { installTauriMock } from '../tests/utils/tauriMock';
 import tauriListeners from './plugins/tauriListeners';
 import { useSettingsStore } from './stores/settings';
-import { applyTheme } from './composables/useTheme';
-import { mediaHandlers } from '../tests/utils/mocks/mediaHandlers';
-import { configHandlers } from '../tests/utils/mocks/configHandlers';
-import { binaryHandlers } from '../tests/utils/mocks/binaryHandlers';
-import { updateHandlers } from '../tests/utils/mocks/updateHandlers';
+import { applyAppearance } from './appearance';
 import { invoke } from '@tauri-apps/api/core';
-import { strongholdHandlers } from '../tests/utils/mocks/strongholdHandlers';
-import { onboardingHandlers } from '../tests/utils/mocks/onboardingHandlers';
-import { diagnosticsHandlers } from '../tests/utils/mocks/diagnosticsHandlers';
 import { installErrorLog } from './tauri/errorLog';
-import { applyDocumentLocale, getDefaultLocale, i18n, type Locale } from './i18n';
-import { createSentryPiniaPlugin } from '@sentry/vue';
-import { createSentry } from './sentry.ts';
+import { i18n } from './i18n';
 import { startWindowWatcher } from './tauri/window.ts';
 import { usePreferencesStore } from './stores/preferences.ts';
 import { useMediaStore } from './stores/media/media.ts';
-import { registerCaptureListeners } from './tauri/listeners/shortcuts';
+import { startCaptureDelivery } from './tauri/listeners/capture';
+import { watchTrayProgress } from './tauri/listeners/trayProgress';
 import { useOnboardingStore } from './stores/onboarding';
 
-export function mountMainWindow() {
+export async function mountMainWindow() {
   const pinia = createPinia();
-  pinia.use(createSentryPiniaPlugin({ attachPiniaState: false, stateTransformer: () => null }));
   const app = createApp(App);
 
   if (import.meta.env.DEV) {
@@ -42,22 +31,10 @@ export function mountMainWindow() {
     };
   }
 
-  // Before Sentry, which wraps whatever errorHandler is already set.
+  // Frontend errors go to Rust (diagnostics_log), where the scrubber and the reports switch apply.
   installErrorLog(app);
-  createSentry(app);
 
-  if (__E2E__) {
-    clearMocks();
-    installTauriMock({
-      ...mediaHandlers,
-      ...configHandlers,
-      ...binaryHandlers,
-      ...updateHandlers,
-      ...strongholdHandlers,
-      ...onboardingHandlers,
-      ...diagnosticsHandlers,
-    });
-  }
+  if (__E2E__) (await import('../tests/utils/mocks/mainWindowMocks')).installMainWindowMocks();
 
   app.use(i18n);
   app.use(router);
@@ -79,7 +56,8 @@ export function mountMainWindow() {
   }).finally(() => {
     if (!__E2E__) {
       startWindowWatcher();
-      void registerCaptureListeners();
+      watchTrayProgress();
+      void startCaptureDelivery();
       shareMotionPreference();
     }
     app.mount('#app');
@@ -120,16 +98,7 @@ export function mountMainWindow() {
 
     try {
       const settings = await settingsStore.load();
-      if (settings.appearance.theme !== 'system') {
-        applyTheme(settings.appearance.theme);
-      }
-
-      const currentLocale: Locale = settings.appearance.language === 'system'
-        ? getDefaultLocale()
-        : settings.appearance.language as Locale;
-
-      i18n.global.locale.value = currentLocale;
-      applyDocumentLocale(currentLocale);
+      applyAppearance(settings.appearance);
     } catch (e) {
       console.error(`Unable to load settings: ${e}`);
     }

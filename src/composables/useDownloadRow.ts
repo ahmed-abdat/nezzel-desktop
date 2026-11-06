@@ -10,26 +10,10 @@ import { formatDuration } from '../helpers/units';
 import { qualityLabel } from '../helpers/formats';
 import { capitalizeFirstLetter } from '../helpers/progress';
 import { choiceForOptions } from '../helpers/quickChoice';
-import { savedAttachments } from '../helpers/mediaKind';
+import { groupFileKind, groupSite, phaseOf, savedAttachments, type Phase } from '../helpers/groupView';
 import { useLocaleNumber } from './useLocaleNumber';
-import { siteName } from '../helpers/siteName';
-import { fileCategory } from '../helpers/fileCategory';
 import type { Group } from '../tauri/types/group';
-
-export type RowPhase = 'reading' | 'playlist' | 'ready' | 'downloading' | 'paused' | 'done' | 'error';
-
-const phaseByState: Record<MediaState, RowPhase> = {
-  [MediaState.fetching]: 'reading',
-  [MediaState.fetchingList]: 'reading',
-  [MediaState.playlistSelection]: 'playlist',
-  [MediaState.configure]: 'ready',
-  [MediaState.downloading]: 'downloading',
-  [MediaState.downloadingList]: 'downloading',
-  [MediaState.paused]: 'paused',
-  [MediaState.pausedList]: 'paused',
-  [MediaState.done]: 'done',
-  [MediaState.error]: 'error',
-};
+import { LOGIN_CODES } from '@/generated/contract';
 
 /** After this long a row says it is still reading; after the second, it offers Retry. */
 export const READING_SLOW_SECS = 8;
@@ -53,8 +37,6 @@ function releaseClock() {
   clockTimer = undefined;
 }
 
-export const phaseOf = (state: MediaState): RowPhase => phaseByState[state];
-
 /** Display model for one download row: phase, progress, meta line and the login hint. */
 export function useDownloadRow(group: Ref<Group>) {
   const i18n = useI18n();
@@ -67,13 +49,10 @@ export function useDownloadRow(group: Ref<Group>) {
   const destinationStore = useMediaDestinationStore();
 
   const state = computed(() => stateStore.getGroupState(group.value.id) ?? MediaState.fetching);
-  const phase = computed<RowPhase>(() => phaseByState[state.value]);
+  const phase = computed<Phase>(() => phaseOf(state.value));
   const isList = computed(() => group.value.isCombined || state.value === MediaState.downloadingList || state.value === MediaState.pausedList);
 
-  const site = computed(() => siteName(
-    group.value.extractor ?? group.value.items[Object.keys(group.value.items)[0]]?.extractor,
-    group.value.url,
-  ));
+  const site = computed(() => groupSite(group.value));
 
   const single = computed(() => progressStore.findDownloadProgress(group.value.id));
   const list = computed(() => (isList.value ? progressStore.findGroupProgress(group.value.id) : undefined));
@@ -115,7 +94,7 @@ export function useDownloadRow(group: Ref<Group>) {
   });
   const destination = computed(() => destinationStore.getPrimaryDestination(group.value.id)?.path);
   /** Category of a file download: from the saved file when it exists, else the link's title. */
-  const fileKind = computed(() => (group.value.mediaKind === 'file' ? fileCategory(destination.value ?? group.value.title ?? group.value.url) : undefined));
+  const fileKind = computed(() => groupFileKind(group.value, destination.value));
   const choiceLabel = computed(() => {
     if (fileKind.value) {
       const category = t(`files.category.${fileKind.value}`);
@@ -201,7 +180,7 @@ export function useDownloadRow(group: Ref<Group>) {
 
   const lastDiagnostic = computed(() => diagnosticsStore.findLastDiagnosticByGroupId(group.value.id));
   const lastFatal = computed(() => diagnosticsStore.findLastFatalByGroupId(group.value.id));
-  const needsLogin = computed(() => phase.value === 'error' && (lastDiagnostic.value?.code ?? '').includes('signIn'));
+  const needsLogin = computed(() => phase.value === 'error' && (LOGIN_CODES as readonly string[]).includes(lastDiagnostic.value?.code ?? ''));
 
   return { state, phase, isList, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, choice, fileKind, readingStuck, processing };
 }

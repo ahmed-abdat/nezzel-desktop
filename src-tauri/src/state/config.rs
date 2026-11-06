@@ -5,7 +5,8 @@ use crate::state::json_handle::JsonStoreHandle;
 use crate::state::json_state::JsonBackedState;
 use crate::tray::{create_tray_for, destroy_tray};
 use crate::{DownloadLimiter, FetchLimiter};
-use tauri::{AppHandle, Manager, Wry};
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager, Runtime, Wry};
 use tauri_plugin_autostart::ManagerExt;
 
 impl JsonBackedState for Config {
@@ -33,6 +34,7 @@ impl JsonBackedState for Config {
   }
 
   fn on_updated(app: &AppHandle<Wry>, new_value: &Self) {
+    notify(app, new_value);
     if let Some(limiter) = app.try_state::<DownloadLimiter>() {
       let limiter = limiter.0.clone();
       let max = new_value.performance.max_concurrency;
@@ -96,5 +98,105 @@ impl JsonBackedState for Config {
 
 pub type ConfigHandle = JsonStoreHandle<Config>;
 
+/// Told about every new config synchronously, before the snapshot swap: before any reader can see it.
+pub type ConfigListener<R> = fn(&AppHandle<R>, &Config);
+
+struct ConfigListeners<R: Runtime>(Mutex<Vec<ConfigListener<R>>>);
+
+/// A module that must act before other readers see a change (usage's on/off flag) registers here at setup, so
+/// config does not need to know who listens.
+pub fn listen<R: Runtime>(app: &AppHandle<R>, listener: ConfigListener<R>) {
+  // A no-op when already managed.
+  app.manage(ConfigListeners::<R>(Mutex::new(Vec::new())));
+  if let Ok(mut listeners) = app.state::<ConfigListeners<R>>().0.lock() {
+    listeners.push(listener);
+  }
+}
+
+fn notify<R: Runtime>(app: &AppHandle<R>, config: &Config) {
+  // Copied out first: a listener may write the config again without deadlocking here.
+  let listeners: Vec<ConfigListener<R>> = app
+    .try_state::<ConfigListeners<R>>()
+    .and_then(|listeners| listeners.0.lock().ok().map(|list| list.clone()))
+    .unwrap_or_default();
+  for listener in listeners {
+    listener(app, config);
+  }
+}
+
 #[cfg(test)]
 pub(crate) type TestConfigHandle = JsonStoreHandle<Config, tauri::test::MockRuntime>;
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+
+  #[test]
+  fn listeners_hear_every_change_in_order() {
+    static SEEN: AtomicUsize = AtomicUsize::new(0);
+    let app = tauri::test::mock_app();
+    let handle = app.handle();
+    notify(handle, &Config::default());
+    listen(handle, |_, config| {
+      assert!(config.privacy.send_usage);
+      assert_eq!(SEEN.fetch_add(1, Ordering::SeqCst) % 2, 0);
+    });
+    listen(handle, |_, _| {
+      assert_eq!(SEEN.fetch_add(1, Ordering::SeqCst) % 2, 1);
+    });
+    notify(handle, &Config::default());
+    notify(handle, &Config::default());
+    assert_eq!(SEEN.load(Ordering::SeqCst), 4);
+  }
+}
+
+#[cfg(test)]
+mod lenient_tests {
+  use super::*;
+  use serde_json::json;
+
+  #[test]
+  fn lenient_resets_only_the_bad_nested_field() {
+    let raw = json!({ "performance": { "maxConcurrency": 997, "autoLoadSize": "maybe" } });
+    assert!(Config::materialize(&raw).is_err());
+    let cfg = Config::materialize_lenient(&raw);
+    assert_eq!(cfg.performance.max_concurrency, 997);
+    assert_eq!(
+      cfg.performance.auto_load_size,
+      Config::default().performance.auto_load_size
+    );
+  }
+
+  #[test]
+  fn lenient_resets_an_unknown_enum_string() {
+    let raw = json!({ "system": { "closeBehavior": "vanish", "trayEnabled": false } });
+    let cfg = Config::materialize_lenient(&raw);
+    assert!(!cfg.system.tray_enabled);
+  }
+
+  #[test]
+  fn lenient_keeps_siblings_of_a_bad_leaf_in_output_video() {
+    let raw =
+      json!({ "output": { "video": { "container": "not-a-container", "postprocessArgs": "-x" } } });
+    assert!(Config::materialize(&raw).is_err());
+    let cfg = Config::materialize_lenient(&raw);
+    assert_eq!(cfg.output.video.postprocess_args, "-x");
+    assert_eq!(
+      serde_json::to_value(cfg.output.video.container).unwrap(),
+      serde_json::to_value(Config::default().output.video.container).unwrap()
+    );
+  }
+
+  #[test]
+  fn lenient_keeps_valid_list_entries_when_one_is_bad() {
+    let raw = json!({ "notifications": { "disabledNotifications": ["queueAdded", "bogus", "videoReady"] } });
+    assert!(Config::materialize(&raw).is_err());
+    let cfg = Config::materialize_lenient(&raw);
+    let kept = serde_json::to_value(&cfg.notifications).unwrap();
+    assert_eq!(
+      kept["disabledNotifications"],
+      json!(["queueAdded", "videoReady"])
+    );
+  }
+}

@@ -1,5 +1,6 @@
 import { expect, Page } from '@playwright/test';
 import { test } from './utils/fixtures';
+import { ROW_SELECTOR } from '../../src/helpers/domIds';
 
 async function addPlaylistAndApply(page: Page, url: string) {
   await page.goto('/');
@@ -10,7 +11,7 @@ async function addPlaylistAndApply(page: Page, url: string) {
 
 test('it consolidates large playlists into a single group', async ({ page }) => {
   await addPlaylistAndApply(page, 'https://example.com/playlist-large');
-  const cards = page.locator('li.row');
+  const cards = page.locator(ROW_SELECTOR);
   await expect(cards).toHaveCount(1);
   await expect(cards.getByText('Playlist')).toBeVisible();
 });

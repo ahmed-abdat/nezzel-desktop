@@ -1,10 +1,10 @@
 import { reactive, readonly } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import type { LinuxDesktop } from '../components/welcome/desktopOs';
+import type { CaptureSession, LinuxDesktop } from '@/generated/contract';
 
 /** Desktop session facts the capture copy depends on (see the backend's CapturePlatform). */
 export interface CapturePlatform {
-  session: 'x11' | 'wayland' | 'other';
+  session: CaptureSession;
   /** A copy in another app raises the card while Nezzel is in the background. False on GNOME Wayland. */
   backgroundClipboard: boolean;
   /** Whose tray words the copy uses (Linux). */

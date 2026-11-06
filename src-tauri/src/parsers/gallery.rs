@@ -78,8 +78,7 @@ pub fn tiktok_photo_candidate(source: &str, info: &Value) -> bool {
   let Ok(url) = reqwest::Url::parse(source) else {
     return false;
   };
-  let host = url.host_str().unwrap_or_default();
-  if !(host == "tiktok.com" || host.ends_with(".tiktok.com"))
+  if crate::sites::site_of(url.host_str().unwrap_or_default()) != Some(crate::sites::SiteId::TikTok)
     || !url.path().contains("/video/")
     || info.get("entries").is_some()
   {
@@ -99,10 +98,7 @@ pub fn gallery_deadline(items: usize) -> std::time::Duration {
 }
 
 pub fn image_extension(ext: &str) -> bool {
-  matches!(
-    ext.to_ascii_lowercase().as_str(),
-    "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "heic" | "bmp"
-  )
+  crate::media_types::ext_in(crate::media_types::IMAGE_EXTS, ext)
 }
 
 pub fn failure(message: &str) -> GalleryError {
@@ -248,10 +244,8 @@ fn asset(
   let imgur_identity = imgur_media_identity(source, &url);
   let kind = if !delegated && image_extension(&ext) {
     AttachmentKind::Image
-  } else if matches!(
-    ext.as_str(),
-    "mp4" | "webm" | "mov" | "m4v" | "mkv" | "m3u8"
-  ) || (imgur_identity.is_some() && ext == "gifv")
+  } else if crate::media_types::ext_in(crate::media_types::GALLERY_VIDEO_EXTS, &ext)
+    || (imgur_identity.is_some() && ext == "gifv")
   {
     AttachmentKind::Video
   } else {

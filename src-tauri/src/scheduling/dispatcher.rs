@@ -167,8 +167,8 @@ mod tests {
   use std::sync::atomic::{AtomicUsize, Ordering};
   use std::sync::Arc;
   use tauri::test::mock_app;
-  use tokio::sync::{Mutex, Notify};
-  use tokio::time::{sleep, timeout, Duration};
+  use tokio::sync::{Mutex, Notify, Semaphore};
+  use tokio::time::{timeout, Duration};
 
   #[derive(Clone)]
   struct TestEntry {
@@ -186,6 +186,16 @@ mod tests {
     fn set_numbering(&mut self, _autonumber: u64, _group_autonumber: Option<u64>) {}
   }
 
+  /// Waits for the next job event; the timeout only guards against a hang, it asserts no speed.
+  async fn next_event(events: &mut mpsc::UnboundedReceiver<bool>) -> bool {
+    timeout(Duration::from_secs(30), events.recv())
+      .await
+      .expect("dispatcher stalled")
+      .expect("job events closed")
+  }
+
+  /// Jobs hold until the test releases them one at a time (no real sleeps): each round waits until
+  /// every free slot is taken, so the peak is reached however slow the machine is.
   async fn run_concurrency_test(max_concurrency: usize, total: usize) -> usize {
     let app = mock_app();
     let group_id = "test-group".to_string();
@@ -194,13 +204,13 @@ mod tests {
     let sem = Arc::new(DynamicSemaphore::new(max_concurrency));
     let current = Arc::new(AtomicUsize::new(0));
     let max_seen = Arc::new(AtomicUsize::new(0));
-    let completed = Arc::new(AtomicUsize::new(0));
-    let done = Arc::new(Notify::new());
+    let release = Arc::new(Semaphore::new(0));
+    // true = a job started, false = a job finished.
+    let (events_tx, mut events) = mpsc::unbounded_channel::<bool>();
 
     let current_job = current.clone();
     let max_job = max_seen.clone();
-    let completed_job = completed.clone();
-    let done_job = done.clone();
+    let release_job = release.clone();
 
     let dispatcher = GenericDispatcher::start(
       app.handle().clone(),
@@ -219,31 +229,16 @@ mod tests {
       move |_tx, _app, _entry: TestEntry| {
         let current_job = current_job.clone();
         let max_job = max_job.clone();
-        let completed_job = completed_job.clone();
-        let done_job = done_job.clone();
+        let release_job = release_job.clone();
+        let events_tx = events_tx.clone();
         async move {
           let in_flight = current_job.fetch_add(1, Ordering::SeqCst) + 1;
-          loop {
-            let prev_max = max_job.load(Ordering::SeqCst);
-            if in_flight > prev_max {
-              if max_job
-                .compare_exchange(prev_max, in_flight, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-              {
-                break;
-              }
-            } else {
-              break;
-            }
-          }
+          max_job.fetch_max(in_flight, Ordering::SeqCst);
+          let _ = events_tx.send(true);
 
-          sleep(Duration::from_millis(30)).await;
+          release_job.acquire().await.expect("release gate").forget();
           current_job.fetch_sub(1, Ordering::SeqCst);
-
-          let done_count = completed_job.fetch_add(1, Ordering::SeqCst) + 1;
-          if done_count == total {
-            done_job.notify_one();
-          }
+          let _ = events_tx.send(false);
         }
       },
     );
@@ -253,9 +248,24 @@ mod tests {
       .send(DispatchRequest::Pipeline(total))
       .unwrap();
 
-    timeout(Duration::from_secs(5), done.notified())
-      .await
-      .expect("dispatcher did not complete within timeout");
+    let (mut running, mut finished) = (0, 0);
+    while finished < total {
+      while running < max_concurrency.min(total - finished) {
+        if next_event(&mut events).await {
+          running += 1;
+        }
+      }
+      release.add_permits(1);
+      loop {
+        if next_event(&mut events).await {
+          running += 1;
+        } else {
+          running -= 1;
+          finished += 1;
+          break;
+        }
+      }
+    }
 
     max_seen.load(Ordering::SeqCst)
   }
@@ -281,6 +291,8 @@ mod tests {
     ensure_group_running(&group_b);
 
     let sem = Arc::new(DynamicSemaphore::new(1));
+    // Hold the only permit until both groups are sent, so the first pick sees both (no real sleeps).
+    let held = sem.acquire_owned().await;
     let started: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let done = Arc::new(Notify::new());
     let total = 4usize;
@@ -313,7 +325,6 @@ mod tests {
             let mut guard = started_job.lock().await;
             guard.push(entry.group_id.clone());
           }
-          sleep(Duration::from_millis(10)).await;
           let done_count = completed_job.fetch_add(1, Ordering::SeqCst) + 1;
           if done_count == total {
             done_job.notify_one();
@@ -330,8 +341,9 @@ mod tests {
       .sender()
       .send(DispatchRequest::Pipeline((group_b.clone(), 2)))
       .unwrap();
+    drop(held);
 
-    timeout(Duration::from_secs(5), done.notified())
+    timeout(Duration::from_secs(30), done.notified())
       .await
       .expect("dispatcher did not complete within timeout");
 
@@ -355,12 +367,14 @@ mod tests {
     let total = 4usize;
     let gate = Arc::new(Notify::new());
     let gate_open = Arc::new(AtomicUsize::new(0));
+    let first_started = Arc::new(Notify::new());
 
     let started_job = started.clone();
     let done_job = done.clone();
     let completed_job = completed.clone();
     let gate_job = gate.clone();
     let gate_open_job = gate_open.clone();
+    let first_started_job = first_started.clone();
     let group_a_run = group_a.clone();
 
     let dispatcher = GenericDispatcher::start(
@@ -383,6 +397,7 @@ mod tests {
         let completed_job = completed_job.clone();
         let gate_job = gate_job.clone();
         let gate_open_job = gate_open_job.clone();
+        let first_started_job = first_started_job.clone();
         let group_a = group_a_run.clone();
         async move {
           {
@@ -394,10 +409,10 @@ mod tests {
             && entry.index == 0
             && gate_open_job.fetch_add(1, Ordering::SeqCst) == 0
           {
+            first_started_job.notify_one();
             gate_job.notified().await;
           }
 
-          sleep(Duration::from_millis(10)).await;
           let done_count = completed_job.fetch_add(1, Ordering::SeqCst) + 1;
           if done_count == total {
             done_job.notify_one();
@@ -411,16 +426,9 @@ mod tests {
       .send(DispatchRequest::Pipeline((group_a.clone(), 3)))
       .unwrap();
 
-    timeout(Duration::from_secs(5), async {
-      loop {
-        if gate_open.load(Ordering::SeqCst) > 0 {
-          break;
-        }
-        sleep(Duration::from_millis(5)).await;
-      }
-    })
-    .await
-    .expect("first job did not start in time");
+    timeout(Duration::from_secs(30), first_started.notified())
+      .await
+      .expect("first job did not start");
 
     dispatcher
       .sender()
@@ -428,7 +436,7 @@ mod tests {
       .unwrap();
     gate.notify_one();
 
-    timeout(Duration::from_secs(5), done.notified())
+    timeout(Duration::from_secs(30), done.notified())
       .await
       .expect("dispatcher did not complete within timeout");
 

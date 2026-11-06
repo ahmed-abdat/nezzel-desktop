@@ -1,5 +1,6 @@
 use crate::extract::{
-  chain::{remaining_budget, wait_until, Interrupted, StageResult, FETCH_TIMEOUT},
+  chain::StageResult,
+  deadline::{remaining_budget, wait_until, Interrupted, FETCH_TIMEOUT},
   outcome::{Confidence, Outcome, StageId},
 };
 use crate::logging::LogStoreState;
@@ -11,14 +12,14 @@ use crate::parsers::ytdlp_error::{
 use crate::parsers::ytdlp_info::parse_ytdlp_info_for_url;
 use crate::resolve::{self, Reason, Resolution, ResolvedInput};
 use crate::runners::{
-  login::{LoginRequest, LoginSession},
+  login::{CookieRetry, LoginRequest, LoginSession},
   retry_policy::RetryAction,
   ytdlp_runner::YtdlpRunner,
 };
 use crate::scheduling::{fetch_pipeline::FetchEntry, group_state::subscribe_group};
 use std::fmt;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 #[derive(Debug)]
 pub enum YtdlpInfoFetchError {
@@ -120,7 +121,7 @@ async fn run_attempts(
   stage: &mut StageResult,
 ) -> Option<Outcome> {
   let start = Instant::now();
-  let matcher = match DiagnosticMatcher::from_json(include_str!("../diagnostic_rules.json")) {
+  let matcher = match DiagnosticMatcher::shared() {
     Ok(matcher) => matcher,
     Err(error) => {
       stage.record_code("unknown", "", login.uses_cookies(), start);
@@ -251,8 +252,9 @@ async fn run_attempts(
         .iter()
         .filter(|event| matches!(event.level, crate::models::error::DiagnosticLevel::Warning))
       {
-        let _ = app.emit(
-          "media_diagnostic",
+        crate::events::emit(
+          app,
+          crate::events::MEDIA_DIAGNOSTIC,
           MediaDiagnosticPayload::from_diagnostic_event(event.clone()),
         );
       }
@@ -266,13 +268,10 @@ async fn run_attempts(
       if !*cancel.borrow() {
         return Some(Outcome::Cancelled);
       }
-      let retry = tokio::select! {
-        biased;
-        _ = cancel.changed() => return Some(Outcome::Cancelled),
-        retry = login.retry_cookie_fetch(cookie_failure, tokio::time::sleep) => retry,
-      };
-      if retry {
-        continue;
+      match login.retry_cookie_fetch(cookie_failure, &mut cancel).await {
+        CookieRetry::Cancelled => return Some(Outcome::Cancelled),
+        CookieRetry::Retry => continue,
+        CookieRetry::GiveUp => {}
       }
       if input.retry_original(&stderr) {
         continue;
@@ -283,7 +282,7 @@ async fn run_attempts(
         stderr.lines().find_map(|line| parser.login_reason(line))
       };
       if login.fetch_managed()
-        || (!login.uses_cookies() && !crate::extract::chain::youtube_exclusive(&input.url))
+        || (!login.uses_cookies() && !crate::extract::registry::exclusive(&input.url))
       {
         return None;
       }
@@ -437,7 +436,7 @@ pub(super) fn emit_unsupported(app: &AppHandle, group_id: &str, id: &str, reason
     .duration_since(std::time::UNIX_EPOCH)
     .map(|d| d.as_millis())
     .unwrap_or(0);
-  crate::extract::chain::emit_terminal(
+  crate::extract::terminal::emit_terminal(
     app,
     MediaDiagnosticPayload {
       group_id: group_id.into(),

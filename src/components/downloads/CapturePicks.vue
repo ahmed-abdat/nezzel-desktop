@@ -42,14 +42,15 @@
 
 <script setup lang="ts">
 // The quick bar's and copied-link card's download picks (Best / Audio / Smaller). Which picks show is
-// decided by `capturePicks`; this only draws them and moves focus with the arrow keys (RTL-aware).
+// decided by `capturePicks` (helpers/captureChoices); this only draws them and moves focus with the arrow keys (RTL-aware).
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ArrowDownToLine, LoaderCircle, Music } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import Tooltip from '@/components/ui/tooltip/Tooltip.vue';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
-import type { CapturePick, PickKey } from '../../helpers/capturePicks';
+import type { CapturePick, PickKey } from '../../helpers/captureChoices';
+import { SMALL_MAX_HEIGHT } from '@/generated/contract';
 
 const props = defineProps<{ picks: CapturePick[]; disabled: boolean; acting: boolean; compact?: boolean; submit?: boolean }>();
 const emit = defineEmits<{ pick: [key: PickKey] }>();
@@ -65,7 +66,7 @@ function keyOf(key: PickKey) {
   return key === 'best' ? 1 : key === 'audio' ? 2 : 3;
 }
 function label(pick: CapturePick) {
-  return pick.key === 'audio' ? t('capture.audio') : `${pick.height ?? 720}p`;
+  return pick.key === 'audio' ? t('capture.audio') : `${pick.height ?? SMALL_MAX_HEIGHT}p`;
 }
 
 function onArrow(event: KeyboardEvent) {

@@ -11,7 +11,7 @@
           type="number"
           step="1"
           dir="ltr"
-          :class="cn(fieldClass, 'h-7 w-16 text-center tabular-nums', displaySimpleValidationError && 'border-destructive')"
+          class="w-16 text-center tabular-nums"
           :aria-invalid="!!displaySimpleValidationError || undefined"
           :placeholder="t('inputFilters.playlistSelection.fields.startPlaceholder')"
           @blur="simpleTouched = true" />
@@ -22,7 +22,7 @@
           type="number"
           step="1"
           dir="ltr"
-          :class="cn(fieldClass, 'h-7 w-16 text-center tabular-nums', displaySimpleValidationError && 'border-destructive')"
+          class="w-16 text-center tabular-nums"
           :aria-invalid="!!displaySimpleValidationError || undefined"
           :placeholder="endPlaceholder"
           @blur="simpleTouched = true" />
@@ -58,8 +58,6 @@ import { useI18n } from 'vue-i18n';
 import PlaylistSelectionModal from './PlaylistSelectionModal.vue';
 import { Loader2 } from '@lucide/vue';
 import { Button } from '../../ui/button';
-import { fieldClass } from '../../settings/fieldClass';
-import { cn } from 'cn';
 import { useMediaStore } from '../../../stores/media/media.ts';
 import { useToastStore } from '../../../stores/toast.ts';
 import type { Group } from '../../../tauri/types/group.ts';

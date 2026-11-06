@@ -1,9 +1,13 @@
 //! Automatic reports to our own Sentry project (DSN from `NEZZEL_SENTRY_DSN` at build time;
 //! unset means the client is disabled and nothing leaves the app). On by default, switch in
-//! Settings and on the welcome screen. Only events built here are sent: every free-form text
-//! is scrubbed first, and `before_send` drops anything else (no breadcrumbs, host name or user).
+//! Settings and on the welcome screen. Only events built here are sent, and they carry only [`EventText`]:
+//! scrubbed text, tokens, the reduced link or a built [`Report`] (a compile error otherwise), and `before_send`
+//! drops anything else (no breadcrumbs, host name or user
+//! fields; the user carries only a placeholder IP so Sentry can't infer a city, #39).
 
-use super::report::{self, DownloadContext};
+use super::link::SiteToken;
+use super::redact::ScrubbedText;
+use super::report::{CodeToken, DownloadContext, ExtractorToken, Report};
 use crate::SharedConfig;
 use sentry::protocol::{Attachment, Event, Level};
 use std::borrow::Cow;
@@ -60,7 +64,14 @@ fn strip_event(mut event: Event<'static>) -> Option<Event<'static>> {
     return None;
   }
   event.server_name = None;
-  event.user = None;
+  // Not `None`: with no user IP, Sentry looks up the connection's IP and stores the city
+  // (`user.geo`, #39). An unroutable placeholder stops that lookup; IP storage is off server side.
+  event.user = Some(sentry::User {
+    ip_address: Some(sentry::protocol::IpAddress::Exact(
+      std::net::Ipv4Addr::UNSPECIFIED.into(),
+    )),
+    ..Default::default()
+  });
   event.request = None;
   event.breadcrumbs = Default::default();
   event.modules = Default::default();
@@ -97,134 +108,428 @@ fn admit(key: String) -> bool {
   true
 }
 
-struct Outgoing<'a> {
-  source: &'static str,
-  level: Level,
-  message: String,
-  tags: Vec<(&'static str, String)>,
-  fingerprint: Vec<String>,
-  body: &'a str,
+/// Text an event may carry. Built only from the types below (private field), so an unscrubbed `String`
+/// can't become a message, tag, fingerprint or attachment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EventText(String);
+
+impl EventText {
+  fn title(report: &Report) -> Self {
+    Self(report.title().to_string())
+  }
+
+  fn body(report: &Report) -> Self {
+    Self(report.body().to_string())
+  }
+
+  fn join<const N: usize>(parts: [EventText; N]) -> Self {
+    Self(parts.into_iter().map(|part| part.0).collect())
+  }
+
+  /// The first line, at most `max` characters.
+  fn first_line(self, max: usize) -> Self {
+    Self(
+      self
+        .0
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .take(max)
+        .collect(),
+    )
+  }
 }
 
-fn capture(out: Outgoing<'_>) -> sentry::types::Uuid {
+impl From<&'static str> for EventText {
+  fn from(label: &'static str) -> Self {
+    Self(label.into())
+  }
+}
+
+macro_rules! event_text_from {
+  ($($safe:ty),*) => {$(
+    impl From<&$safe> for EventText {
+      fn from(value: &$safe) -> Self {
+        Self(value.as_str().to_string())
+      }
+    }
+  )*};
+}
+
+event_text_from!(ScrubbedText, CodeToken, ExtractorToken, SiteToken);
+
+struct Outgoing {
+  source: &'static str,
+  level: Level,
+  /// Cut to its first line, 200 characters.
+  message: EventText,
+  tags: Vec<(&'static str, EventText)>,
+  fingerprint: Vec<EventText>,
+  body: EventText,
+}
+
+/// The event and its `report.txt`, exactly as they leave the app.
+fn event(out: Outgoing) -> (Event<'static>, Attachment) {
   let mut event = Event {
     level: out.level,
-    message: Some(out.message),
+    message: Some(out.message.first_line(200).0),
     ..Event::default()
   };
   event.tags.insert(SOURCE_TAG.into(), out.source.into());
   for (key, value) in out.tags {
-    event.tags.insert(key.into(), value);
+    event.tags.insert(key.into(), value.0);
   }
   if !out.fingerprint.is_empty() {
-    event.fingerprint = Cow::Owned(out.fingerprint.into_iter().map(Cow::Owned).collect());
+    event.fingerprint = Cow::Owned(
+      out
+        .fingerprint
+        .into_iter()
+        .map(|part| Cow::Owned(part.0))
+        .collect(),
+    );
   }
   let attachment = Attachment {
-    buffer: out.body.as_bytes().to_vec(),
+    buffer: out.body.0.into_bytes(),
     filename: "report.txt".into(),
     content_type: Some("text/plain".into()),
     ty: None,
   };
+  (event, attachment)
+}
+
+fn capture(out: Outgoing) -> sentry::types::Uuid {
+  let (event, attachment) = event(out);
   sentry::with_scope(
     |scope| scope.add_attachment(attachment),
     || sentry::capture_event(event),
   )
 }
 
+fn crash_event(report: &Report, crash: &ScrubbedText) -> Outgoing {
+  // Line 3 of a crash file is the panic message (see `crash::format_crash`).
+  let message = crash
+    .lines()
+    .nth(2)
+    .map_or_else(|| EventText::from("crash"), |line| EventText::from(&line));
+  Outgoing {
+    source: "crash",
+    level: Level::Fatal,
+    message,
+    tags: vec![],
+    fingerprint: vec![],
+    body: EventText::body(report),
+  }
+}
+
+/// The error code a failed row is reported under; a row without one is `unknown`.
+fn failure_code(download: &DownloadContext) -> CodeToken {
+  download
+    .error_code
+    .clone()
+    .unwrap_or_else(|| CodeToken::new("unknown"))
+}
+
+fn failure_site(download: &DownloadContext) -> EventText {
+  download
+    .site
+    .as_ref()
+    .map_or_else(|| EventText::from("unknown"), EventText::from)
+}
+
+fn failure_event(report: &Report, download: &DownloadContext) -> Outgoing {
+  let code = failure_code(download);
+  let site = failure_site(download);
+  let mut tags = vec![
+    ("error_code", EventText::from(&code)),
+    ("site", site.clone()),
+  ];
+  if let Some(extractor) = &download.extractor {
+    tags.push(("extractor", EventText::from(extractor)));
+  }
+  Outgoing {
+    source: "download",
+    level: Level::Error,
+    message: EventText::join([
+      "Download failed: ".into(),
+      EventText::from(&code),
+      " on ".into(),
+      site.clone(),
+    ]),
+    tags,
+    fingerprint: vec!["download-failed".into(), EventText::from(&code), site],
+    body: EventText::body(report),
+  }
+}
+
+fn frontend_event(clean: &ScrubbedText) -> Outgoing {
+  Outgoing {
+    source: "frontend",
+    level: Level::Error,
+    message: EventText::from(clean),
+    tags: vec![],
+    fingerprint: vec![],
+    body: EventText::from(clean),
+  }
+}
+
+fn manual_event(report: &Report) -> Outgoing {
+  Outgoing {
+    source: "manual",
+    level: Level::Info,
+    message: EventText::title(report),
+    tags: vec![],
+    fingerprint: vec![],
+    body: EventText::body(report),
+  }
+}
+
 /// Previous run's crash. Returns whether it was sent.
-pub fn send_crash(app: &AppHandle, body: &str, first_line: &str) -> bool {
+pub fn send_crash(app: &AppHandle, report: &Report, crash: &ScrubbedText) -> bool {
   if !enabled(app) {
     return false;
   }
-  capture(Outgoing {
-    source: "crash",
-    level: Level::Fatal,
-    message: first_line.chars().take(200).collect(),
-    tags: vec![],
-    fingerprint: vec![],
-    body,
-  });
+  capture(crash_event(report, crash));
   true
 }
 
-/// A failed download, sent automatically. `site` comes from [`super::link::link_for_report`].
-pub fn send_failure(
-  app: &AppHandle,
-  body: &str,
-  download: &DownloadContext,
-  site: Option<&str>,
-  extractor: Option<&str>,
-) -> bool {
-  let code = download
-    .error_code
-    .as_deref()
-    .map(report::token)
-    .unwrap_or_else(|| "unknown".into());
-  if !enabled(app) || !worth_reporting(&code) {
+/// A failed download, sent automatically. Site and extractor come from the row (`link::link_for_report`).
+pub fn send_failure(app: &AppHandle, report: &Report, download: &DownloadContext) -> bool {
+  let code = failure_code(download);
+  if !enabled(app) || !worth_reporting(code.as_str()) {
     return false;
   }
-  let site = site.unwrap_or("unknown").to_string();
+  let site = download.site.as_ref().map_or("unknown", SiteToken::as_str);
   if !admit(format!("failure:{code}:{site}")) {
     return false;
   }
-  let mut tags = vec![("error_code", code.clone()), ("site", site.clone())];
-  if let Some(extractor) = extractor {
-    tags.push(("extractor", report::token(extractor)));
-  }
-  capture(Outgoing {
-    source: "download",
-    level: Level::Error,
-    message: format!("Download failed: {code} on {site}"),
-    tags,
-    fingerprint: vec!["download-failed".into(), code, site],
-    body,
-  });
+  capture(failure_event(report, download));
   true
 }
 
 /// Frontend errors: scrubbed text, de-duplicated by message.
-pub fn send_frontend_error(app: &AppHandle, clean: &str) {
-  let first = clean.lines().next().unwrap_or_default().to_string();
+pub fn send_frontend_error(app: &AppHandle, clean: &ScrubbedText) {
+  let first = clean.as_str().lines().next().unwrap_or_default();
   if !enabled(app) || !admit(format!("frontend:{first}")) {
     return;
   }
-  capture(Outgoing {
-    source: "frontend",
-    level: Level::Error,
-    message: first.chars().take(200).collect(),
-    tags: vec![],
-    fingerprint: vec![],
-    body: clean,
-  });
+  capture(frontend_event(clean));
+}
+
+/// Why a report the user sent did not go. Only `notDelivered` is worth trying again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendError {
+  /// This build has no reports DSN.
+  NotConfigured,
+  /// Sentry did not confirm delivery (offline, timeout).
+  NotDelivered,
+  /// No staged crash to send.
+  NothingToSend,
+}
+
+impl SendError {
+  /// Read by the TS contract (`contract.rs`).
+  #[cfg_attr(not(test), allow(dead_code))]
+  pub const ALL: [SendError; 3] = [
+    SendError::NotConfigured,
+    SendError::NotDelivered,
+    SendError::NothingToSend,
+  ];
+
+  pub fn as_str(self) -> &'static str {
+    match self {
+      SendError::NotConfigured => "notConfigured",
+      SendError::NotDelivered => "notDelivered",
+      SendError::NothingToSend => "nothingToSend",
+    }
+  }
+}
+
+impl serde::Serialize for SendError {
+  fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(self.as_str())
+  }
 }
 
 /// "Report a problem": explicit, so it is sent even with automatic reports off.
 /// Waits for delivery so the UI can say it was sent.
-pub fn send_manual(body: &str, title: &str) -> Result<(), String> {
+pub fn send_manual(report: &Report) -> Result<(), SendError> {
   if !configured() {
-    return Err("reports are not configured in this build".into());
+    return Err(SendError::NotConfigured);
   }
-  capture(Outgoing {
-    source: "manual",
-    level: Level::Info,
-    message: title.chars().take(200).collect(),
-    tags: vec![],
-    fingerprint: vec![],
-    body,
-  });
+  capture(manual_event(report));
   let delivered = sentry::Hub::current()
     .client()
     .is_some_and(|client| client.flush(Some(Duration::from_secs(10))));
   if delivered {
     Ok(())
   } else {
-    Err("report could not be delivered".into())
+    Err(SendError::NotDelivered)
   }
 }
 
 #[cfg(test)]
 mod tests {
+  use super::super::redact::scrub;
+  use super::super::report::{self, ReportInput};
+  use super::super::Draft;
   use super::*;
+
+  fn names() -> Vec<String> {
+    vec!["samira".into()]
+  }
+
+  /// What any of our events must never carry, whatever the user, the webview or the engine handed in.
+  const LEAKS: &[&str] = &[
+    "samira",
+    "/Users",
+    "Movies",
+    "فيلم",
+    "Cx1secret",
+    "igsh",
+    "bob",
+    "hunter2",
+    "31337abc",
+    "zzz",
+  ];
+
+  /// The event and its attachment exactly as they would leave the app.
+  fn wire(out: Outgoing) -> (serde_json::Value, String) {
+    let (event, attachment) = event(out);
+    let json = serde_json::to_value(&event).expect("event serialises");
+    (
+      json,
+      String::from_utf8(attachment.buffer).expect("utf-8 body"),
+    )
+  }
+
+  fn assert_no_leaks(json: &serde_json::Value, body: &str) {
+    let all = format!("{json}\n{body}");
+    for leak in LEAKS {
+      assert!(!all.contains(leak), "{leak} leaked in\n{all}");
+    }
+  }
+
+  /// A report from raw parts, the way `diagnostics::build_report` does it (environment is test data).
+  fn built(draft: Draft) -> (Report, ReportInput) {
+    let environment = ReportInput {
+      app_version: "1.2.0".into(),
+      log_lines: if draft.with_log {
+        vec![scrub(
+          "WARN failed https://www.youtube.com/watch?v=Cx1secret for /Users/samira/Movies/a.mp4 Cookie: sessionid=31337abc",
+          &names(),
+        )]
+      } else {
+        Vec::new()
+      },
+      ..ReportInput::default()
+    };
+    let input = draft.into_input(environment, &names());
+    (report::build(&input), input)
+  }
+
+  fn failed_row() -> DownloadContext {
+    serde_json::from_value(serde_json::json!({
+      "errorCode": "http403",
+      "attempts": [{ "stage": "https://x.com/a b", "outcome": "failed", "code": "http403" }],
+    }))
+    .expect("a row from the webview")
+  }
+
+  #[test]
+  fn automatic_failure_event_carries_tokens_and_the_link_shape_only() {
+    let (report, input) = built(Draft {
+      download: Some(failed_row()),
+      url: Some("https://bob:hunter2@www.instagram.com/reel/Cx1secret/?igsh=zzz".into()),
+      extractor: Some("Instagram; rm -rf".into()),
+      ..Draft::default()
+    });
+    let download = input.download.as_ref().expect("the row");
+    let (json, body) = wire(failure_event(&report, download));
+    assert_no_leaks(&json, &body);
+    assert_eq!(json["message"], "Download failed: http403 on instagram.com");
+    assert_eq!(json["tags"]["error_code"], "http403");
+    assert_eq!(json["tags"]["site"], "instagram.com");
+    assert_eq!(json["tags"]["extractor"], "Instagramrm-rf");
+    assert_eq!(json["tags"][SOURCE_TAG], "download");
+    assert_eq!(
+      json["fingerprint"],
+      serde_json::json!(["download-failed", "http403", "instagram.com"])
+    );
+    assert!(body.contains("- Link: instagram.com/reel/{id}\n"), "{body}");
+    // Automatic events carry no log tail.
+    assert!(!body.contains("Recent log"), "{body}");
+  }
+
+  #[test]
+  fn manual_report_has_the_full_link_only_when_the_user_includes_it() {
+    let draft = |include_link| {
+      super::super::manual_draft(
+        Some("stops on https://vimeo.com/123 for samira in /Users/samira/Movies/فيلم.mp4".into()),
+        Some(failed_row()),
+        Some("https://bob:hunter2@www.youtube.com/watch?v=dQw4w9WgXcQ&token=zzz".into()),
+        Some("youtube".into()),
+        Some(include_link),
+      )
+    };
+    let (report, _) = built(draft(true));
+    let (json, body) = wire(manual_event(&report));
+    assert_no_leaks(&json, &body);
+    assert_eq!(json["message"], "Download failed: http403");
+    assert_eq!(json["tags"][SOURCE_TAG], "manual");
+    assert!(
+      body.contains("- Link: https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+      "{body}"
+    );
+    assert!(body.contains("### Recent log"), "{body}");
+
+    let (report, _) = built(draft(false));
+    let (json, body) = wire(manual_event(&report));
+    assert_no_leaks(&json, &body);
+    assert!(!body.contains("dQw4w9WgXcQ"), "{body}");
+    assert!(
+      body.contains("- Link: youtube.com/watch?v={id}&token={id}"),
+      "{body}"
+    );
+  }
+
+  #[test]
+  fn crash_event_is_scrubbed_even_from_an_old_crash_file() {
+    // An older build may have written the file unscrubbed.
+    let raw = "Nezzel 1.2.0 on macOS 15.6 (aarch64)\nthread main panicked at src/lib.rs:1:1\nno such file /Users/samira/Movies/فيلم.mp4\n";
+    let (report, input) = built(Draft {
+      crash: Some(raw.into()),
+      ..Draft::default()
+    });
+    let crash = input.crash.as_ref().expect("the crash");
+    let (json, body) = wire(crash_event(&report, crash));
+    assert_no_leaks(&json, &body);
+    assert_eq!(json["level"], "fatal");
+    assert!(
+      json["message"]
+        .as_str()
+        .is_some_and(|message| message.starts_with("no such file ")),
+      "{json}"
+    );
+    assert!(body.contains("panicked at src/lib.rs:1:1"), "{body}");
+  }
+
+  #[test]
+  fn frontend_error_event_is_the_scrubbed_first_line() {
+    let clean = scrub(
+      "TypeError: failed https://www.instagram.com/reel/Cx1secret/ for samira\n  at /Users/samira/app/main.js:1:2",
+      &names(),
+    );
+    let (json, body) = wire(frontend_event(&clean));
+    assert_no_leaks(&json, &body);
+    assert!(
+      json["message"]
+        .as_str()
+        .is_some_and(|message| message.starts_with("TypeError: failed ") && !message.contains('\n')),
+      "{json}"
+    );
+    assert_eq!(body, clean.as_str());
+  }
 
   #[test]
   fn only_a_valid_build_dsn_starts_a_client() {
@@ -250,11 +555,27 @@ mod tests {
 
     let mut ours = Event {
       server_name: Some("Saras-MacBook".into()),
+      user: Some(sentry::User {
+        username: Some("sara".into()),
+        ..Default::default()
+      }),
       ..Event::default()
     };
     ours.tags.insert(SOURCE_TAG.into(), "crash".into());
     let kept = strip_event(ours).expect("ours is kept");
     assert!(kept.server_name.is_none());
+    // Only the placeholder IP is left: no name, and nothing for Sentry to turn into a city (#39).
+    let user = kept.user.expect("a placeholder user blocks IP inference");
+    assert_eq!(
+      user.ip_address,
+      Some(sentry::protocol::IpAddress::Exact(
+        std::net::Ipv4Addr::UNSPECIFIED.into()
+      ))
+    );
+    assert_eq!(
+      serde_json::to_value(&user).expect("user serialises"),
+      serde_json::json!({ "ip_address": "0.0.0.0" })
+    );
   }
 
   #[test]
@@ -268,5 +589,14 @@ mod tests {
       assert!(!worth_reporting(code), "{code}");
     }
     assert!(worth_reporting("http403"));
+    // Login walls and site decisions are still worth a report (only the user's own choices and outages are not).
+    for code in [
+      "signInRequired",
+      "membersOnly",
+      "geoBlocked",
+      "unableToExtractInitialData",
+    ] {
+      assert!(worth_reporting(code), "{code}");
+    }
   }
 }

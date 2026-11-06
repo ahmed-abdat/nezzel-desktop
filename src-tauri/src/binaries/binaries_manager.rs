@@ -1,13 +1,9 @@
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use super::ytdlp_update::{
-  check_due, checksum_for, cleanup_leftovers, cleanup_legacy, compare_versions, recover_bundle,
-  redirect_tag, swap_bundle, CURRENT_DIR, LATEST_URL,
-};
-use super::{bundled_tools, YTDLP_PROCESSES};
+use super::bundled_tools;
+use super::ytdlp_update::{binary_client, InstallOutcome};
 use std::path::{Path, PathBuf};
 
 use crate::binaries::binaries_extractor::{
@@ -25,118 +21,40 @@ use tauri::{AppHandle, Emitter, Error, Manager, Wry};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-const BUNDLED_MANIFEST: &[u8] = include_bytes!("manifest.json");
+pub(super) const BUNDLED_MANIFEST: &[u8] = include_bytes!("manifest.json");
 
-type AnyError = Box<dyn std::error::Error + Send + Sync + 'static>;
+pub(super) type AnyError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-#[derive(Clone, Copy)]
-struct CheckAttempt {
-  checked_at: u64,
-  previous: Option<u64>,
+pub(super) const SMALL_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn locked_in_bytes(bytes: &[u8]) -> bool {
+  let text = String::from_utf8_lossy(bytes);
+  let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+  compact.contains("\"is_locked\":true")
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum InstallOutcome {
-  Installed(Option<String>),
-  UpToDate,
-  Busy,
-  Locked,
-}
-
-const SMALL_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-
-fn binary_client(
-  enabled: Option<bool>,
-  proxy: Option<&str>,
-) -> Result<Option<reqwest::Client>, AnyError> {
-  let mut builder = reqwest::Client::builder()
-    .https_only(true)
-    .connect_timeout(Duration::from_secs(15))
-    .read_timeout(Duration::from_secs(30))
-    .redirect(reqwest::redirect::Policy::custom(|attempt| {
-      if attempt
-        .previous()
-        .first()
-        .is_some_and(|url| url.as_str() == LATEST_URL)
-      {
-        attempt.stop()
-      } else {
-        reqwest::redirect::Policy::limited(10).redirect(attempt)
-      }
-    }));
-  if enabled == Some(true) {
-    let Some(proxy) = proxy.filter(|value| !value.is_empty()) else {
-      return Ok(None);
-    };
-    builder =
-      builder.proxy(reqwest::Proxy::all(proxy).map_err(|_| "invalid binary proxy setting")?);
-  }
-  Ok(Some(builder.build()?))
-}
-
-async fn read_metadata(path: &Path) -> Result<Metadata, AnyError> {
+pub(super) async fn read_metadata(path: &Path) -> Result<Metadata, AnyError> {
   match fs::read(path).await {
-    Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+    Ok(bytes) => match serde_json::from_slice(&bytes) {
+      Ok(meta) => Ok(meta),
+      Err(_) => {
+        // Damaged file means nothing is verified: tools get reinstalled.
+        tracing::warn!("tools metadata unreadable, treating tools as not installed");
+        let bad = path.with_file_name(format!("metadata.json.{}.bad", uuid::Uuid::new_v4()));
+        if fs::rename(path, bad).await.is_err() {
+          // Read-only directory (managed install): keep the old error path.
+          return Err("tools metadata unreadable".into());
+        }
+        // A locked build must stay locked even when its metadata is damaged.
+        Ok(Metadata {
+          is_locked: locked_in_bytes(&bytes),
+          ..Metadata::default()
+        })
+      }
+    },
     Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Metadata::default()),
     Err(error) => Err(error.into()),
   }
-}
-
-async fn commit_ytdlp(
-  bin: &Path,
-  staged: &Path,
-  version: &str,
-  attempt: Option<CheckAttempt>,
-  operation: Arc<tokio::sync::Mutex<()>>,
-  processes: Arc<tokio::sync::RwLock<()>>,
-) -> Result<InstallOutcome, AnyError> {
-  let operation = operation.lock_owned().await;
-  let meta_path = bin.join("metadata.json");
-  let mut meta = read_metadata(&meta_path).await?;
-  if meta.is_locked {
-    return Ok(InstallOutcome::Locked);
-  }
-  // Another installer may have won while the archive was downloading.
-  if meta.versions.get("yt-dlp").is_some_and(|installed| {
-    compare_versions(installed, version).is_some_and(|order| order != Ordering::Less)
-      && bundled_tools::verified_repair(
-        &super::ytdlp_update::executable(bin),
-        "yt-dlp",
-        installed,
-        "",
-        "",
-      )
-  }) {
-    return Ok(InstallOutcome::UpToDate);
-  }
-  let Ok(process_guard) = processes.try_write_owned() else {
-    if let Some(attempt) =
-      attempt.filter(|attempt| meta.ytdlp_last_check == Some(attempt.checked_at))
-    {
-      meta.ytdlp_last_check = attempt.previous;
-      write_metadata(&meta_path, &serde_json::to_vec(&meta)?)?;
-    }
-    return Ok(InstallOutcome::Busy);
-  };
-  let old = meta.versions.insert("yt-dlp".into(), version.into());
-  let bytes = serde_json::to_vec(&meta)?;
-  let current = bin.join(CURRENT_DIR);
-  let source = staged.to_path_buf();
-  let bin = bin.to_path_buf();
-  // Keep both locks through rollback/cleanup even if the async caller is cancelled.
-  tokio::task::spawn_blocking(move || {
-    let _operation = operation;
-    let _process_guard = process_guard;
-    swap_bundle(&source, &current, || write_metadata(&meta_path, &bytes))?;
-    for result in [cleanup_leftovers(&current), cleanup_legacy(&bin)] {
-      if let Err(error) = result {
-        tracing::info!("yt-dlp cleanup deferred: {error}");
-      }
-    }
-    Ok::<_, std::io::Error>(())
-  })
-  .await??;
-  Ok(InstallOutcome::Installed(old))
 }
 
 struct ManifestRequests {
@@ -226,16 +144,16 @@ fn verify_manifest(
 }
 
 #[derive(Deserialize, Serialize)]
-struct Manifest {
+pub(super) struct Manifest {
   #[serde(rename = "generatedAt")]
   generated_at: String,
-  tools: IndexMap<String, ToolInfo>,
+  pub(super) tools: IndexMap<String, ToolInfo>,
 }
 
 #[derive(Deserialize, Serialize)]
-struct ToolInfo {
-  version: String,
-  files: HashMap<String, FileInfo>,
+pub(super) struct ToolInfo {
+  pub(super) version: String,
+  pub(super) files: HashMap<String, FileInfo>,
 }
 
 impl ToolInfo {
@@ -247,11 +165,11 @@ impl ToolInfo {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-struct FileInfo {
-  url: String,
-  sha256: String,
+pub(super) struct FileInfo {
+  pub(super) url: String,
+  pub(super) sha256: String,
   #[serde(default)]
-  version: Option<String>,
+  pub(super) version: Option<String>,
   #[serde(default)]
   entry: Option<String>,
   #[serde(default)]
@@ -270,19 +188,19 @@ struct BundleInfo {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
-struct Metadata {
-  versions: HashMap<String, String>,
-  is_locked: bool,
+pub(super) struct Metadata {
+  pub(super) versions: HashMap<String, String>,
+  pub(super) is_locked: bool,
   #[serde(default)]
-  ytdlp_last_check: Option<u64>,
+  pub(super) ytdlp_last_check: Option<u64>,
 }
 
 #[derive(Default, Serialize, Deserialize, Clone)]
-struct ToolError {
+pub(super) struct ToolError {
   tool: String,
   version: String,
-  stage: String,
-  error: String,
+  pub(super) stage: String,
+  pub(super) error: String,
 }
 
 #[derive(Default, Serialize, Deserialize, Clone)]
@@ -306,17 +224,17 @@ struct ToolProgress {
 }
 
 #[derive(Default, Serialize, Deserialize, Clone)]
-struct ToolComplete {
-  tool: String,
+pub(super) struct ToolComplete {
+  pub(super) tool: String,
 }
 
 pub struct BinariesManager {
-  app: AppHandle<Wry>,
-  bin_dir: PathBuf,
-  operation: Arc<tokio::sync::Mutex<()>>,
-  maintenance: tokio::sync::OnceCell<()>,
+  pub(super) app: AppHandle<Wry>,
+  pub(super) bin_dir: PathBuf,
+  pub(super) operation: Arc<tokio::sync::Mutex<()>>,
+  pub(super) maintenance: tokio::sync::OnceCell<()>,
   bundled: std::sync::OnceLock<HashMap<String, PathBuf>>,
-  verified_repairs: std::sync::Mutex<HashMap<(PathBuf, String), bool>>,
+  pub(super) verified_repairs: std::sync::Mutex<HashMap<(PathBuf, String), bool>>,
 }
 
 impl BinariesManager {
@@ -340,7 +258,7 @@ impl BinariesManager {
     app.state::<Self>()
   }
 
-  fn bundled_paths(&self) -> &HashMap<String, PathBuf> {
+  pub(super) fn bundled_paths(&self) -> &HashMap<String, PathBuf> {
     self.bundled.get_or_init(|| {
       let mut tools = HashMap::new();
       let executable = std::env::current_exe().ok();
@@ -382,7 +300,12 @@ impl BinariesManager {
     })
   }
 
-  fn resolved_tool(&self, tool: &str, info: &ToolInfo, meta: &Metadata) -> Option<PathBuf> {
+  pub(super) fn resolved_tool(
+    &self,
+    tool: &str,
+    info: &ToolInfo,
+    meta: &Metadata,
+  ) -> Option<PathBuf> {
     let bundled = self
       .bundled_paths()
       .get(tool)
@@ -505,65 +428,19 @@ impl BinariesManager {
       .collect()
   }
 
-  fn client(&self) -> Result<Option<reqwest::Client>, AnyError> {
+  pub(super) fn client(&self) -> Result<Option<reqwest::Client>, AnyError> {
     let cfg = self.app.state::<crate::SharedConfig>().load();
     binary_client(cfg.network.enable_proxy, cfg.network.proxy.as_deref())
-  }
-
-  async fn maintain_ytdlp(&self) {
-    self
-      .maintenance
-      .get_or_init(|| async {
-        let operation = self.operation.clone().lock_owned().await;
-        match self
-          .load_metadata(&self.bin_dir.join("metadata.json"))
-          .await
-        {
-          Ok(meta) if meta.is_locked => return,
-          Err(error) => {
-            tracing::info!("yt-dlp maintenance deferred: {error}");
-            return;
-          }
-          _ => {}
-        }
-        let Ok(process_guard) = YTDLP_PROCESSES.clone().try_write_owned() else {
-          return;
-        };
-        let bin = self.bin_dir.clone();
-        let result = tokio::task::spawn_blocking(move || {
-          let _operation = operation;
-          let _process_guard = process_guard;
-          std::fs::create_dir_all(&bin)?;
-          recover_bundle(&bin.join(CURRENT_DIR))?;
-          // This runs once, before any prepare call can create a live stage directory.
-          cleanup_leftovers(&bin)?;
-          cleanup_legacy(&bin)
-        })
-        .await;
-        match result {
-          Ok(Ok(())) => {}
-          Ok(Err(error)) => tracing::info!("yt-dlp maintenance deferred: {error}"),
-          Err(error) => tracing::info!("yt-dlp maintenance failed: {error}"),
-        }
-      })
-      .await;
   }
 
   fn canonical_path(base: &Path, tool: &str) -> Result<PathBuf, Error> {
     if tool == "yt-dlp" {
       return Ok(super::ytdlp_update::executable(base));
     }
-    #[cfg(windows)]
-    {
-      Ok(base.join(format!("{tool}.exe")))
-    }
-    #[cfg(not(windows))]
-    {
-      Ok(base.join(tool))
-    }
+    Ok(base.join(bundled_tools::exe_name(tool)))
   }
 
-  fn current_platform() -> String {
+  pub(super) fn current_platform() -> String {
     let os = match std::env::consts::OS {
       "macos" => "darwin",
       other => other,
@@ -571,7 +448,7 @@ impl BinariesManager {
     format!("{}-{}", os, std::env::consts::ARCH)
   }
 
-  fn select_file<'a>(
+  pub(super) fn select_file<'a>(
     files: &'a HashMap<String, FileInfo>,
     arch: &str,
   ) -> Option<(&'a str, &'a FileInfo)> {
@@ -687,186 +564,7 @@ impl BinariesManager {
     Ok(())
   }
 
-  /// Spawn daily work without awaiting it from startup.
-  pub fn schedule_ytdlp_update(app: &AppHandle<Wry>) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-      let manager = app.state::<Self>();
-      if let Err(error) = manager.update_ytdlp().await {
-        tracing::info!("yt-dlp update failed: {error}");
-      }
-    });
-  }
-
-  async fn update_ytdlp(&self) -> Result<(), AnyError> {
-    self.maintain_ytdlp().await;
-    let Some(client) = self.client()? else {
-      return Ok(());
-    };
-    let (old, attempt) = {
-      let _operation = self.operation.lock().await;
-      if !self
-        .app
-        .state::<crate::SharedConfig>()
-        .load()
-        .update
-        .update_binaries
-      {
-        return Ok(());
-      }
-      let meta_path = self.bin_dir.join("metadata.json");
-      let mut meta = self.load_metadata(&meta_path).await?;
-      let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-      if meta.is_locked || !check_due(meta.ytdlp_last_check, now) {
-        return Ok(());
-      }
-      let manifest: Manifest = serde_json::from_slice(BUNDLED_MANIFEST)?;
-      let Some(info) = manifest.tools.get("yt-dlp") else {
-        return Ok(());
-      };
-      let Some(path) = self.resolved_tool("yt-dlp", info, &meta) else {
-        return Ok(());
-      };
-      let old = if self.bundled_paths().get("yt-dlp") == Some(&path) {
-        info.version.clone()
-      } else {
-        meta
-          .versions
-          .get("yt-dlp")
-          .cloned()
-          .ok_or("yt-dlp version missing")?
-      };
-      if YTDLP_PROCESSES.try_write().is_err() {
-        tracing::info!("yt-dlp update deferred: process active");
-        return Ok(());
-      }
-      let attempt = CheckAttempt {
-        checked_at: now,
-        previous: meta.ytdlp_last_check,
-      };
-      // Persist failures too, but never hold the operation mutex during network work.
-      meta.ytdlp_last_check = Some(now);
-      self.save_metadata(&meta_path, &meta)?;
-      (old, attempt)
-    };
-    let response = client
-      .get(LATEST_URL)
-      .timeout(SMALL_REQUEST_TIMEOUT)
-      .send()
-      .await?
-      .error_for_status()?;
-    let tag = redirect_tag(
-      response.status().as_u16(),
-      response
-        .headers()
-        .get(reqwest::header::LOCATION)
-        .and_then(|value| value.to_str().ok()),
-    )?
-    .to_string();
-    if compare_versions(&tag, &old).ok_or("invalid installed yt-dlp version")? != Ordering::Greater
-    {
-      tracing::info!("yt-dlp up to date");
-      return Ok(());
-    }
-    let manifest = self.fetch_manifest(&client).await?;
-    let arch = Self::current_platform();
-    let pinned = manifest
-      .tools
-      .get("yt-dlp")
-      .ok_or("yt-dlp absent from manifest")?;
-    let (_, pinned_file) =
-      Self::select_file(&pinned.files, &arch).ok_or("no yt-dlp asset for platform")?;
-    let asset = pinned_file
-      .url
-      .rsplit('/')
-      .next()
-      .filter(|name| !name.is_empty())
-      .ok_or("yt-dlp asset name missing")?;
-    if !asset
-      .bytes()
-      .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-    {
-      return Err("invalid yt-dlp asset name".into());
-    }
-    let base = format!("https://github.com/yt-dlp/yt-dlp/releases/download/{tag}");
-    let sums = client
-      .get(format!("{base}/SHA2-256SUMS"))
-      .timeout(SMALL_REQUEST_TIMEOUT)
-      .send()
-      .await?
-      .error_for_status()?
-      .text()
-      .await?;
-    let mut file = pinned_file.clone();
-    file.sha256 = checksum_for(&sums, asset).ok_or("yt-dlp asset checksum absent or invalid")?;
-    file.url = format!("{base}/{asset}");
-    file.version = None;
-    let info = ToolInfo {
-      version: tag.clone(),
-      files: HashMap::from([(arch.clone(), file)]),
-    };
-    match self
-      .install_ytdlp(&client, &arch, &info, Some(attempt))
-      .await?
-    {
-      InstallOutcome::Installed(previous) => {
-        tracing::info!("yt-dlp updated {} -> {tag}", previous.unwrap_or(old))
-      }
-      InstallOutcome::UpToDate => tracing::info!("yt-dlp up to date"),
-      InstallOutcome::Busy => tracing::info!("yt-dlp update deferred: process active"),
-      InstallOutcome::Locked => tracing::info!("yt-dlp update deferred: metadata locked"),
-    }
-    Ok(())
-  }
-
-  async fn install_ytdlp(
-    &self,
-    client: &reqwest::Client,
-    arch: &str,
-    info: &ToolInfo,
-    attempt: Option<CheckAttempt>,
-  ) -> Result<InstallOutcome, AnyError> {
-    let staged = self
-      .bin_dir
-      .join(format!(".yt-dlp-stage-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&staged).await?;
-    let result = async {
-      // Network and extraction prepare an isolated directory without the operation mutex.
-      self
-        .install_single_tool(client, &staged, arch, "yt-dlp", info)
-        .await
-        .map_err(|error| format!("{}: {}", error.stage, error.error))?;
-      let outcome = commit_ytdlp(
-        &self.bin_dir,
-        &staged,
-        &info.version,
-        attempt,
-        self.operation.clone(),
-        YTDLP_PROCESSES.clone(),
-      )
-      .await?;
-      if let Ok(mut verified) = self.verified_repairs.lock() {
-        verified.clear();
-      }
-      if matches!(
-        outcome,
-        InstallOutcome::Installed(_) | InstallOutcome::UpToDate
-      ) {
-        let _ = self.app.emit(
-          "binary_download_complete",
-          ToolComplete {
-            tool: "yt-dlp".into(),
-          },
-        );
-      }
-      Ok::<_, AnyError>(outcome)
-    }
-    .await;
-    let _ = fs::remove_dir_all(staged).await;
-    result
-  }
-
-  async fn install_single_tool(
+  pub(super) async fn install_single_tool(
     &self,
     client: &reqwest::Client,
     bin: &Path,
@@ -966,7 +664,10 @@ impl BinariesManager {
     })
   }
 
-  async fn fetch_manifest(&self, client: &reqwest::Client) -> Result<Manifest, AnyError> {
+  pub(super) async fn fetch_manifest(
+    &self,
+    client: &reqwest::Client,
+  ) -> Result<Manifest, AnyError> {
     fetch_manifest(
       client,
       option_env!("NEZZEL_MANIFEST_URL"),
@@ -1091,11 +792,11 @@ impl BinariesManager {
     Ok(())
   }
 
-  async fn load_metadata(&self, path: &Path) -> Result<Metadata, AnyError> {
+  pub(super) async fn load_metadata(&self, path: &Path) -> Result<Metadata, AnyError> {
     read_metadata(path).await
   }
 
-  fn save_metadata(&self, path: &Path, meta: &Metadata) -> Result<(), AnyError> {
+  pub(super) fn save_metadata(&self, path: &Path, meta: &Metadata) -> Result<(), AnyError> {
     write_metadata(path, &serde_json::to_vec(meta)?)?;
     Ok(())
   }
@@ -1143,7 +844,7 @@ impl BinariesManager {
   }
 }
 
-fn write_metadata(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(super) fn write_metadata(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
   let temporary = path.with_extension("json.tmp");
   std::fs::write(&temporary, bytes)?;
   std::fs::rename(temporary, path)
@@ -1151,9 +852,28 @@ fn write_metadata(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-  use super::{fetch_manifest, manifest_requests, verify_manifest, BinariesManager, Metadata};
+  use super::{fetch_manifest, manifest_requests, read_metadata, verify_manifest, BinariesManager};
   use base64::{engine::general_purpose::STANDARD, Engine};
   use ed25519_dalek::{SignatureError, Signer, SigningKey};
+
+  #[tokio::test]
+  async fn damaged_metadata_reads_as_nothing_installed_and_is_set_aside() {
+    let dir = std::env::temp_dir().join(format!("nezzel-meta-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("metadata.json");
+    std::fs::write(&path, b"{not json").unwrap();
+    let meta = read_metadata(&path).await.unwrap();
+    assert!(meta.versions.is_empty() && !meta.is_locked);
+    let set_aside = std::fs::read_dir(&dir)
+      .unwrap()
+      .filter_map(Result::ok)
+      .any(|e| e.file_name().to_string_lossy().ends_with(".bad"));
+    assert!(set_aside);
+    assert!(!path.exists());
+    std::fs::write(&path, br#"{"versions":{"yt-dlp":"1"},"is_locked": true,"#).unwrap();
+    assert!(read_metadata(&path).await.unwrap().is_locked);
+    std::fs::remove_dir_all(dir).unwrap();
+  }
 
   const MANIFEST: &[u8] = br#"{"generatedAt":"2026-11-02","tools":{}}"#;
 
@@ -1270,184 +990,6 @@ mod tests {
       }
     }
     tokio::fs::remove_dir_all(bin).await.unwrap();
-  }
-
-  #[test]
-  fn metadata_preserves_failed_check_time_and_reads_legacy_files() {
-    let mut meta: Metadata =
-      serde_json::from_slice(br#"{"versions":{"yt-dlp":"2026.10.26"},"is_locked":false}"#).unwrap();
-    assert!(super::check_due(meta.ytdlp_last_check, 100));
-    let root = std::env::temp_dir().join(format!("nezzel-check-time-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("metadata.json");
-    // The attempt is committed before network work, which may subsequently fail.
-    meta.ytdlp_last_check = Some(100);
-    super::write_metadata(&path, &serde_json::to_vec(&meta).unwrap()).unwrap();
-    let reloaded: Metadata = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert!(!super::check_due(reloaded.ytdlp_last_check, 101));
-    assert_eq!(reloaded.versions["yt-dlp"], "2026.10.26");
-    assert!(!path.with_extension("json.tmp").exists());
-    std::fs::remove_dir_all(root).unwrap();
-  }
-
-  #[test]
-  fn proxy_enabled_without_address_skips_all_binary_requests() {
-    for proxy in [None, Some("")] {
-      assert!(super::binary_client(Some(true), proxy).unwrap().is_none());
-    }
-    assert!(super::binary_client(Some(false), Some("http://["))
-      .unwrap()
-      .is_some());
-    assert!(
-      super::binary_client(Some(true), Some("http://127.0.0.1:8123"))
-        .unwrap()
-        .is_some()
-    );
-    assert!(
-      super::binary_client(Some(true), Some("socks5h://127.0.0.1:1080"))
-        .unwrap()
-        .is_some()
-    );
-    assert!(super::binary_client(Some(true), Some("http://[")).is_err());
-  }
-
-  #[tokio::test]
-  async fn busy_commit_restores_check_time_and_rechecks_concurrent_version() {
-    use super::{CheckAttempt, InstallOutcome};
-    use std::sync::Arc;
-    let root = std::env::temp_dir().join(format!("nezzel-busy-{}", uuid::Uuid::new_v4()));
-    let current = root.join(super::CURRENT_DIR);
-    let staged = root.join("staged");
-    std::fs::create_dir_all(&current).unwrap();
-    std::fs::create_dir_all(&staged).unwrap();
-    let name = if cfg!(windows) {
-      "yt-dlp.exe"
-    } else {
-      "yt-dlp"
-    };
-    std::fs::write(current.join(name), b"old").unwrap();
-    std::fs::write(staged.join(name), b"candidate").unwrap();
-    let meta_path = root.join("metadata.json");
-    let mut meta = Metadata::default();
-    meta.versions.insert("yt-dlp".into(), "2026.10.26".into());
-    meta.ytdlp_last_check = Some(86500);
-    super::write_metadata(&meta_path, &serde_json::to_vec(&meta).unwrap()).unwrap();
-    let operation = Arc::new(tokio::sync::Mutex::new(()));
-    let processes = Arc::new(tokio::sync::RwLock::new(()));
-    let running = processes.clone().read_owned().await;
-    let attempt = Some(CheckAttempt {
-      checked_at: 86500,
-      previous: Some(100),
-    });
-    assert_eq!(
-      super::commit_ytdlp(
-        &root,
-        &staged,
-        "2026.11.01",
-        attempt,
-        operation.clone(),
-        processes.clone()
-      )
-      .await
-      .unwrap(),
-      InstallOutcome::Busy
-    );
-    let restored: Metadata = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
-    assert_eq!(restored.ytdlp_last_check, Some(100));
-    assert_eq!(restored.versions["yt-dlp"], "2026.10.26");
-    assert_eq!(std::fs::read(current.join(name)).unwrap(), b"old");
-    meta.ytdlp_last_check = Some(99999);
-    super::write_metadata(&meta_path, &serde_json::to_vec(&meta).unwrap()).unwrap();
-    assert_eq!(
-      super::commit_ytdlp(
-        &root,
-        &staged,
-        "2026.11.01",
-        attempt,
-        operation.clone(),
-        processes.clone()
-      )
-      .await
-      .unwrap(),
-      InstallOutcome::Busy
-    );
-    let superseded: Metadata = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
-    assert_eq!(superseded.ytdlp_last_check, Some(99999));
-    drop(running);
-    // A different installer won while this candidate was downloading.
-    meta.versions.insert("yt-dlp".into(), "2026.12.01".into());
-    meta.ytdlp_last_check = Some(99999);
-    std::fs::write(current.join(name), b"newer").unwrap();
-    #[cfg(unix)]
-    {
-      use std::os::unix::fs::PermissionsExt;
-      std::fs::set_permissions(current.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    super::bundled_tools::record_repair(
-      &current,
-      "yt-dlp",
-      &current.join(name),
-      "2026.12.01",
-      "verified-archive",
-    )
-    .unwrap();
-    super::write_metadata(&meta_path, &serde_json::to_vec(&meta).unwrap()).unwrap();
-    assert_eq!(
-      super::commit_ytdlp(&root, &staged, "2026.11.01", attempt, operation, processes)
-        .await
-        .unwrap(),
-      InstallOutcome::UpToDate
-    );
-    let preserved: Metadata = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
-    assert_eq!(preserved.ytdlp_last_check, Some(99999));
-    assert_eq!(std::fs::read(current.join(name)).unwrap(), b"newer");
-    std::fs::remove_dir_all(root).unwrap();
-  }
-
-  #[tokio::test]
-  async fn committed_bundle_merges_metadata_and_cleans_legacy_files() {
-    use super::{InstallOutcome, CURRENT_DIR};
-    use std::sync::Arc;
-    let root = std::env::temp_dir().join(format!("nezzel-commit-{}", uuid::Uuid::new_v4()));
-    let staged = root.join("staged");
-    std::fs::create_dir_all(staged.join(".extract-empty")).unwrap();
-    std::fs::create_dir_all(root.join("_internal")).unwrap();
-    let name = if cfg!(windows) {
-      "yt-dlp.exe"
-    } else {
-      "yt-dlp"
-    };
-    std::fs::write(root.join(name), b"old").unwrap();
-    std::fs::write(staged.join(name), b"new").unwrap();
-    let mut meta = Metadata::default();
-    meta.versions.insert("yt-dlp".into(), "2026.10.26".into());
-    meta.versions.insert("deno".into(), "2.6.0".into());
-    meta.ytdlp_last_check = Some(100);
-    let path = root.join("metadata.json");
-    super::write_metadata(&path, &serde_json::to_vec(&meta).unwrap()).unwrap();
-    let result = super::commit_ytdlp(
-      &root,
-      &staged,
-      "2026.11.01",
-      None,
-      Arc::new(tokio::sync::Mutex::new(())),
-      Arc::new(tokio::sync::RwLock::new(())),
-    )
-    .await
-    .unwrap();
-    assert_eq!(result, InstallOutcome::Installed(Some("2026.10.26".into())));
-    let committed: Metadata = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    assert_eq!(committed.versions["yt-dlp"], "2026.11.01");
-    assert_eq!(committed.versions["deno"], "2.6.0");
-    assert_eq!(committed.ytdlp_last_check, Some(100));
-    assert_eq!(
-      std::fs::read(root.join(CURRENT_DIR).join(name)).unwrap(),
-      b"new"
-    );
-    assert!(!root.join(name).exists());
-    assert!(!root.join("_internal").exists());
-    assert!(!root.join(CURRENT_DIR).join(".extract-empty").exists());
-    std::fs::remove_dir_all(root).unwrap();
   }
 
   fn signing_key() -> SigningKey {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileCategory, hostOnly, revealsInFolder } from '../../src/helpers/fileCategory';
+import { fileCategory, revealsInFolder } from '../../src/helpers/fileCategory';
 
 describe('fileCategory', () => {
   it.each([
@@ -38,13 +38,6 @@ describe('fileCategory', () => {
     ['file.pdf', 'application/zip', 'document'],
   ] as const)('%s %s → %s', (name, mime, expected) => {
     expect(fileCategory(name, mime)).toBe(expected);
-  });
-});
-
-describe('hostOnly', () => {
-  it('drops scheme, path and query', () => {
-    expect(hostOnly('https://www.dropbox.com/s/abc/file.zip?dl=1&token=secret')).toBe('dropbox.com');
-    expect(hostOnly('not a url')).toBe('');
   });
 });
 

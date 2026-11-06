@@ -1,20 +1,13 @@
-import { MediaState } from '../stores/media/state';
+import type { MediaState } from '../stores/media/state';
+import { phaseOf, type KindFilter } from './groupView';
 
 /**
  * The downloads list has two independent filters: the sidebar picks a type, the chips above the
  * list pick a status. They combine (e.g. failed videos).
  */
-export type KindFilter = 'video' | 'audio' | 'photos' | 'files';
 export type TypeFilter = 'all' | KindFilter;
 export type StatusFilter = 'all' | 'active' | 'failed' | 'done';
 export interface ListView { type: TypeFilter; status: StatusFilter }
-
-/** Photo posts (one photo, a carousel, or photos mixed with a clip) all go under Photos. */
-export function kindFilterOf(kind: string | null | undefined): KindFilter | null {
-  if (kind === 'video' || kind === 'audio') return kind;
-  if (kind === 'file') return 'files';
-  return kind === 'image' || kind === 'carousel' || kind === 'mixed' ? 'photos' : null;
-}
 
 export type RowStatus = 'active' | 'done' | 'failed';
 
@@ -44,9 +37,9 @@ export function viewQuery(view: ListView): Record<string, string> {
 }
 
 export function statusOf(state: MediaState | undefined): RowStatus {
-  if (state === MediaState.done) return 'done';
-  if (state === MediaState.error) return 'failed';
-  return 'active';
+  const phase = state === undefined ? undefined : phaseOf(state);
+  if (phase === 'done') return 'done';
+  return phase === 'error' ? 'failed' : 'active';
 }
 
 export interface ListRow {

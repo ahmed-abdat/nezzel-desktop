@@ -1,4 +1,10 @@
 {
+  "usage": {
+    "setting": {
+      "label": "Help improve Nezzel",
+      "help": "Sends anonymous daily totals: features used and sites (domain only). Never links, file names or accounts"
+    }
+  },
   "common": {
     "download": "Download",
     "save": "Save",
@@ -1784,7 +1790,28 @@
     "downloadBest": "Download best",
     "options": "Options",
     "loading": "Reading the link…",
-    "formats": "Available formats",
+    "formats": {
+      "choose": "Choose a format",
+      "list": "Formats",
+      "video": "Video",
+      "audio": "Audio",
+      "best": "Best",
+      "bestEach": "Best for each video",
+      "orLower": "or lower",
+      "sizeUnknown": "Size unknown",
+      "fps": "{n} fps",
+      "kbps": "{n} kbps",
+      "high": "High quality",
+      "medium": "Medium quality",
+      "low": "Small file",
+      "anyAudio": "Sound only",
+      "downloadRow": "Download {format}",
+      "height": "{n}p",
+      "res4k": "4K",
+      "res8k": "8K",
+      "sep": " · ",
+      "noSize": "—"
+    },
     "automationHint": "To read your browser tab, macOS may ask to let Nezzel control your browser. If you decline, Nezzel uses the clipboard",
     "readingBrowser": "Reading the active browser tab…",
     "failed": "Couldn't read this link. Open Options to try again",

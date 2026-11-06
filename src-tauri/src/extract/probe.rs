@@ -199,6 +199,7 @@ impl PageSignals {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ProbeAuth {
   Anonymous,
+  #[cfg(test)]
   Context(u64),
 }
 #[derive(PartialEq, Eq, Hash)]

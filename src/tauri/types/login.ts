@@ -1,3 +1,5 @@
+import type { LoginReason } from '@/generated/contract';
+
 export interface LoginCandidate {
   /** Opaque browser/profile identifier. Pass back unchanged; never split it. */
   id: string;
@@ -13,7 +15,8 @@ export interface LoginNeeded {
   id: string;
   groupId: string;
   host: string;
-  reason: string;
+  /** The engine's own reason, else the site's diagnostic code (open: it comes from the error rules). */
+  reason: LoginReason | (string & {});
   status: 'needed' | 'exhausted';
   candidates: LoginCandidate[];
   /** Profile change for the next operation; no dispatcher slot is waiting. */
@@ -26,14 +29,4 @@ export interface LoginUsing {
   host: string;
   candidate: LoginCandidate;
   selectedOnly?: boolean;
-}
-
-export interface EngineAvailability {
-  aria2Available: boolean;
-}
-
-export interface MediaTransport {
-  id: string;
-  groupId: string;
-  path: 'aria2' | 'native';
 }

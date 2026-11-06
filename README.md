@@ -52,7 +52,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 **Is it free?** Yes, and open source under the AGPL-3.0. No ads, no account, no paid tier.
 
-**Does Nezzel send anything to a server?** No Nezzel server exists. The app talks to the sites you save from, and to GitHub for tool and app updates. Crash and error reports go to our own Sentry project (EU), on by default; they never include links, file names, paths or cookies, and you can turn them off in Settings or on the welcome screen. No analytics. Details in [PRIVACY.md](PRIVACY.md).
+**Does Nezzel send anything to a server?** No account and no ads. Crash and error reports go to our own Sentry project, and anonymous daily usage counts (features used, sites by domain only, never links or file names) go to our own server. Both are on by default and have a switch in Settings. Details in [PRIVACY.md](PRIVACY.md).
 
 **Why does my OS warn me when I install it?** The beta isn't code-signed yet. See [Install](#install) for the one-time step.
 

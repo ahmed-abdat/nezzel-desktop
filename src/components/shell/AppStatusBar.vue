@@ -38,22 +38,17 @@ import { useDownloadBuckets } from '../../composables/useDownloadBuckets';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import { useOpener } from '../../composables/useOpener';
 import { useMediaProgressStore } from '../../stores/media/progress';
-import { MediaState, useMediaStateStore } from '../../stores/media/state';
 import { useToastStore } from '../../stores/toast';
 import { useSettingsStore } from '../../stores/settings';
 import { compactFolderPath, parentFolder } from '../../helpers/folderPath';
 
 const { t } = useI18n();
 const { count: n, speed } = useLocaleNumber();
-const { active, downloading } = useDownloadBuckets();
-const stateStore = useMediaStateStore();
+const { downloading, failed, reading } = useDownloadBuckets();
 const progressStore = useMediaProgressStore();
 const settingsStore = useSettingsStore();
 const { openPath } = useOpener();
 
-const inState = (...states: MediaState[]) => computed(() => active.value.filter(group => states.includes(stateStore.getGroupState(group.id) as MediaState)));
-const failed = inState(MediaState.error);
-const reading = inState(MediaState.fetching, MediaState.fetchingList);
 const totalSpeed = computed(() => downloading.value.reduce((sum, group) => sum + (progressStore.findGroupProgress(group.id)?.speedBps ?? 0), 0));
 
 const stateText = computed(() => {

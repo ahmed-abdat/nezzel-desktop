@@ -1,23 +1,23 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import { invoke } from '@tauri-apps/api/core';
-import CapturePanel from './components/downloads/CapturePanel.vue';
-import { applyDocumentLocale, getDefaultLocale, i18n, type Locale } from './i18n';
-import { applyTheme } from './composables/useTheme';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import CaptureBar from './components/downloads/CaptureBar.vue';
+import CaptureCard from './components/downloads/CaptureCard.vue';
+import { i18n } from './i18n';
+import { applyAppearance } from './appearance';
 import type { Settings } from './tauri/types/config';
+import { CAPTURE_WINDOW } from './generated/contract';
 
 export async function mountCapturePanel() {
   if (typeof __E2E__ !== 'undefined' && __E2E__) {
     const { installCaptureMock } = await import('../tests/utils/mocks/captureHandlers');
-    installCaptureMock(new URLSearchParams(location.search).get('window') ?? 'capture-card');
+    installCaptureMock(new URLSearchParams(location.search).get('window') ?? CAPTURE_WINDOW.card);
   }
   document.documentElement.classList.add('nz-capture');
   const settings = await invoke<Settings>('config_get');
-  const locale = settings.appearance.language === 'system' ? getDefaultLocale() : settings.appearance.language as Locale;
-  i18n.global.locale.value = locale;
-  applyDocumentLocale(locale);
-  if (settings.appearance.theme !== 'system') applyTheme(settings.appearance.theme);
-  const app = createApp(CapturePanel).use(createPinia()).use(i18n);
+  applyAppearance(settings.appearance);
+  const app = createApp(getCurrentWindow().label === CAPTURE_WINDOW.bar ? CaptureBar : CaptureCard).use(createPinia()).use(i18n);
   app.mount('#app');
   return app;
 }

@@ -55,4 +55,16 @@ describe('settings patchNow', () => {
     await Promise.all([first, second]);
     expect(store.settings.appearance.theme).toBe('light');
   });
+
+  it('a consent switch that could not be saved comes back and tells the caller', async () => {
+    const store = useSettingsStore();
+    store.settings.privacy.sendReports = true;
+    let reject!: () => void;
+    installTauriMock({ config_set: () => new Promise((_resolve, fail) => (reject = () => fail('io'))) });
+    const saved = store.setPrivacy('sendReports', false);
+    expect(store.settings.privacy.sendReports).toBe(false);
+    reject();
+    expect(await saved).toBe(false);
+    expect(store.settings.privacy.sendReports).toBe(true);
+  });
 });

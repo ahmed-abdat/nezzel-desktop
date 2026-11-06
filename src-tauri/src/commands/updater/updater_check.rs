@@ -35,6 +35,7 @@ pub async fn updater_check(
   };
   if let Some(update) = checked {
     tracing::info!("[updater] Update available: {}", update.version);
+    crate::usage::update_offered(&app, &update.version);
     let mut s = store.lock().await;
     s.bytes = None;
     s.update = Some(update.clone());

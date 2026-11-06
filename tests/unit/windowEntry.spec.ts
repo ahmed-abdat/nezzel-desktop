@@ -51,7 +51,7 @@ describe('native window entry isolation', () => {
 });
 
 describe('copied-link card', () => {
-  it('shows the title from the snapshot when capture_metadata never arrives (Linux, tauri#3654)', async () => {
+  it('shows the title from the snapshot when capture_changed never arrives (Linux, tauri#3654)', async () => {
     vi.useFakeTimers();
     const reading = { id: 4, url: 'https://www.youtube.com/watch?v=card', site: 'youtube.com', title: '', details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false, feed: false };
     let snapshot = reading;
@@ -70,6 +70,32 @@ describe('copied-link card', () => {
     } finally {
       window.__TAURI_INTERNALS__.invoke = previous;
       vi.useRealTimers();
+    }
+  });
+
+  it('reads a new offer through the snapshot when woken; the event carries nothing', async () => {
+    const offer = (id: number, title: string) => ({ id, url: `https://www.youtube.com/watch?v=${id}`, site: 'youtube.com', title, details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false, feed: false });
+    let snapshot = offer(6, 'First');
+    let wake: number | undefined;
+    const previous = window.__TAURI_INTERNALS__.invoke;
+    window.__TAURI_INTERNALS__.invoke = async (cmd, ...rest) => {
+      const args = rest[0] as { event?: string; handler?: number } | undefined;
+      if (cmd === 'plugin:event|listen' && args?.event === 'capture_changed') wake = args.handler;
+      return cmd === 'capture_snapshot' ? snapshot : previous(cmd, ...rest);
+    };
+    try {
+      mockWindows('capture-card');
+      window.history.replaceState(null, '', '/');
+      app = await mountWindow('capture-card');
+      await flushPromises();
+      expect(document.querySelector('.capture-panel')?.textContent).toContain('First');
+      snapshot = offer(7, 'Second');
+      const internals = window.__TAURI_INTERNALS__ as unknown as { runCallback: (id: number, data: unknown) => void };
+      internals.runCallback(wake!, { event: 'capture_changed', id: 1, payload: null });
+      await flushPromises();
+      expect(document.querySelector('.capture-panel')?.textContent).toContain('Second');
+    } finally {
+      window.__TAURI_INTERNALS__.invoke = previous;
     }
   });
 

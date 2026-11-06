@@ -122,7 +122,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../compo
 import { computed, onBeforeUnmount, ref, toRef } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
-import { invoke } from '@tauri-apps/api/core';
+import { copyText } from '../../tauri/clipboard';
 import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, CircleAlert, Copy, Eye, Link2, MessageCircle, RotateCw, ThumbsUp } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import placeholderUrl from '../../assets/placeholder.png';
@@ -134,7 +134,7 @@ import { useDownloadActions } from '../../composables/useDownloadActions';
 import { useDiagnostic } from '../../composables/useDiagnostic';
 import { useGroupLog } from '../../composables/useGroupLog';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
-import { formatDuration } from '../../composables/useDuration';
+import { formatDuration } from '../../helpers/units';
 import { groupSkippedDiagnostics, isSkippedDiagnostic } from '../../helpers/skippedDiagnostics';
 import type { Group } from '../../tauri/types/group';
 
@@ -188,7 +188,7 @@ const metaParts = computed(() => {
     parts.push({ key: 'type', text: t(`files.category.${fileKind.value}`) });
     if (group.value?.filesize) parts.push({ key: 'size', text: formatSize(group.value.filesize) });
   }
-  if (group.value?.duration) parts.push({ key: 'duration', text: formatDuration(group.value.duration) });
+  if (group.value?.duration) parts.push({ key: 'duration', text: formatDuration(group.value.duration, { pad: true }) });
   return parts;
 });
 
@@ -204,7 +204,7 @@ const stats = computed(() => {
 
 const chapters = computed(() => (group.value?.chapters ?? []).map((chapter, index) => ({
   key: `${chapter.startTime}-${index}`,
-  start: formatDuration(chapter.startTime),
+  start: formatDuration(chapter.startTime, { pad: true }),
   title: chapter.title,
 })));
 
@@ -239,10 +239,9 @@ const copied = ref<'link' | 'details' | null>(null);
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 async function copy(text: string, what: 'link' | 'details') {
   try {
-    // Marks the write as Nezzel's own, so the copied-link watcher does not offer it back.
-    await invoke('capture_write_clipboard', { text });
+    await copyText(text);
   } catch {
-    await navigator.clipboard?.writeText(text).catch(() => undefined);
+    // Same as before: a failed copy still shows the "copied" tick.
   }
   copied.value = what;
   clearTimeout(copiedTimer);

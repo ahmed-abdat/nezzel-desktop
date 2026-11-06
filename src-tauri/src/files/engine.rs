@@ -223,19 +223,14 @@ impl Engine {
     range: Option<(u64, Option<u64>, &str)>,
     mut cancel: watch::Receiver<bool>,
   ) -> Result<Response> {
-    for attempt in 0..5 {
+    for attempt in 0..plan::ATTEMPTS {
       let delay = match self.client.get(url, range, cancel.clone()).await {
         Ok(body) => {
           let status = body.response.status().as_u16();
-          let share = super::hosts::plan(url, super::hosts::Export::Pdf).is_some()
-            || reqwest::Url::parse(url)
-              .ok()
-              .and_then(|u| u.host_str().map(str::to_owned))
-              .is_some_and(|h| super::hosts::dropbox_host(&h));
-          if share && matches!(status, 429 | 509) {
+          if matches!(status, 429 | 509) && super::hosts::relax_rate_limit(url) {
             return Ok(body);
           }
-          if !matches!(status, 408 | 429 | 500 | 502 | 503 | 504) {
+          if !plan::TRANSIENT_STATUS.contains(&status) {
             return Ok(body);
           }
           tracing::warn!(status, attempt = attempt + 1, "Transient file HTTP status");
@@ -251,7 +246,7 @@ impl Engine {
         Err(Error::Network) => None,
         Err(error) => return Err(error),
       };
-      if attempt == 4 {
+      if attempt + 1 == plan::ATTEMPTS {
         return Err(Error::Network);
       }
       tracing::warn!(
@@ -289,7 +284,7 @@ impl Engine {
     let mut url = plan.url.clone();
     for _ in 0..5 {
       let mut body = self.request(url.as_str(), None, cancel.clone()).await?;
-      if body.response.url().host_str() == Some("accounts.google.com")
+      if super::hosts::sign_in_page(body.response.url())
         || matches!(body.response.status().as_u16(), 401 | 403 | 404 | 460)
       {
         return Err(Error::NotPublic);
@@ -851,7 +846,7 @@ impl Engine {
             } else if status == 403 {
               shared.limit.store(1, Ordering::Relaxed);
               Err(Error::Network)
-            } else if matches!(status, 408 | 500 | 502 | 504) {
+            } else if plan::TRANSIENT_STATUS.contains(&status) {
               Err(Error::Network)
             } else {
               self

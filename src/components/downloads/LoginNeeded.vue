@@ -7,7 +7,7 @@
     </p>
     <p class="mt-0.5 ps-5 text-[12px] leading-relaxed text-pretty">{{ t('downloads.login.privacy') }}</p>
     <p v-if="isMac" class="ps-5 text-[12px] leading-relaxed text-pretty">{{ t('downloads.login.keychain') }}</p>
-    <p v-if="card.request.reason === 'browserAppBound'" class="mt-1 ps-5 text-[12px]">{{ t('downloads.login.windowsAppBound') }}</p>
+    <p v-if="card.request.reason === LOGIN_APP_BOUND_REASON" class="mt-1 ps-5 text-[12px]">{{ t('downloads.login.windowsAppBound') }}</p>
     <div class="mt-2 flex flex-wrap items-center gap-2 ps-5">
       <template v-if="candidates.length > 1">
         <label :for="selectId" class="sr-only">{{ t('downloads.login.useFrom') }}</label>
@@ -46,6 +46,8 @@ import { browserName, candidateLabel } from '../../helpers/cookieBrowsers';
 import type { LoginCandidate } from '../../tauri/types/login';
 import { siteName } from '../../helpers/siteName';
 import { useSettingsStore } from '../../stores/settings';
+import { usePlatform } from '../../composables/usePlatform';
+import { COOKIE_BROWSER_AUTOMATIC, COOKIE_BROWSER_NEVER, LOGIN_APP_BOUND_REASON } from '@/generated/contract';
 
 const props = defineProps<{ card: LoginCard; site?: string }>();
 const emit = defineEmits<{ retry: [] }>();
@@ -54,7 +56,7 @@ const { t, locale } = useI18n();
 const loginStore = useLoginStore();
 const settingsStore = useSettingsStore();
 const selectId = useId();
-const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent);
+const { isMac } = usePlatform();
 const busy = ref(false);
 
 const host = computed(() => (props.card.kind === 'needed' ? props.card.request.host : props.card.failure.host));
@@ -82,7 +84,7 @@ const failedMessage = computed(() => {
   if (props.card.kind !== 'failed') return '';
   const site = siteLabel.value ?? t('downloads.login.thisSite');
   const { reason, browser: triedBrowser } = props.card.failure;
-  if (props.card.failure.hint === 'browserAppBound') return t('downloads.login.windowsAppBound');
+  if (props.card.failure.hint === LOGIN_APP_BOUND_REASON) return t('downloads.login.windowsAppBound');
   if (reason === 'exhausted') {
     return triedBrowser
       ? t('downloads.login.refusedBrowser', { site, browser: browserName(triedBrowser) })
@@ -93,8 +95,8 @@ const failedMessage = computed(() => {
   // Refused: name the browser that was really used, so the line never contradicts "Using Chrome · …" below it.
   if (usedBrowser.value) return t('downloads.login.stillFailing', { browser: browserName(usedBrowser.value) });
   const fixed = settingsStore.settings.auth.cookieBrowser;
-  if (fixed && !['none', 'automatic'].includes(fixed)) return t('downloads.login.stillFailing', { browser: browserName(fixed) });
-  return fixed === 'automatic' ? t('downloads.login.noBrowser', { site }) : t('downloads.login.turnedOff', { site });
+  if (fixed && fixed !== COOKIE_BROWSER_NEVER && fixed !== COOKIE_BROWSER_AUTOMATIC) return t('downloads.login.stillFailing', { browser: browserName(fixed) });
+  return fixed === COOKIE_BROWSER_AUTOMATIC ? t('downloads.login.noBrowser', { site }) : t('downloads.login.turnedOff', { site });
 });
 
 async function use() {

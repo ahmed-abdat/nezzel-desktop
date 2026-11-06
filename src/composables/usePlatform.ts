@@ -28,6 +28,12 @@ function askBackend() {
     .catch(e => console.warn('Unable to retrieve platform from Rust.', e));
 }
 
+/** The OS right now, outside a component (the backend's answer once it arrived, else the webview's guess). */
+export function currentPlatform(): Platform {
+  askBackend();
+  return platform.value;
+}
+
 export function usePlatform() {
   askBackend();
   const isWindows = computed(() => platform.value === Platform.Windows);

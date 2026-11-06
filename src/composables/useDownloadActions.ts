@@ -1,6 +1,7 @@
 import { computed, reactive, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
+import { copyText } from '../tauri/clipboard';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { useMediaStore } from '../stores/media/media';
 import { useMediaDiagnosticsStore } from '../stores/media/diagnostics';
@@ -8,10 +9,15 @@ import { useMediaOptionsStore } from '../stores/media/options';
 import { useMediaDestinationStore } from '../stores/media/destination';
 import { useToastStore } from '../stores/toast';
 import { revealsInFolder } from '../helpers/fileCategory';
+import { baseName } from '../helpers/folderPath';
+import { hasVideo as groupHasVideo } from '../helpers/groupView';
 import { hasAudio, optionsForChoice } from '../helpers/quickChoice';
 import { useOpener } from './useOpener';
-import { useDownloadList } from './useDownloadList';
+import { countUsage } from '../tauri/usage';
+import { useListRemoval } from './useListRemoval';
 import { useUiPrefs } from './useUiPrefs';
+import { currentPlatform } from './usePlatform';
+import { Platform } from '../tauri/types/app';
 import type { Group } from '../tauri/types/group';
 
 export type TrashResult = 'ok' | 'missing' | 'notOurs' | 'changed' | 'trashFailed';
@@ -28,24 +34,90 @@ export function trashCode(error: unknown): Exclude<TrashResult, 'ok'> {
 const refusedNotOurs = reactive(new Set<string>());
 export const isTrashRefused = (groupId: string) => refusedNotOurs.has(groupId);
 
-/** What a download row (or the sheet) can do to its group. Engine calls only, no UI. */
-export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: { reportErrors?: boolean } = {}) {
+/** Which name the OS gives its bin, for the confirm and result texts. */
+export const trashBinKind = () => (currentPlatform() === Platform.Windows ? 'recycleBin' : 'trash');
+
+/**
+ * The one low-level trash operation (row Delete and batch Delete files share it): moves the saved file to
+ * the OS Trash / Recycle Bin (never a hard delete) and drops the row. No prompt, no toast. A file that is
+ * already gone counts as done (the row goes too). Otherwise the engine's refusal code comes back.
+ */
+export async function trashGroupFile(groupId: string, path: string | undefined): Promise<TrashResult> {
+  if (!path) return 'notOurs';
+  const mediaStore = useMediaStore();
+  try {
+    await invoke('media_trash_file', { groupId, path });
+    mediaStore.deleteGroup(groupId);
+    return 'ok';
+  } catch (error) {
+    const code = trashCode(error);
+    if (code === 'missing') mediaStore.deleteGroup(groupId);
+    if (code === 'notOurs') refusedNotOurs.add(groupId);
+    return code;
+  }
+}
+
+/** Start / pause / retry for any group, passed per call (no shared ref): what a batch bar runs over its rows. */
+export function useGroupActions({ reportErrors = true }: { reportErrors?: boolean } = {}) {
   const { t } = useI18n();
   const mediaStore = useMediaStore();
   const optionsStore = useMediaOptionsStore();
-  const destinationStore = useMediaDestinationStore();
   const toastStore = useToastStore();
-  const { openPath, revealPath, openUrl } = useOpener();
-  const { removeRows } = useDownloadList();
   const { defaultChoice } = useUiPrefs();
 
   function reportError(key: string) {
     if (reportErrors) toastStore.showToast(t(key), { style: 'error' });
   }
 
+  async function downloadGroup(group: Group) {
+    let options = optionsStore.getOptions(group.id);
+    if (!options || (options.trackType === 'audio' && !hasAudio(group))) {
+      options = optionsForChoice(defaultChoice.value, group.formats ?? [], group.mediaKind);
+      optionsStore.setOptions(group.id, options);
+    }
+    const ok = await mediaStore.downloadGroup(group.id, options);
+    if (!ok) reportError('feedback.downloadFailed');
+    return ok === true;
+  }
+
+  async function pauseGroup(group: Group) {
+    countUsage('pause');
+    const ok = await mediaStore.pauseGroup(group.id);
+    if (!ok) reportError('feedback.pauseFailed');
+    return ok === true;
+  }
+
+  async function retryGroup(group: Group) {
+    countUsage('retry');
+    if (!group.url) {
+      reportError('media.card.toasts.retryError');
+      return false;
+    }
+    try {
+      await mediaStore.retryGroup(group.id);
+      return true;
+    } catch {
+      reportError('media.card.toasts.retryError');
+      return false;
+    }
+  }
+
+  return { downloadGroup, pauseGroup, retryGroup };
+}
+
+/** What a download row (or the sheet) can do to its group. Engine calls only, no UI. */
+export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: { reportErrors?: boolean } = {}) {
+  const { t } = useI18n();
+  const optionsStore = useMediaOptionsStore();
+  const destinationStore = useMediaDestinationStore();
+  const toastStore = useToastStore();
+  const { openPath, revealPath, openUrl } = useOpener();
+  const { removeRows } = useListRemoval();
+  const { downloadGroup, pauseGroup, retryGroup } = useGroupActions({ reportErrors });
+
   const diagnostics = useMediaDiagnosticsStore();
   const noAudioTrack = computed(() => diagnostics.findLastDiagnosticByGroupId(group.value.id)?.code === 'noAudioTrack');
-  const hasVideo = computed(() => group.value.mediaKind === 'video' || group.value.formats?.some(f => f.height || f.videoCodecs.some(c => !['', 'none', 'unknown'].includes((typeof c === 'string' ? c : c.id).toLowerCase()))));
+  const hasVideo = computed(() => groupHasVideo(group.value));
   /** The recovery is a different download (video instead of audio), not a retry: it gets its own icon. */
   const recoveryIsSwitch = computed(() => noAudioTrack.value && hasVideo.value);
   const recoveryLabel = computed(() => t(noAudioTrack.value ? (hasVideo.value ? 'downloads.row.downloadVideoInstead' : 'downloads.row.retryWithBest') : 'downloads.row.retry'));
@@ -56,41 +128,14 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
     return hasVideo.value ? download() : retry();
   }
 
-  async function download() {
-    let options = optionsStore.getOptions(group.value.id);
-    if (!options || (options.trackType === 'audio' && !hasAudio(group.value))) {
-      options = optionsForChoice(defaultChoice.value, group.value.formats ?? [], group.value.mediaKind);
-      optionsStore.setOptions(group.value.id, options);
-    }
-    const ok = await mediaStore.downloadGroup(group.value.id, options);
-    if (!ok) reportError('feedback.downloadFailed');
-    return ok === true;
-  }
-
-  async function pause() {
-    const ok = await mediaStore.pauseGroup(group.value.id);
-    if (!ok) reportError('feedback.pauseFailed');
-    return ok === true;
-  }
+  const download = () => downloadGroup(group.value);
+  const pause = () => pauseGroup(group.value);
 
   function remove() {
     removeRows([group.value.id]);
   }
 
-  async function retry() {
-    const url = group.value.url;
-    if (!url) {
-      reportError('media.card.toasts.retryError');
-      return false;
-    }
-    try {
-      await mediaStore.retryGroup(group.value.id);
-      return true;
-    } catch {
-      reportError('media.card.toasts.retryError');
-      return false;
-    }
-  }
+  const retry = () => retryGroup(group.value);
 
   const destination = () => destinationStore.getPrimaryDestination(group.value.id)?.path;
 
@@ -134,39 +179,21 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
     const url = group.value.url;
     if (!url) return;
     try {
-      await invoke('capture_write_clipboard', { text: url });
+      await copyText(url);
       toastStore.showToast(t('downloads.row.linkCopied'), { style: 'success' });
     } catch {
       toastStore.showToast(t('downloads.row.copyFailed'), { style: 'error' });
     }
   }
 
-  /**
-   * Moves the saved file to the OS Trash / Recycle Bin (never a hard delete) and drops the row. No prompt, no toast.
-   * A file that is already gone counts as done (the row goes too). Otherwise the engine's refusal code comes back.
-   */
-  async function trashFile(): Promise<TrashResult> {
-    const path = destination();
-    const id = group.value.id;
-    if (!path) return 'notOurs';
-    try {
-      await invoke('media_trash_file', { groupId: id, path });
-      mediaStore.deleteGroup(id);
-      return 'ok';
-    } catch (error) {
-      const code = trashCode(error);
-      if (code === 'missing') mediaStore.deleteGroup(id);
-      if (code === 'notOurs') refusedNotOurs.add(id);
-      return code;
-    }
-  }
+  const trashFile = () => trashGroupFile(group.value.id, destination());
 
   /** Asks first, then trashes the file. A refusal says why and offers the folder, so the user can do it by hand. */
   async function deleteFile() {
     const path = destination();
     if (!path) return;
-    const bin = /windows/i.test(navigator.userAgent) ? 'recycleBin' : 'trash';
-    const name = path.split(/[\\/]/).pop() ?? path;
+    const bin = trashBinKind();
+    const name = baseName(path);
     const ok = await confirm(t(`downloads.row.deleteConfirm.body.${bin}`, { name }), {
       title: t('downloads.row.deleteConfirm.title'),
       kind: 'warning',

@@ -205,6 +205,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Our own Sentry project (owner-set secret); unset means the build sends nothing.
           NEZZEL_SENTRY_DSN: ${{ secrets.NEZZEL_SENTRY_DSN }}
+          # Daily anonymous usage counts to our own Worker (docs/specs/usage-counts.md); unset means off.
+          NEZZEL_USAGE_URL: ${{ secrets.NEZZEL_USAGE_URL }}
           # TEMPORARY WORKAROUND:
           # This environment variable is needed to enable the new appimage features.
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: "true"

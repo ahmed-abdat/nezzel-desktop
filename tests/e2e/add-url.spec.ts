@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test';
 import { test } from './utils/fixtures';
+import { ROW_SELECTOR } from '../../src/helpers/domIds';
 
 test('a pasted link opens the options sheet with the three plain choices', async ({ page }) => {
   await page.goto('/');
@@ -12,7 +13,7 @@ test('a pasted link opens the options sheet with the three plain choices', async
   }
   await page.keyboard.press('Escape');
   await expect(sheet).toBeHidden();
-  await expect(page.locator('li.row').getByText('Test Video')).toBeVisible();
+  await expect(page.locator(ROW_SELECTOR).getByText('Test Video')).toBeVisible();
 });
 
 test('Cmd/Ctrl+V anywhere in the window pastes the copied link into the field', async ({ page, context }) => {

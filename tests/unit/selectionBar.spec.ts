@@ -8,7 +8,7 @@ import { useDownloadSelection } from '../../src/composables/useDownloadSelection
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaStateStore, MediaState } from '../../src/stores/media/state';
 import { useToastStore } from '../../src/stores/toast';
-import { useListHiddenStore } from '../../src/stores/listHidden';
+import { useListVisibilityStore } from '../../src/stores/listVisibility';
 import { installTauriMock } from '../utils/tauriMock';
 import type { Group } from '../../src/tauri/types/group';
 
@@ -38,11 +38,11 @@ describe('SelectionBar', () => {
 
     await wrapper.findAll('button').find(b => b.text() === 'Remove from list')!.trigger('click');
     expect(del).not.toHaveBeenCalled();
-    expect([...useListHiddenStore().ids]).toEqual(['a', 'b', 'c']);
+    expect([...useListVisibilityStore().ids]).toEqual(['a', 'b', 'c']);
     expect(useToastStore().toasts).toHaveLength(1);
     useToastStore().toasts[0].action!.run();
     await vi.advanceTimersByTimeAsync(5000);
-    expect([...useListHiddenStore().ids]).toEqual([]);
+    expect([...useListVisibilityStore().ids]).toEqual([]);
     expect(del).not.toHaveBeenCalled();
     expect(selection.count.value).toBe(0);
   });

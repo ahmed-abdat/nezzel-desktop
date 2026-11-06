@@ -15,6 +15,9 @@
     <settings-row for-id="sendReports" :label="t('report.setting.label')" :help="t('report.setting.help')">
       <Switch id="sendReports" :model-value="settings.privacy.sendReports" data-testid="settings-send-reports" @update:model-value="setSendReports" />
     </settings-row>
+    <settings-row for-id="sendUsage" :label="t('usage.setting.label')" :help="t('usage.setting.help')">
+      <Switch id="sendUsage" :model-value="settings.privacy.sendUsage" data-testid="settings-send-usage" @update:model-value="setSendUsage" />
+    </settings-row>
 
     <template #more>
       <settings-row
@@ -27,7 +30,7 @@
       <settings-row for-id="minimiseToTray" :label="t('prefs.adv.app.closeToTray')" :help="t('prefs.adv.app.closeToTrayHint')">
         <Switch id="minimiseToTray" v-model="minimiseToTray" :disabled="settings.system.trayEnabled === false" />
       </settings-row>
-      <fieldset class="border-b border-hairline py-3 last:border-b-0" :disabled="!canShowNotifications">
+      <settings-row bare as="fieldset" :disabled="!canShowNotifications">
         <legend class="float-start mb-1 w-full text-[13px]" :class="!canShowNotifications && 'opacity-50'">{{ t('prefs.adv.app.notifyWhich') }}</legend>
         <div class="grid grid-cols-1 gap-x-8 sm:grid-cols-2" :class="!canShowNotifications && 'opacity-50'">
           <label v-for="(label, kind) in notificationKindLabels" :key="kind" class="flex min-h-7 cursor-pointer items-center gap-2.5 text-[13px]">
@@ -35,7 +38,7 @@
             <span>{{ label }}</span>
           </label>
         </div>
-      </fieldset>
+      </settings-row>
     </template>
   </settings-section>
 </template>
@@ -48,7 +51,7 @@ import { SelectField } from '@/components/ui/select';
 import Switch from '@/components/ui/switch/Switch.vue';
 import SettingsRow from './SettingsRow.vue';
 import SettingsSection from './SettingsSection.vue';
-import { CloseBehavior, NotificationBehavior, Settings } from '../../tauri/types/config.ts';
+import { CloseBehavior, NotificationBehavior, Settings, type PrivacySettings } from '../../tauri/types/config.ts';
 import { NotificationKind } from '../../tauri/types/app';
 import { usePlatform } from '../../composables/usePlatform.ts';
 import { useSettingsStore } from '../../stores/settings';
@@ -59,11 +62,13 @@ const { isWindows, isMac } = usePlatform();
 const settings = defineModel<Settings>({ required: true });
 const settingsStore = useSettingsStore();
 
-/** Consent: saved at once, not after the page's save delay, so "off" holds even if the app closes now. */
-function setSendReports(on: boolean) {
-  settings.value.privacy.sendReports = on;
-  void settingsStore.patchNow({ privacy: { sendReports: on } });
+/** Consent: saved at once (`setPrivacy`). Usage off: Rust drops every count not yet sent. */
+async function setPrivacy(key: keyof PrivacySettings, on: boolean) {
+  settings.value.privacy[key] = on;
+  if (!await settingsStore.setPrivacy(key, on)) settings.value.privacy[key] = !on;
 }
+const setSendReports = (on: boolean) => void setPrivacy('sendReports', on);
+const setSendUsage = (on: boolean) => void setPrivacy('sendUsage', on);
 
 const behaviorOptions = computed(() => [
   { value: NotificationBehavior.Always, label: t('settings.notifications.behavior.options.always') },

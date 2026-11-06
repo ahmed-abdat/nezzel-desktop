@@ -1,4 +1,4 @@
-use crate::commands::{safe_library_root, FileAuthority};
+use crate::download_records::{safe_library_root, FileAuthority};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{

@@ -16,11 +16,22 @@ const offer = (): CaptureOffer => ({
   ...window.E2E.capture?.offer,
 });
 
+/** Calls the panel made, for e2e assertions (`page.evaluate(() => window.__captureCalls)`). */
+export type CaptureCall = { cmd: string; args?: unknown };
+const record = (cmd: string, args?: unknown) => {
+  const target = window as unknown as { __captureCalls?: CaptureCall[] };
+  (target.__captureCalls ??= []).push({ cmd, args });
+};
+
 const captureHandlers: Record<string, IPCHandler> = {
   capture_snapshot: () => offer(),
   capture_edit: () => undefined,
   capture_retry: () => undefined,
-  capture_action: () => {
+  capture_fit: (cmd, args) => {
+    record(cmd, args);
+  },
+  capture_action: (cmd, args) => {
+    record(cmd, args);
     if (window.E2E.capture?.action === 'pending') return new Promise(() => {});
     if (window.E2E.capture?.action === 'fail') return Promise.reject(new Error('capture_action failed'));
     return undefined;
@@ -33,7 +44,8 @@ export function installCaptureMock(label: string): void {
   mockWindows(label);
 }
 
-/** Push a new offer to a mounted capture panel, as the Rust side does. */
+/** Give a mounted capture panel a new offer, as the Rust side does: change the snapshot, then wake the panel. */
 export function pushCaptureOffer(value: Partial<CaptureOffer>): Promise<void> {
-  return emit('capture_update', { ...offer(), ...value });
+  window.E2E.capture = { ...window.E2E.capture, offer: { ...window.E2E.capture?.offer, ...value } };
+  return emit('capture_changed');
 }

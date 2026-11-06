@@ -1,33 +1,30 @@
 //! Ported from our Android FacebookPostIdentity / FacebookPageParser.
 //! Only root Story attachments and an explicitly requested currMedia photo can verify media.
-use super::{html, http, Outcome, Reason, Resolution};
+use super::{html, http, Reason, Resolution, Verdict};
 use regex::Regex;
 use reqwest::Url;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-pub(super) const MATCHER: crate::extract::registry::Matcher =
-  crate::extract::registry::Matcher::reader(
-    crate::extract::outcome::ReaderId::Facebook,
-    "facebook-post",
-    20,
-    |raw| Identity::parse(raw).is_some(),
-  );
-pub(super) const SHARE_MATCHER: crate::extract::registry::Matcher =
-  crate::extract::registry::Matcher::reader(
-    crate::extract::outcome::ReaderId::Facebook,
-    "facebook-share",
-    30,
-    |raw| Identity::parse(raw).is_some_and(|identity| identity.short),
-  );
-pub(super) const PHOTO_MATCHER: crate::extract::registry::Matcher =
-  crate::extract::registry::Matcher::reader(
-    crate::extract::outcome::ReaderId::Facebook,
-    "facebook-photo",
-    30,
-    |raw| Identity::parse(raw).is_some_and(|identity| identity.photo_id.is_some()),
-  );
+pub(super) const MATCHER: crate::routing::Matcher = crate::routing::Matcher::reader(
+  crate::routing::ReaderId::Facebook,
+  "facebook-post",
+  20,
+  |raw| Identity::parse(raw).is_some(),
+);
+pub(super) const SHARE_MATCHER: crate::routing::Matcher = crate::routing::Matcher::reader(
+  crate::routing::ReaderId::Facebook,
+  "facebook-share",
+  30,
+  |raw| Identity::parse(raw).is_some_and(|identity| identity.short),
+);
+pub(super) const PHOTO_MATCHER: crate::routing::Matcher = crate::routing::Matcher::reader(
+  crate::routing::ReaderId::Facebook,
+  "facebook-photo",
+  30,
+  |raw| Identity::parse(raw).is_some_and(|identity| identity.photo_id.is_some()),
+);
 
 const WWW: &str = "https://www.facebook.com";
 static SHAPES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
@@ -186,9 +183,9 @@ struct Story<'a> {
   media: Media,
 }
 
-pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Outcome {
+pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Verdict {
   let Some(tags) = html::tags(html) else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   let scripts: Vec<_> = tags
     .iter()
@@ -198,7 +195,7 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Outcome
   let mut tokens = 0;
   for script in scripts {
     if !json_budget(script.text, &mut tokens) {
-      return Outcome::Unknown;
+      return Verdict::Unknown;
     }
     if let Ok(root) = serde_json::from_str::<Value>(script.text) {
       roots.push((script.text.contains("RelayPrefetchedStreamCache"), root));
@@ -208,13 +205,13 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Outcome
   for (_, root) in &roots {
     if let Some(route) = route(root, 0) {
       if route == "CometErrorRoot.react" {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       }
       if route.starts_with("CometLogin") || route.contains("Checkpoint") {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       }
       if route.contains("Consent") {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       }
     }
   }
@@ -226,7 +223,7 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Outcome
           .get("action")
           .is_some_and(|action| action.contains("/consent")))
   }) {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   }
   if tags.iter().any(|t| {
     t.name == "form"
@@ -236,7 +233,7 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Outcome
           .get("action")
           .is_some_and(|v| v.contains("/login") || v.contains("/checkpoint")))
   }) {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   }
   let mut stories: BTreeMap<&str, Story<'_>> = BTreeMap::new();
   let mut conflicts = BTreeSet::new();
@@ -249,7 +246,7 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Outcome
     }
     blocks += 1;
     if blocks > 128 {
-      return Outcome::Unknown;
+      return Verdict::Unknown;
     }
     let mut data = Vec::new();
     results(root, 0, &mut data);
@@ -280,14 +277,14 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Outcome
           },
         );
         if stories.len() > 64 {
-          return Outcome::Unknown;
+          return Verdict::Unknown;
         }
       }
       if let Some(current) = item.get("currMedia") {
         currents.push(current);
       }
       if currents.len() > 64 {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       }
     }
   }
@@ -306,24 +303,24 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Outcome
     if currents.iter().any(|v| v["id"] == id && photo(v).is_some())
       || bound.is_some_and(|m| m.photos.contains(id))
     {
-      return Outcome::Verified(Resolution::Unsupported {
+      return Verdict::Verified(Resolution::Unsupported {
         reason: Reason::PhotosOnly,
       });
     }
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   }
   if let Some(media) = bound {
     if !media.photos.is_empty() && media.has_video {
       return if media.videos.len() == 1 {
-        Outcome::Verified(Resolution::Passthrough(watch(
+        Verdict::Verified(Resolution::Passthrough(watch(
           media.videos.first().unwrap(),
         )))
       } else {
-        Outcome::Unknown
+        Verdict::Unknown
       };
     }
     if !media.photos.is_empty() {
-      return Outcome::Verified(Resolution::Unsupported {
+      return Verdict::Verified(Resolution::Unsupported {
         reason: Reason::PhotosOnly,
       });
     }
@@ -331,7 +328,7 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Outcome
       && media.others == 0
       && media.videos.len() == 1
     {
-      return Outcome::Verified(Resolution::Passthrough(watch(
+      return Verdict::Verified(Resolution::Passthrough(watch(
         media.videos.first().unwrap(),
       )));
     }
@@ -347,12 +344,12 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Outcome
       .filter(|url| photo_cdn(url))
       .collect();
     if images.len() == 1 {
-      return Outcome::Verified(Resolution::Unsupported {
+      return Verdict::Verified(Resolution::Unsupported {
         reason: Reason::PhotosOnly,
       });
     }
   }
-  Outcome::Unknown
+  Verdict::Unknown
 }
 
 // Conservative lexical budget before allocating serde_json's tree. Strings count once;

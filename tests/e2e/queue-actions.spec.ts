@@ -1,5 +1,6 @@
 import { expect, Page } from '@playwright/test';
 import { test } from './utils/fixtures';
+import { ROW_SELECTOR } from '../../src/helpers/domIds';
 
 async function addUrl(page: Page, url: string) {
   await page.fill('#queue-url-input', url);
@@ -11,7 +12,7 @@ async function addUrl(page: Page, url: string) {
 test('status filters, search, remove from list and clear finished with undo', async ({ page }) => {
   await page.goto('/');
   for (let i = 1; i <= 3; i++) await addUrl(page, `https://example.com/video-clear-${i}`);
-  const rows = page.locator('li.row');
+  const rows = page.locator(ROW_SELECTOR);
   await expect(rows).toHaveCount(3);
 
   await page.evaluate(async () => {

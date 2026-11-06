@@ -1,5 +1,9 @@
 //! The first GET is a probe and remains open as segment zero.
 use super::{client::Response, names::suggested_name, plan::Validator, Error, Result};
+use crate::media_types::{
+  base_mime, ext_in, is_manifest_mime, FILE_EXTS, FILE_IMAGE_MIMES, MANIFEST_EXTS, MEDIA_EXTS,
+};
+use crate::sites::SiteId;
 use reqwest::Url;
 #[derive(Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -9,29 +13,16 @@ pub enum Kind {
   Unknown,
 }
 pub fn classify(url: &Url, mime: &str, disposition: Option<&[u8]>) -> Kind {
-  let mime = mime
-    .split(';')
-    .next()
-    .unwrap_or_default()
-    .trim()
-    .to_ascii_lowercase();
-  let ext = url
-    .path()
-    .rsplit('.')
-    .next()
-    .unwrap_or_default()
-    .to_ascii_lowercase();
+  let mime = base_mime(mime);
+  let ext = url.path().rsplit('.').next().unwrap_or_default();
   if mime.starts_with("video/")
     || mime.starts_with("audio/")
+    || is_manifest_mime(&mime)
     || matches!(
       mime.as_str(),
-      "application/vnd.apple.mpegurl"
-        | "application/x-mpegurl"
-        | "application/dash+xml"
-        | "application/rss+xml"
-        | "application/atom+xml"
+      "application/rss+xml" | "application/atom+xml"
     )
-    || matches!(ext.as_str(), "m3u8" | "m3u" | "mpd")
+    || ext_in(MANIFEST_EXTS, ext)
   {
     return Kind::Media;
   }
@@ -59,12 +50,8 @@ pub fn classify(url: &Url, mime: &str, disposition: Option<&[u8]>) -> Kind {
         | "application/x-apple-diskimage"
         | "application/x-iso9660-image"
         | "application/x-tar"
-        | "image/jpeg"
-        | "image/png"
-        | "image/webp"
-        | "image/gif"
-        | "image/avif"
     )
+    || FILE_IMAGE_MIMES.contains(&mime.as_str())
   {
     Kind::File
   } else {
@@ -80,53 +67,7 @@ pub(crate) fn file_extension(url: &Url) -> bool {
   if stem.is_empty() {
     return false;
   }
-  matches!(
-    extension.to_ascii_lowercase().as_str(),
-    "zip"
-      | "pdf"
-      | "exe"
-      | "msi"
-      | "dmg"
-      | "iso"
-      | "bin"
-      | "7z"
-      | "rar"
-      | "gz"
-      | "tgz"
-      | "bz2"
-      | "xz"
-      | "tar"
-      | "zst"
-      | "deb"
-      | "rpm"
-      | "appimage"
-      | "apk"
-      | "doc"
-      | "docx"
-      | "xls"
-      | "xlsx"
-      | "ppt"
-      | "pptx"
-      | "epub"
-      | "txt"
-      | "csv"
-      | "json"
-      | "xml"
-      | "jpg"
-      | "jpeg"
-      | "png"
-      | "gif"
-      | "webp"
-      | "avif"
-      | "svg"
-      | "psd"
-      | "ttf"
-      | "otf"
-      | "woff"
-      | "woff2"
-      | "torrent"
-      | "img"
-  )
+  ext_in(FILE_EXTS, extension)
 }
 /// Known extractor sites and host-share pages retain their current routing.
 pub(crate) fn should_probe_metadata(input: &str, total: usize, has_format: bool) -> bool {
@@ -135,6 +76,32 @@ pub(crate) fn should_probe_metadata(input: &str, total: usize, has_format: bool)
     && should_probe(input)
     && Url::parse(input).is_ok_and(|u| file_extension(&u))
 }
+/// Sites whose links are pages for an extractor, never a direct file to probe.
+const EXTRACTOR_SITES: &[SiteId] = {
+  use SiteId::*;
+  &[
+    YouTube,
+    Vimeo,
+    SoundCloud,
+    TikTok,
+    X,
+    Instagram,
+    Reddit,
+    Bluesky,
+    Pinterest,
+    Facebook,
+    Threads,
+    LinkedIn,
+    Telegram,
+    Snapchat,
+    Twitch,
+    Dailymotion,
+    GoogleDrive,
+    GoogleDocs,
+    Dropbox,
+  ]
+};
+
 pub fn should_probe(input: &str) -> bool {
   let Ok(url) = Url::parse(input) else {
     return false;
@@ -142,65 +109,13 @@ pub fn should_probe(input: &str) -> bool {
   if !matches!(url.scheme(), "http" | "https") {
     return false;
   }
-  let host = url
-    .host_str()
-    .unwrap_or_default()
-    .trim_start_matches("www.");
-  if [
-    "youtube.com",
-    "youtu.be",
-    "youtube-nocookie.com",
-    "vimeo.com",
-    "soundcloud.com",
-    "tiktok.com",
-    "x.com",
-    "twitter.com",
-    "instagram.com",
-    "reddit.com",
-    "redd.it",
-    "bsky.app",
-    "pinterest.com",
-    "pin.it",
-    "facebook.com",
-    "fb.watch",
-    "threads.net",
-    "threads.com",
-    "linkedin.com",
-    "t.me",
-    "telegram.me",
-    "snapchat.com",
-    "twitch.tv",
-    "dailymotion.com",
-    "drive.google.com",
-    "docs.google.com",
-    "dropbox.com",
-  ]
-  .iter()
-  .any(|h| host == *h || host.strip_suffix(h).is_some_and(|s| s.ends_with('.')))
+  if crate::sites::site_of(url.host_str().unwrap_or_default())
+    .is_some_and(|site| EXTRACTOR_SITES.contains(&site))
   {
     return false;
   }
-  !matches!(
-    url
-      .path()
-      .rsplit('.')
-      .next()
-      .unwrap_or_default()
-      .to_ascii_lowercase()
-      .as_str(),
-    "m3u8"
-      | "m3u"
-      | "mpd"
-      | "mp4"
-      | "mp3"
-      | "webm"
-      | "m4a"
-      | "ogg"
-      | "flac"
-      | "wav"
-      | "mov"
-      | "mkv"
-  )
+  let ext = url.path().rsplit('.').next().unwrap_or_default();
+  !(ext_in(MANIFEST_EXTS, ext) || ext_in(MEDIA_EXTS, ext))
 }
 pub struct Probe {
   pub(crate) source: String,

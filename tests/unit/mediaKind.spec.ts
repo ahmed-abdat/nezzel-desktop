@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mediaKind, savedAttachments, canOpenFile } from '../../src/helpers/mediaKind';
+import { mediaKind, savedAttachments } from '../../src/helpers/groupView';
+import { canOpenFile } from '../../src/helpers/fileCategory';
 import { TrackType, type MediaFormat } from '../../src/tauri/types/media';
 
 const fmt = (video: boolean, audio = true): MediaFormat => ({

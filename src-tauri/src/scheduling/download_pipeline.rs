@@ -141,9 +141,21 @@ pub fn setup_download_dispatcher(
     },
     |tx, app: AppHandle, entry: DownloadEntry| async move {
       tracing::info!(download_id = %entry.id, "Starting download");
+      crate::usage::download_started(&app, &entry);
 
       let result = crate::runners::gallery::run_media_download(app.clone(), entry.clone()).await;
       let succeeded = result.is_ok();
+      // A stop (pause, cancel, remove) returns Ok with the group no longer running.
+      let end = match &result {
+        Ok(()) if !crate::scheduling::group_state::is_group_running(&entry.group_id) => {
+          crate::usage::store::End::Cancelled
+        }
+        Ok(()) => crate::usage::store::End::Finished,
+        Err(_) => crate::usage::store::End::Failed,
+      };
+      if !matches!(result, Err(YtdlpDownloadError::LoginPending)) {
+        crate::usage::download_ended(&app, &entry, end);
+      }
       if let Err(e) = result {
         if matches!(e, YtdlpDownloadError::LoginPending) {
           return;

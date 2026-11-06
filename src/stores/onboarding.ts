@@ -10,8 +10,16 @@ import { useSettingsStore } from './settings';
  * and anyone with downloads in their library has used Nezzel before.
  */
 export function shouldShowWelcome(onboarding: OnboardingPreferences | undefined, libraryCount: number): boolean {
-  if (!onboarding || onboarding.welcomeDone) return false;
-  return libraryCount === 0;
+  return welcomePending(onboarding) && libraryCount === 0;
+}
+
+/** The welcome has not been completed and the state is known (the library check comes after). */
+function welcomePending(onboarding: OnboardingPreferences | undefined): onboarding is OnboardingPreferences {
+  return !!onboarding && !onboarding.welcomeDone;
+}
+
+function warnNotSaved(e: unknown): void {
+  console.warn('Unable to save the welcome state; it may show again next launch.', e);
 }
 
 export interface WelcomeChoices {
@@ -26,7 +34,7 @@ export const useOnboardingStore = defineStore('onboarding', () => {
 
   /** Called once after preferences load, before the app mounts. */
   async function decide(onboarding: OnboardingPreferences | undefined): Promise<void> {
-    if (!onboarding || onboarding.welcomeDone) {
+    if (!welcomePending(onboarding)) {
       showWelcome.value = false;
       return;
     }
@@ -41,7 +49,7 @@ export const useOnboardingStore = defineStore('onboarding', () => {
     showWelcome.value = shouldShowWelcome(onboarding, count);
     if (showWelcome.value) sawReportsSwitch.value = true;
     // An existing user: never ask again.
-    if (!showWelcome.value) void usePreferencesStore().patch({ onboarding: { welcomeDone: true } }).catch(() => {});
+    if (!showWelcome.value) void usePreferencesStore().patch({ onboarding: { welcomeDone: true } }).catch(warnNotSaved);
   }
 
   /** The card switch takes effect at once so "Try it" shows the real card. */
@@ -59,7 +67,7 @@ export const useOnboardingStore = defineStore('onboarding', () => {
         ? { autoStartEnabled: true, autoStartMinimised: true }
         : { autoStartEnabled: false },
     });
-    await usePreferencesStore().patch({ onboarding: { welcomeDone: true, reportsNoticeDone: true } }).catch(() => {});
+    await usePreferencesStore().patch({ onboarding: { welcomeDone: true, reportsNoticeDone: true } }).catch(warnNotSaved);
   }
 
   return { showWelcome, sawReportsSwitch, decide, setCard, complete };

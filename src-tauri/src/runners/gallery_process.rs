@@ -1,14 +1,13 @@
-use crate::binaries::bundled_tools::sidecar_candidates;
+use crate::binaries::bundled_tools::{self, exe_name, sidecar_candidates};
+use crate::extract::deadline::{wait_until, Interrupted};
 use crate::parsers::gallery::GalleryError;
-use crate::runners::ytdlp_process::{
-  configure_command, kill_platform_process, platform_process_from_child, PlatformProcess,
-};
+use crate::runners::tool_process::{Spawned, ToolProcess};
 use sha2::{Digest, Sha256};
 use std::{
   collections::HashMap,
   io::Read,
   path::{Path, PathBuf},
-  process::{Child, Command, Stdio},
+  process::{Command, Stdio},
   sync::{LazyLock, Mutex},
   time::{Duration, SystemTime},
 };
@@ -57,11 +56,8 @@ pub fn find_bundled(executable: &Path, resources: &Path) -> Result<PathBuf, Gall
     .split_whitespace()
     .next()
     .ok_or(GalleryError::Unavailable)?;
-  let name = if cfg!(windows) {
-    "gallery-dl.exe"
-  } else {
-    "gallery-dl"
-  };
+  let name = exe_name("gallery-dl");
+  let name = name.as_str();
   // macOS ships a PyInstaller onedir resource (tools/gallery-dl/gallery-dl): a onefile build
   // extracts Python to $TMPDIR, which the hardened-runtime signature refuses to load.
   let onedir = resources.join("tools").join("gallery-dl").join(name);
@@ -71,15 +67,8 @@ pub fn find_bundled(executable: &Path, resources: &Path) -> Result<PathBuf, Gall
     let Ok(metadata) = path.metadata() else {
       continue;
     };
-    if !metadata.is_file() || metadata.len() > 128 * 1024 * 1024 {
+    if metadata.len() > 128 * 1024 * 1024 || !bundled_tools::executable(&path) {
       continue;
-    }
-    #[cfg(unix)]
-    {
-      use std::os::unix::fs::PermissionsExt;
-      if metadata.permissions().mode() & 0o111 == 0 {
-        continue;
-      }
     }
     let stamp = FileStamp::new(&metadata);
     let mut verified = VERIFIED.lock().map_err(|_| GalleryError::Unavailable)?;
@@ -102,25 +91,6 @@ pub fn find_bundled(executable: &Path, resources: &Path) -> Result<PathBuf, Gall
     }
   }
   Err(GalleryError::Unavailable)
-}
-
-struct ChildGuard {
-  child: Child,
-  platform: PlatformProcess,
-  finished: bool,
-}
-impl Drop for ChildGuard {
-  fn drop(&mut self) {
-    if !self.finished {
-      kill_platform_process(&self.platform);
-      #[cfg(unix)]
-      unsafe {
-        libc::killpg(self.child.id() as i32, libc::SIGKILL);
-      }
-      let _ = self.child.kill();
-      let _ = self.child.wait();
-    }
-  }
 }
 
 fn read_bounded(reader: impl Read, limit: usize) -> Result<Vec<u8>, GalleryError> {
@@ -165,52 +135,38 @@ pub async fn execute(
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
-  configure_command(&mut command).map_err(|_| GalleryError::Unavailable)?;
-  let mut child = command.spawn().map_err(|_| GalleryError::Unavailable)?;
-  let platform = match platform_process_from_child(&child) {
-    Ok(platform) => platform,
-    Err(_) => {
-      let _ = child.kill();
-      let _ = child.wait();
-      return Err(GalleryError::Unavailable);
-    }
+  let Spawned {
+    mut process,
+    stdout,
+    stderr,
+  } = ToolProcess::spawn(&mut command, ()).map_err(|_| GalleryError::Unavailable)?;
+  let stdout = stdout.ok_or(GalleryError::Invalid)?;
+  let stderr = stderr.ok_or(GalleryError::Invalid)?;
+  let out_task = tokio::task::spawn_blocking(move || read_bounded(stdout, 8 * 1024 * 1024));
+  let err_task = tokio::task::spawn_blocking(move || read_diagnostics(stderr, 128 * 1024));
+  let run = async {
+    tokio::try_join!(
+      async {
+        let status = process.wait().await.map_err(|_| GalleryError::Invalid)?;
+        Ok(status.code().unwrap_or(1))
+      },
+      async { out_task.await.map_err(|_| GalleryError::Invalid)? },
+      async { err_task.await.map_err(|_| GalleryError::Invalid)? },
+    )
   };
-  let stdout = child.stdout.take().ok_or(GalleryError::Invalid)?;
-  let stderr = child.stderr.take().ok_or(GalleryError::Invalid)?;
-  let mut guard = ChildGuard {
-    child,
-    platform,
-    finished: false,
+  let deadline = tokio::time::Instant::now() + deadline;
+  let (code, stdout, stderr) = match wait_until(run, deadline, &mut cancel).await {
+    Ok(output) => output?,
+    Err(Interrupted::Cancelled) => return Err(GalleryError::Cancelled),
+    Err(Interrupted::Timeout) => return Err(GalleryError::Refused("imageSourceUnavailable")),
   };
-  let mut out_task = tokio::task::spawn_blocking(move || read_bounded(stdout, 8 * 1024 * 1024));
-  let mut err_task = tokio::task::spawn_blocking(move || read_diagnostics(stderr, 128 * 1024));
-  let mut out = None;
-  let mut err = None;
-  let mut code = None;
-  let timeout = tokio::time::sleep(deadline);
-  tokio::pin!(timeout);
-  let mut tick = tokio::time::interval(Duration::from_millis(25));
-  loop {
-    tokio::select! {
-      _ = &mut timeout => return Err(GalleryError::Refused("imageSourceUnavailable")),
-      changed = cancel.changed() => if changed.is_err() || !*cancel.borrow() { return Err(GalleryError::Cancelled); },
-      result = &mut out_task, if out.is_none() => out = Some(result.map_err(|_| GalleryError::Invalid)??),
-      result = &mut err_task, if err.is_none() => err = Some(result.map_err(|_| GalleryError::Invalid)??),
-      _ = tick.tick(), if code.is_none() => {
-        if let Some(status) = guard.child.try_wait().map_err(|_| GalleryError::Invalid)? { code = Some(status.code().unwrap_or(1)); }
-      }
-    }
-    if let (Some(code), Some(_), Some(_)) = (code, out.as_ref(), err.as_ref()) {
-      guard.finished = true;
-      #[cfg(feature = "link-matrix")]
-      crate::link_matrix::observe_gallery_stderr(err.as_ref().unwrap());
-      return Ok(GalleryOutput {
-        code,
-        stdout: out.unwrap(),
-        stderr: err.unwrap(),
-      });
-    }
-  }
+  #[cfg(feature = "link-matrix")]
+  crate::link_matrix::observe_gallery_stderr(&stderr);
+  Ok(GalleryOutput {
+    code,
+    stdout,
+    stderr,
+  })
 }
 
 #[cfg(test)]
@@ -220,11 +176,7 @@ mod tests {
   fn only_checksum_verified_bundled_sidecars_are_accepted() {
     let root = std::env::temp_dir().join(format!("gallery-resolve-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
-    let binary = root.join(if cfg!(windows) {
-      "gallery-dl.exe"
-    } else {
-      "gallery-dl"
-    });
+    let binary = root.join(exe_name("gallery-dl"));
     std::fs::write(&binary, b"verified executable").unwrap();
     #[cfg(unix)]
     {

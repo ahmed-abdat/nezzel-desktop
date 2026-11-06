@@ -52,7 +52,7 @@
         </settings-row>
       </settings-section>
 
-      <prefs-advanced>
+      <base-disclosure class="mt-8" :label="t('perDownload.advanced')">
         <p class="pb-1 text-nz-caption text-muted-foreground">{{ t('inputFilters.advanced.hint') }}</p>
         <settings-row stacked for-id="input-filters-match-filters" :label="t('inputFilters.fields.matchFilters.label')" :help="t('inputFilters.fields.matchFilters.hint')">
           <Textarea
@@ -74,7 +74,7 @@
             class="py-1.5 font-mono text-[12px]"
             :placeholder="t('inputFilters.fields.breakMatchFilters.placeholder')" />
         </settings-row>
-      </prefs-advanced>
+      </base-disclosure>
     </div>
   </form>
 </template>
@@ -90,7 +90,7 @@ import { DatePicker } from '../../components/ui/date-picker';
 import { SelectField } from '../../components/ui/select';
 import SettingsRow from '../../components/settings/SettingsRow.vue';
 import SettingsSection from '../../components/settings/SettingsSection.vue';
-import PrefsAdvanced from '../../components/media-view/PrefsAdvanced.vue';
+import BaseDisclosure from '../../components/base/BaseDisclosure.vue';
 import {
   applyDatePreset,
   cloneInputFilterSettings,

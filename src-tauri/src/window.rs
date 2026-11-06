@@ -84,10 +84,10 @@ fn should_persist(batch: Option<u64>, now: u64, maximized: Option<bool>) -> bool
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn should_toggle_resizable(
   focused: bool,
-  session: crate::capture::clipboard::Session,
+  session: crate::platform::Session,
   maximized: Option<bool>,
 ) -> bool {
-  focused && session == crate::capture::clipboard::Session::Wayland && is_normal(maximized)
+  focused && session == crate::platform::Session::Wayland && is_normal(maximized)
 }
 
 fn main_maximized(app: &AppHandle<Wry>) -> Option<bool> {
@@ -338,7 +338,7 @@ fn fit_main_window_on_screen(window: &WebviewWindow, restored: Option<PhysicalSi
   // Wayland never reveals a window's real position (tao reports cached numbers) and ignores moves:
   // fit the size only and let the compositor place it.
   let wayland = cfg!(target_os = "linux")
-    && crate::capture::clipboard::current_session() == crate::capture::clipboard::Session::Wayland;
+    && crate::platform::current_session() == crate::platform::Session::Wayland;
   let work = monitor.work_area();
   let area = usable_area(
     (
@@ -468,11 +468,7 @@ pub fn track_main_window(app: &AppHandle<Wry>) {
       WindowEvent::Focused(focused) => {
         let maximized = window_for_events.is_maximized().ok();
         debouncer.observe(maximized);
-        if !should_toggle_resizable(
-          *focused,
-          crate::capture::clipboard::current_session(),
-          maximized,
-        ) {
+        if !should_toggle_resizable(*focused, crate::platform::current_session(), maximized) {
           return;
         }
 
@@ -564,7 +560,7 @@ fn window_rect_is_on_some_monitor(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::capture::clipboard::Session;
+  use crate::platform::Session;
 
   #[test]
   fn close_hides_only_into_a_tray_that_exists() {

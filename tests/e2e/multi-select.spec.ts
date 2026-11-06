@@ -1,5 +1,6 @@
 import { expect, Page } from '@playwright/test';
 import { test } from './utils/fixtures';
+import { ROW_SELECTOR } from '../../src/helpers/domIds';
 
 /** Set SELECT_SHOTS=<dir> to also save screenshots for a visual check. */
 const SHOTS = process.env.SELECT_SHOTS;
@@ -30,7 +31,7 @@ for (const locale of ['en', 'ar'] as const) {
     const t = copy[locale];
     await page.goto('/');
     for (let i = 1; i <= 4; i++) await addUrl(page, `https://example.com/video-select-${i}`);
-    const rows = page.locator('li.row');
+    const rows = page.locator(ROW_SELECTOR);
     await expect(rows).toHaveCount(4);
 
     // Two ready, one failed, one finished.
@@ -54,7 +55,7 @@ for (const locale of ['en', 'ar'] as const) {
       modifiers.includes('Control')
         ? rows.nth(i).dispatchEvent('click', { ctrlKey: true, bubbles: true })
         : rows.nth(i).click({ modifiers, position: { x: 400, y: 4 } });
-    const selectedRows = page.locator('li.row[aria-selected="true"]');
+    const selectedRows = page.locator(`${ROW_SELECTOR}[aria-selected="true"]`);
 
     await expect(bar).toHaveCount(0);
     // The options panel from the last add must be gone: its close widens the list past the column

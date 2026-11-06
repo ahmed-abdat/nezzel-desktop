@@ -4,6 +4,7 @@ pub async fn resolve(mut command: tokio::process::Command) -> Option<String> {
   command
     .kill_on_drop(true)
     .stderr(std::process::Stdio::null());
+  // No console window on Windows: `tool_process::async_command` built `command` (CREATE_NO_WINDOW).
   let result = tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
     .await
     .ok()?
@@ -19,7 +20,7 @@ pub async fn resolve(mut command: tokio::process::Command) -> Option<String> {
 #[cfg(target_os = "macos")]
 pub async fn request() -> Option<tokio::process::Command> {
   // NSWorkspace reads the frontmost bundle without asking System Events for Accessibility.
-  let mut frontmost = tokio::process::Command::new("/usr/bin/osascript");
+  let mut frontmost = crate::runners::tool_process::async_command("/usr/bin/osascript").ok()?;
   frontmost.args([
     "-l",
     "JavaScript",
@@ -27,26 +28,19 @@ pub async fn request() -> Option<tokio::process::Command> {
     "ObjC.import('AppKit'); $.NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier.js",
   ]);
   let bundle = resolve(frontmost).await?;
-  let script = match bundle.as_str() {
-    "com.apple.Safari" => {
-      "tell application id \"com.apple.Safari\" to get URL of current tab of front window"
-    }
-    "com.google.Chrome" => {
-      "tell application id \"com.google.Chrome\" to get URL of active tab of front window"
-    }
-    "com.microsoft.edgemac" => {
-      "tell application id \"com.microsoft.edgemac\" to get URL of active tab of front window"
-    }
-    "com.brave.Browser" => {
-      "tell application id \"com.brave.Browser\" to get URL of active tab of front window"
-    }
-    "company.thebrowser.Browser" => {
-      "tell application id \"company.thebrowser.Browser\" to get URL of active tab of front window"
-    }
-    _ => return None,
+  use crate::runners::browsers::{BrowserKind, CookieStore};
+  let kind = BrowserKind::from_mac_bundle(&bundle)?;
+  let tab = if kind.store() == CookieStore::Safari {
+    "current tab"
+  } else {
+    "active tab"
   };
-  let mut command = tokio::process::Command::new("/usr/bin/osascript");
-  command.args(["-e", script]);
+  let script = format!(
+    "tell application id \"{}\" to get URL of {tab} of front window",
+    kind.mac_bundle()?
+  );
+  let mut command = crate::runners::tool_process::async_command("/usr/bin/osascript").ok()?;
+  command.args(["-e", &script]);
   Some(command)
 }
 
@@ -54,7 +48,7 @@ pub async fn request() -> Option<tokio::process::Command> {
 pub async fn request() -> Option<tokio::process::Command> {
   // UI Automation only inspects edit controls in the foreground browser; never activates it
   // or sends keystrokes. PowerShell ships with Windows, so no additional runtime is needed.
-  let mut foreground = tokio::process::Command::new("powershell.exe");
+  let mut foreground = crate::runners::tool_process::async_command("powershell.exe").ok()?;
   foreground.args(["-NoProfile", "-NonInteractive", "-Command", "Add-Type 'using System; using System.Runtime.InteropServices; public class NezzelForeground { [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); }'; [Console]::Write([NezzelForeground]::GetForegroundWindow().ToInt64())"]);
   let hwnd: i64 = resolve(foreground).await?.parse().ok()?;
   let script = r#"
@@ -63,7 +57,7 @@ Add-Type -AssemblyName UIAutomationTypes
 Add-Type 'using System; using System.Runtime.InteropServices; public class NezzelForeground { [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); }'
 $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]::new(NEZZEL_HWND))
 $process = Get-Process -Id $root.Current.ProcessId
-if ($process.ProcessName -notin @('chrome','msedge','brave','firefox','opera','vivaldi','arc')) { exit }
+if ($process.ProcessName -notin @(NEZZEL_PROCESSES)) { exit }
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
 $edits = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
 foreach ($edit in $edits) {
@@ -75,12 +69,18 @@ foreach ($edit in $edits) {
   if ($value -match '^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/') { [Console]::Write('https://' + $value); exit }
 }
 "#;
-  let mut command = tokio::process::Command::new("powershell.exe");
+  let processes = crate::runners::browsers::BrowserKind::windows_processes()
+    .map(|name| format!("'{name}'"))
+    .collect::<Vec<_>>()
+    .join(",");
+  let mut command = crate::runners::tool_process::async_command("powershell.exe").ok()?;
   command.args([
     "-NoProfile",
     "-NonInteractive",
     "-Command",
-    &script.replace("NEZZEL_HWND", &hwnd.to_string()),
+    &script
+      .replace("NEZZEL_HWND", &hwnd.to_string())
+      .replace("NEZZEL_PROCESSES", &processes),
   ]);
   Some(command)
 }

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import type { MediaDestinationPayload } from '../../tauri/types/destination';
-import { libraryPathKey, type LibraryRecord } from '../../tauri/types/library';
+import type { LibraryRecord } from '../../tauri/types/library';
+import { libraryPathKey } from '../../helpers/folderPath';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 import { MediaState, useMediaStateStore } from './state';
@@ -12,12 +13,15 @@ import { DownloadOptions, DownloadOverrides, MediaAddPayload, MediaItem, TrackTy
 import { useMediaSizeStore } from './size.ts';
 import { useMediaDiagnosticsStore } from './diagnostics.ts';
 import { useSettingsStore } from '../settings.ts';
-import { useListClearedStore } from '../listCleared';
+import { useListVisibilityStore } from '../listVisibility';
+import { useLoginStore } from '../login';
 import { Group } from '../../tauri/types/group.ts';
 import { notify, notifyGroup } from '../../tauri/notifications';
 import { NotificationKind } from '../../tauri/types/app';
 import { resolvePlaylistIndex } from '../../helpers/playlistNumbering';
-import { optionsForChoice, type QuickChoice } from '../../helpers/quickChoice';
+import { optionsForCaptureChoice } from '../../helpers/captureChoices';
+import type { CaptureChoice } from '@/generated/contract';
+import { countUsage } from '../../tauri/usage';
 import { settingsToInputFilterOverride } from '../../helpers/inputFilters.ts';
 import {
   applyPlaylistSelectionToEntries,
@@ -105,6 +109,7 @@ export const useMediaStore = defineStore('media', () => {
 
   // Only the arriving destination can become a duplicate; no traversal on unrelated state changes.
   function processMediaDestinationPayload(payload: MediaDestinationPayload) {
+    if (!groupStore.findGroupById(payload.groupId)) return;
     destinationStore.processMediaDestinationPayload(payload);
     const key = libraryPathKey(payload.destination.path);
     const duplicates = libraryGroupsByPath.get(key);
@@ -117,6 +122,7 @@ export const useMediaStore = defineStore('media', () => {
       else {
         destinationStore.deleteDestinations(id);
         stateStore.removeState(id);
+        useLoginStore().forgetGroup(id);
         groupStore.deleteGroup(id);
       }
     }
@@ -144,6 +150,8 @@ export const useMediaStore = defineStore('media', () => {
     const overrides = optionsStore.getOverrides(group.id);
     if (group.total < splitThreshold) {
       const newGroups = groupStore.splitGroup(group);
+      // splitGroup removed the playlist row: its pending login card goes with it.
+      useLoginStore().forgetGroup(group.id);
       migrateOverrides(group.id, newGroups.map(newGroup => newGroup.id), overrides);
       void notifyGroup(NotificationKind.PlaylistReady, group, {}, newGroups.length);
       resolvePendingReadyGroup(group.id, newGroups.map(newGroup => newGroup.id));
@@ -280,9 +288,9 @@ export const useMediaStore = defineStore('media', () => {
     url: string,
     fromShortcut: boolean = false,
     skipPlaylistSelection: boolean = false,
+    groupId: string = uuidv4(),
   ) {
     const id = uuidv4();
-    const groupId = uuidv4();
 
     stateStore.setState(id, MediaState.fetching);
     const newGroup: Group = {
@@ -324,8 +332,9 @@ export const useMediaStore = defineStore('media', () => {
     return newGroup;
   }
 
-  function createCaptureGroup(url: string, download: boolean) {
-    const group = createMediaInfoGroup(url, true, download);
+  /** A captured link's row; `groupId` comes from its capture id, so a later claim on it finds the same row. */
+  function createCaptureGroup(groupId: string, url: string, download: boolean) {
+    const group = createMediaInfoGroup(url, true, download, groupId);
     recentCaptures.set(url, { groupId: group.id, createdAt: Date.now() });
     void notifyGroup(NotificationKind.QueueAdded, group);
     return group.id;
@@ -457,29 +466,37 @@ export const useMediaStore = defineStore('media', () => {
     )];
 
     await notify(NotificationKind.QueueDownloading, { n: readyGroupIds.length.toString() }, fromShortcut);
+    const origin = readyGroupIds.length > 1 ? 'batch' : undefined;
+    if (origin) countUsage('funnel.batch');
     await Promise.all(
-      readyGroupIds.map(groupId => downloadGroup(groupId, getDownloadOptions(groupId))),
+      readyGroupIds.map(groupId => downloadGroup(groupId, getDownloadOptions(groupId), origin)),
     );
 
     return readyGroupIds;
   }
 
   /** `choice`: a quick pick from the bar or card; it decides this download's options once the link is read. */
-  async function downloadPreparedGroup(groupId: string, choice?: QuickChoice) {
+  /** `choice`: a quick pick or a copied-link card format row; none = the user's default. */
+  async function downloadPreparedGroup(groupId: string, choice?: CaptureChoice) {
     const ready = await waitForGroupReady(groupId);
     await Promise.all(ready.map((id) => {
       const group = groupStore.findGroupById(id);
-      if (choice && group) optionsStore.setOptions(id, optionsForChoice(choice, group.formats ?? [], group.mediaKind));
+      if (choice && group) optionsStore.setOptions(id, optionsForCaptureChoice(choice, group.formats ?? [], group.mediaKind));
       return downloadGroup(id, getDownloadOptions(id));
     }));
   }
 
+  /** `origin`: 'batch' when one action starts several links (the caller counts funnel.batch once); a paused group
+   * is a resume (usage counts only). */
   async function downloadGroup(
     groupId: string,
     options: DownloadOptions,
+    origin?: 'batch',
   ) {
     const group = groupStore.findGroupById(groupId);
     if (!group) return;
+    const prior = stateStore.getGroupState(groupId);
+    const usageOrigin = prior === MediaState.paused || prior === MediaState.pausedList ? 'resume' : origin ?? 'tap';
 
     const items: MediaItem[] = Object.values(group.items);
     const itemsWithoutLeader: MediaItem[] = items.filter(item => !item.entries && stateStore.getState(item.id) !== MediaState.done);
@@ -507,6 +524,7 @@ export const useMediaStore = defineStore('media', () => {
     try {
       await invoke<string>('media_download', {
         groupId,
+        origin: usageOrigin,
         metadata: Object.fromEntries(itemsWithoutLeader.map(item => [item.id, { title: item.title, site: item.extractor, thumbnail: item.thumbnail }])),
         items: itemsWithoutLeader.map(item => ({
           id: item.id,
@@ -593,14 +611,17 @@ export const useMediaStore = defineStore('media', () => {
     const group_ids = groupStore.groupOrder
       .filter(gid => stateStore.getGroupState(gid) === MediaState.configure);
 
+    const origin = group_ids.length > 1 ? 'batch' : undefined;
+    if (origin) countUsage('funnel.batch');
     await Promise.all(group_ids.map((gid) => {
       const opts = getDownloadOptions(gid);
-      return downloadGroup(gid, opts);
+      return downloadGroup(gid, opts, origin);
     }));
     await notify(NotificationKind.QueueDownloading, { n: group_ids.length.toString() }, fromShortcut);
   }
 
   function pauseAllGroups() {
+    countUsage('pause_all');
     for (const groupId of groupStore.groupOrder) {
       const state = stateStore.getGroupState(groupId);
       if (state === MediaState.downloading || state === MediaState.downloadingList) {
@@ -623,6 +644,8 @@ export const useMediaStore = defineStore('media', () => {
   }
 
   function deleteGroup(id: string, removeHistory = true) {
+    // Even when the row is already gone, a login card may still wait for it.
+    useLoginStore().forgetGroup(id);
     const group = groupStore.findGroupById(id);
     if (!group) return;
     const paths = destinationStore.getDestinations(id).map(d => d.path);
@@ -630,7 +653,7 @@ export const useMediaStore = defineStore('media', () => {
       for (const path of paths) removedLibraryPaths.add(libraryPathKey(path));
       queueLibraryRemoval(paths);
       // History is gone, so is the "removed from list" mark: a later download to this path must show.
-      useListClearedStore().forget(paths);
+      useListVisibilityStore().forget(paths);
     }
     for (const path of paths) forgetLibraryPath(id, path);
     for (const itemId of Object.keys(group.items)) {

@@ -12,7 +12,7 @@ use tauri::{
   WebviewWindowBuilder, WindowEvent,
 };
 
-const NOTE_LABEL: &str = "close-note";
+pub(crate) const NOTE_LABEL: &str = "close-note";
 const NOTE_WIDTH: f64 = 340.;
 /// Matches the prototype's first-close shrink.
 const SHRINK_MS: u64 = 380;
@@ -97,16 +97,6 @@ fn ease_in(t: f64) -> f64 {
   t * t * t
 }
 
-pub fn os_name() -> &'static str {
-  if cfg!(target_os = "macos") {
-    "mac"
-  } else if cfg!(target_os = "windows") {
-    "windows"
-  } else {
-    "linux"
-  }
-}
-
 #[cfg(target_os = "macos")]
 fn set_dock(app: &AppHandle, visible: bool) {
   use tauri::ActivationPolicy;
@@ -127,6 +117,9 @@ pub fn show_main(app: &AppHandle) {
     return;
   };
   app.state::<BackgroundState>().transitions.begin();
+  if !window.is_visible().unwrap_or(true) {
+    crate::usage::opened(app);
+  }
   set_dock(app, true);
   let _ = window.unminimize();
   let _ = window.show();
@@ -163,6 +156,7 @@ pub fn track_dock(app: &AppHandle) {
 
 /// Close button: hide into the tray. The very first time, shrink into the tray and explain.
 pub fn close_to_tray(app: &AppHandle) {
+  crate::usage::count(app, crate::usage::keys::TRAY_HIDDEN);
   let ticket = app.state::<BackgroundState>().transitions.begin();
   if app
     .state::<SharedPreferences>()
@@ -270,7 +264,7 @@ fn tray_anchor(app: &AppHandle) -> Option<(f64, f64, Edge)> {
   Some(panel_anchor(
     screen,
     work,
-    crate::capture::clipboard::current_desktop(),
+    crate::platform::current_desktop(),
   ))
 }
 
@@ -280,7 +274,7 @@ fn tray_anchor(app: &AppHandle) -> Option<(f64, f64, Edge)> {
 pub fn panel_anchor(
   screen: Area,
   work: Area,
-  desktop: crate::capture::clipboard::Desktop,
+  desktop: crate::platform::Desktop,
 ) -> (f64, f64, Edge) {
   let end_x = screen.x + screen.w - 60.;
   let top_gap = work.y - screen.y;
@@ -288,7 +282,7 @@ pub fn panel_anchor(
   if bottom_gap > top_gap.max(0.) && bottom_gap > 0. {
     return (end_x, work.y + work.h + bottom_gap / 2., Edge::Bottom);
   }
-  if top_gap <= 0. && desktop == crate::capture::clipboard::Desktop::Kde {
+  if top_gap <= 0. && desktop == crate::platform::Desktop::Kde {
     let bar = 44.;
     return (end_x, screen.y + screen.h - bar / 2., Edge::Bottom);
   }
@@ -388,8 +382,8 @@ fn open_note(app: &AppHandle, anchor: Option<(f64, f64, Edge)>) -> tauri::Result
   };
   let url = format!(
     "index.html?window={NOTE_LABEL}&os={}&desktop={}&edge={edge}&nx={}",
-    os_name(),
-    crate::capture::clipboard::current_desktop().as_str(),
+    crate::platform::os_name(),
+    crate::platform::current_desktop().as_str(),
     placement.arrow_x.round()
   );
   if let Some(old) = app.get_webview_window(NOTE_LABEL) {
@@ -489,7 +483,7 @@ mod tests {
 
   #[test]
   fn note_follows_the_panel_when_the_tray_rect_is_unknown() {
-    use crate::capture::clipboard::Desktop;
+    use crate::platform::Desktop;
     let screen = Area {
       x: 0.,
       y: 0.,

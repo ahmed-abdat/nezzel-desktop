@@ -1,9 +1,10 @@
 import { expect } from '@playwright/test';
 import { test } from './utils/fixtures';
+import { MAIN_PANE_ID } from '../../src/helpers/domIds';
 
 const openAbout = async (page: import('@playwright/test').Page) => {
   await page.goto('/');
-  await expect(page.locator('#nz-main')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(`#${MAIN_PANE_ID}`)).toBeVisible({ timeout: 20_000 });
   await page.evaluate(async () => {
     // @ts-expect-error served by the Vite dev server, not resolved by tsc
     const { seed } = await import('/tests/e2e/utils/uiStateSeeds.ts');

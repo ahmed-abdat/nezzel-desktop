@@ -4,6 +4,7 @@
  */
 import { expect, type Page } from '@playwright/test';
 import { test } from './utils/fixtures';
+import { MAIN_PANE_ID } from '../../src/helpers/domIds';
 
 async function openGeneral(page: Page, language: 'en' | 'ar') {
   await page.route(/^https?:\/\/(?!localhost)/, route => route.abort());
@@ -13,7 +14,7 @@ async function openGeneral(page: Page, language: 'en' | 'ar') {
   }, { settings: { appearance: { language, theme: 'light' } } });
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('lang', language);
-  await expect(page.locator('#nz-main')).toBeVisible({ timeout: 30_000 }); // first load waits for Vite
+  await expect(page.locator(`#${MAIN_PANE_ID}`)).toBeVisible({ timeout: 30_000 }); // first load waits for Vite
   await page.evaluate(async () => {
     // @ts-expect-error served by the Vite dev server, not resolved by tsc
     const { seed } = await import('/tests/e2e/utils/uiStateSeeds.ts');

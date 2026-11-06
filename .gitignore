@@ -61,6 +61,8 @@ report.md
 research/
 url-import-test.csv
 docs/OPEN_DECISIONS.md
+docs/improve/
+docs/untangle/
 scripts/login-check.sh
 scripts/public-export.sh
 .public-exclude

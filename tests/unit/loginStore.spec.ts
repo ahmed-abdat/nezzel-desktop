@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emit } from '@tauri-apps/api/event';
-import { LOGIN_TTL_MS, useLoginStore } from '../../src/stores/login';
+import { LOGIN_TTL_MS } from '../../src/generated/contract';
+import { useLoginStore } from '../../src/stores/login';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
 import { useMediaStore } from '../../src/stores/media/media';
@@ -100,7 +101,7 @@ describe('login store', () => {
   it('preselects signed-in evidence ahead of the first and previously tried profile', () => {
     const store = useLoginStore();
     const signedIn = { ...firefox, signedIn: true };
-    store.tried['www.instagram.com'] = signedIn.id;
+    store.tried['www.instagram.com'] = { id: signedIn.id, browser: signedIn.browser };
     store.receive(request({ candidates: [chrome, signedIn] }));
     expect(store.cardFor('g1')).toMatchObject({ preselect: signedIn.id });
   });

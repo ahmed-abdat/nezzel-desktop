@@ -1,4 +1,4 @@
-"""Offline image-sidecar bootstrap checks, also run on the Vitest push path."""
+"""Offline image-sidecar bootstrap checks (`pnpm run test:tools`: Rust CI + nightly)."""
 import importlib.util
 from pathlib import Path
 import tempfile

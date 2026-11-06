@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test';
 import { test } from './utils/fixtures';
+import { MAIN_PANE_ID } from '../../src/helpers/domIds';
 
 test.use({ mockData: { preferences: { onboarding: { welcomeDone: false, closeNoteDone: false } } } });
 
@@ -46,7 +47,7 @@ test('keyboard: Tab goes through the switches to Get started, with a visible foc
   await page.keyboard.press('Enter');
   await expect(welcome).toBeHidden();
   // The focused button went away with the sheet: focus lands on the main content, not the page body.
-  await expect(page.locator('#nz-main')).toBeFocused();
+  await expect(page.locator(`#${MAIN_PANE_ID}`)).toBeFocused();
 });
 
 // #36, Fedora KDE Wayland 1280×800: 704 is the window that fits above the panel, 600 a smaller screen.

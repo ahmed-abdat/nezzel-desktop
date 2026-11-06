@@ -1,4 +1,4 @@
-use crate::commands::DownloadRecords;
+use crate::download_records::DownloadRecords;
 use crate::logging::LogStoreState;
 use crate::scheduling::dispatcher::DispatchRequest;
 use crate::scheduling::download_pipeline::DownloadSender;
@@ -7,7 +7,9 @@ use crate::scheduling::group_state::cancel_group;
 use tauri::State;
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri injects each State as its own argument.
 pub fn group_cancel(
+  app: tauri::AppHandle,
   group_id: String,
   discard_files: Option<bool>,
   log_state: State<'_, LogStoreState>,
@@ -20,6 +22,8 @@ pub fn group_cancel(
   library.forget_group(&group_id);
   crate::files::runner::forget(&group_id);
   if discard_files == Some(true) {
+    // Removed from the list (not a pause): its job records go, so a reused ID counts its own end.
+    crate::usage::forget_group(&app, &group_id);
     crate::files::runner::discard_group(&group_id);
   }
   records.forget(&group_id);

@@ -1,3 +1,5 @@
+import type { Phase } from './groupView';
+
 /** Pure selection logic for the downloads list. `order` is the visible (filtered, searched) row order. */
 
 /** Cmd/Ctrl+click: flips one row. */
@@ -27,8 +29,7 @@ export function pruneIds(selected: ReadonlySet<string>, order: readonly string[]
   return new Set([...selected].filter(id => visible.has(id)));
 }
 
-export type BatchPhase = 'reading' | 'playlist' | 'ready' | 'downloading' | 'paused' | 'done' | 'error';
-export interface BatchEntry { id: string; phase: BatchPhase; hasFile: boolean }
+export interface BatchEntry { id: string; phase: Phase; hasFile: boolean }
 
 /** Which selected rows each batch action applies to. An empty list means the action is hidden. */
 export function batchTargets(entries: readonly BatchEntry[]) {

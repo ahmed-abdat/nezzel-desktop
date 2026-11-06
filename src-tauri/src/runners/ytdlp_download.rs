@@ -1,4 +1,4 @@
-use crate::commands::DownloadRecords;
+use crate::download_records::DownloadRecords;
 use crate::logging::LogStoreState;
 use crate::models::download::DownloadSection;
 use crate::models::{MediaDiagnosticPayload, MediaFatalPayload, ProgressEvent};
@@ -10,7 +10,7 @@ use crate::resolve::{self, Reason, Resolution, ResolvedInput};
 use crate::runners::ytdlp_info::emit_unsupported;
 use crate::runners::ytdlp_runner::{YtdlpCommandEvent, YtdlpRunner};
 use crate::runners::{
-  login::{LoginRequest, LoginSession},
+  login::{CookieRetry, LoginRequest, LoginSession},
   retry_policy::RetryAction,
   transport::{aria_denied, resolve_aria2, single_direct_http, transfer_args},
 };
@@ -18,7 +18,7 @@ use crate::scheduling::download_pipeline::DownloadEntry;
 use crate::scheduling::group_state::subscribe_group;
 use crate::SharedConfig;
 use std::fmt;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tokio::sync::watch;
 
 #[derive(Debug)]
@@ -225,8 +225,7 @@ async fn run_download_attempts(
   inherited_cookies: Option<super::browser_cookies::CookieAccess>,
 ) -> Result<(), YtdlpDownloadError> {
   let inherited_browser = login.browser.clone();
-  static RULES_JSON: &str = include_str!("../diagnostic_rules.json");
-  let matcher = match DiagnosticMatcher::from_json(RULES_JSON) {
+  let matcher = match DiagnosticMatcher::shared() {
     Ok(matcher) => matcher,
     Err(err) => {
       emit_internal_fatal(
@@ -318,8 +317,9 @@ async fn run_download_attempts(
           if is_cancelled_now(&cancel_rx) {
             return Ok(());
           }
-          let _ = app.emit(
-            "media_fatal",
+          crate::events::emit(
+            &app,
+            crate::events::MEDIA_FATAL,
             MediaFatalPayload::with_exit(
               entry.group_id.clone(),
               entry.id.clone(),
@@ -375,12 +375,10 @@ async fn run_download_attempts(
             let diagnostics =
               error_parser.parse_lines(stderr.lines().collect(), login.uses_cookies());
             login.record_failure(&diagnostics, false);
-            if tokio::select! {
-              biased;
-              _ = cancel_rx.changed() => return Ok(()),
-              retry = login.retry_cookie_fetch(failure, tokio::time::sleep) => retry,
-            } {
-              continue 'attempt;
+            match login.retry_cookie_fetch(failure, &mut cancel_rx).await {
+              CookieRetry::Cancelled => return Ok(()),
+              CookieRetry::Retry => continue 'attempt,
+              CookieRetry::GiveUp => {}
             }
             if input.retry_original(&stderr) {
               continue 'attempt;
@@ -404,13 +402,15 @@ async fn run_download_attempts(
               _ => {}
             }
             for event in login.failure_diagnostics(diagnostics) {
-              let _ = app.emit(
-                "media_diagnostic",
+              crate::events::emit(
+                &app,
+                crate::events::MEDIA_DIAGNOSTIC,
                 MediaDiagnosticPayload::from_diagnostic_event(event),
               );
             }
-            let _ = app.emit(
-              "media_fatal",
+            crate::events::emit(
+              &app,
+              crate::events::MEDIA_FATAL,
               MediaFatalPayload::with_exit(
                 entry.group_id.clone(),
                 entry.id.clone(),
@@ -574,8 +574,9 @@ async fn run_download_attempts(
       Ok(result) => result,
       Err(err) => {
         let message = format!("Failed to spawn yt-dlp: {err}");
-        let _ = app.emit(
-          "media_fatal",
+        crate::events::emit(
+          &app,
+          crate::events::MEDIA_FATAL,
           MediaFatalPayload::with_exit(entry.group_id.clone(), entry.id.clone(), 1, message),
         );
         return Err(YtdlpDownloadError::SpawnFailed(err));
@@ -648,18 +649,18 @@ async fn run_download_attempts(
                 login.succeeded(&app, &entry.group_id);
                 let path = if aria.is_some() { "aria2" } else { "native" };
                 tracing::info!(transport = path, "Download transport completed");
-                let _ = app.emit("media_transport", serde_json::json!({"id":entry.id,"groupId":entry.group_id,"path":path}));
+                crate::events::emit(&app, crate::events::MEDIA_TRANSPORT, serde_json::json!({"id":entry.id,"groupId":entry.group_id,"path":path}));
                 if entry.emit_complete { crate::library::complete(&app, &entry).await; }
                 return Ok(());
               }
 
               if is_cancelled_now(&cancel_rx) { return Ok(()); }
               if media_expired { return Err(YtdlpDownloadError::ExpiredMedia); }
-              if tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => return Ok(()),
-                retry = login.retry_cookie_fetch(cookie_failure, tokio::time::sleep) => retry,
-              } { continue 'attempt; }
+              match login.retry_cookie_fetch(cookie_failure, &mut cancel_rx).await {
+                CookieRetry::Cancelled => return Ok(()),
+                CookieRetry::Retry => continue 'attempt,
+                CookieRetry::GiveUp => {}
+              }
               let login_reason = if login.uses_cookies() {
                 (cookie_failure == CookieFetchFailure::Refused).then(|| "signInRequired".to_owned())
               } else { login_reason };
@@ -684,7 +685,7 @@ async fn run_download_attempts(
                   _ => {}
                 }
               }
-              for event in login.failure_diagnostics(diagnostics) { let _ = app.emit("media_diagnostic", MediaDiagnosticPayload::from_diagnostic_event(event)); }
+              for event in login.failure_diagnostics(diagnostics) { crate::events::emit(&app, crate::events::MEDIA_DIAGNOSTIC, MediaDiagnosticPayload::from_diagnostic_event(event)); }
               let exit = term.code.unwrap_or(1);
               let mut fatal = MediaFatalPayload::with_exit(
                   entry.group_id.clone(),
@@ -693,7 +694,7 @@ async fn run_download_attempts(
                   format!("Download failed for group {}", entry.group_id),
               );
               fatal.details = last_error;
-              let _ = app.emit("media_fatal", fatal);
+              crate::events::emit(&app, crate::events::MEDIA_FATAL, fatal);
               return Err(YtdlpDownloadError::NonZeroExit(exit));
             }
             YtdlpCommandEvent::Error(err) => {
@@ -752,8 +753,9 @@ async fn make_quicktime_compatible(
       .map_err(|_| "QuickTime codec probe requires repair")?;
     let completed = super::quicktime::convert_file(&ffmpeg, &ffprobe, path, cancel, |percentage| {
       if percentage.is_none() {
-        let _ = app.emit(
-          "media_progress_stage",
+        crate::events::emit(
+          app,
+          crate::events::MEDIA_PROGRESS_STAGE,
           crate::models::MediaProgressStage {
             id: entry.id.clone(),
             group_id: entry.group_id.clone(),
@@ -761,8 +763,9 @@ async fn make_quicktime_compatible(
           },
         );
       }
-      let _ = app.emit(
-        "media_progress",
+      crate::events::emit(
+        app,
+        crate::events::MEDIA_PROGRESS,
         crate::models::MediaProgress {
           id: entry.id.clone(),
           group_id: entry.group_id.clone(),
@@ -789,8 +792,9 @@ fn emit_internal_fatal(
   message: String,
   details: Option<String>,
 ) {
-  let _ = app.emit(
-    "media_fatal",
+  crate::events::emit(
+    app,
+    crate::events::MEDIA_FATAL,
     MediaFatalPayload::internal(entry.group_id.clone(), entry.id.clone(), message, details),
   );
 }
@@ -825,13 +829,14 @@ fn parse_progress_line(line: &str, progress_parser: &mut YtdlpProgressParser, ap
             &destination.destination.path,
           );
         }
-        app.emit("media_destination", destination).ok();
+        crate::events::emit(app, crate::events::MEDIA_DESTINATION, destination);
       }
       ProgressEvent::Progress(progress) => {
-        app.emit("media_progress", progress).ok();
+        crate::usage::speed_sample(app, &progress.group_id, &progress.id, progress.speed_bps);
+        crate::events::emit(app, crate::events::MEDIA_PROGRESS, progress);
       }
       ProgressEvent::StageChange(progress) => {
-        app.emit("media_progress_stage", progress).ok();
+        crate::events::emit(app, crate::events::MEDIA_PROGRESS_STAGE, progress);
       }
     }
   }

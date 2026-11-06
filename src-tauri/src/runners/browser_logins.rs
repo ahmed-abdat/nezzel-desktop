@@ -1,12 +1,13 @@
 //! Profile names and site-session metadata. Cookie values are never projected or decrypted.
 use super::browser_cookies::{cookie_hint, CookieHint};
+use super::browsers::{BrowserKind, BrowserSource, CookieStore};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BrowserCandidate {
   pub id: String,
-  pub browser: String,
+  pub browser: BrowserKind,
   pub profile: String,
   pub modified: SystemTime,
   pub signed_in: bool,
@@ -20,134 +21,222 @@ pub enum Os {
   Linux,
 }
 
-#[cfg(test)]
-fn discover_at(
-  os: Os,
-  home: &Path,
-  local: &Path,
-  roaming: &Path,
-  default: Option<&str>,
-  remembered: Option<&str>,
-) -> Vec<BrowserCandidate> {
-  discover_for_host_at(os, home, local, roaming, default, remembered, None)
+/// The machine discovery reads: the real one in the app, a fixture in tests.
+#[derive(Clone)]
+pub(super) struct BrowserEnv {
+  pub os: Os,
+  pub home: PathBuf,
+  pub local: PathBuf,
+  pub roaming: PathBuf,
+  pub default: Option<BrowserKind>,
+  /// Snapshots a cookie database (and its WAL) before a sign-in hint reads it.
+  pub copy_file: fn(&Path, &Path) -> std::io::Result<u64>,
 }
 
-fn discover_for_host_at(
-  os: Os,
-  home: &Path,
-  local: &Path,
-  roaming: &Path,
-  default: Option<&str>,
+impl BrowserEnv {
+  fn current() -> Self {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+      .map(PathBuf::from)
+      .unwrap_or_default();
+    let local = std::env::var_os("LOCALAPPDATA")
+      .map(PathBuf::from)
+      .unwrap_or_default();
+    let roaming = std::env::var_os("APPDATA")
+      .map(PathBuf::from)
+      .unwrap_or_default();
+    let os = if cfg!(target_os = "macos") {
+      Os::Mac
+    } else if cfg!(windows) {
+      Os::Windows
+    } else {
+      Os::Linux
+    };
+    let default = default_browser(&home);
+    Self {
+      os,
+      home,
+      local,
+      roaming,
+      default,
+      copy_file: |from, to| std::fs::copy(from, to),
+    }
+  }
+
+  /// No profile roots, no default browser, real file copies.
+  #[cfg(test)]
+  pub(super) fn test(os: Os) -> Self {
+    Self {
+      os,
+      home: PathBuf::new(),
+      local: PathBuf::new(),
+      roaming: PathBuf::new(),
+      default: None,
+      copy_file: |from, to| std::fs::copy(from, to),
+    }
+  }
+
+  /// Every profile root under `root`.
+  #[cfg(test)]
+  fn at(self, root: &Path) -> Self {
+    Self {
+      home: root.into(),
+      local: root.into(),
+      roaming: root.into(),
+      ..self
+    }
+  }
+}
+
+fn discover_in(
+  env: &BrowserEnv,
   remembered: Option<&str>,
   host: Option<&str>,
 ) -> Vec<BrowserCandidate> {
+  let (os, home, local, roaming, default) =
+    (env.os, &env.home, &env.local, &env.roaming, env.default);
   let roots = match os {
     Os::Mac => vec![
       (
-        "firefox",
+        BrowserKind::Firefox,
         home.join("Library/Application Support/Firefox/Profiles"),
       ),
       (
-        "chrome",
+        BrowserKind::Chrome,
         home.join("Library/Application Support/Google/Chrome"),
       ),
       (
-        "edge",
+        BrowserKind::Edge,
         home.join("Library/Application Support/Microsoft Edge"),
       ),
       (
-        "brave",
+        BrowserKind::Brave,
         home.join("Library/Application Support/BraveSoftware/Brave-Browser"),
       ),
     ],
     Os::Windows => vec![
-      ("firefox", roaming.join("Mozilla/Firefox/Profiles")),
-      ("chrome", local.join("Google/Chrome/User Data")),
-      ("edge", local.join("Microsoft/Edge/User Data")),
-      ("brave", local.join("BraveSoftware/Brave-Browser/User Data")),
+      (
+        BrowserKind::Firefox,
+        roaming.join("Mozilla/Firefox/Profiles"),
+      ),
+      (BrowserKind::Chrome, local.join("Google/Chrome/User Data")),
+      (BrowserKind::Edge, local.join("Microsoft/Edge/User Data")),
+      (
+        BrowserKind::Brave,
+        local.join("BraveSoftware/Brave-Browser/User Data"),
+      ),
     ],
     Os::Linux => vec![
-      ("firefox", home.join(".mozilla/firefox")),
-      ("firefox", home.join(".config/mozilla/firefox")),
-      ("firefox", home.join("snap/firefox/common/.mozilla/firefox")),
+      (BrowserKind::Firefox, home.join(".mozilla/firefox")),
+      (BrowserKind::Firefox, home.join(".config/mozilla/firefox")),
       (
-        "firefox",
+        BrowserKind::Firefox,
+        home.join("snap/firefox/common/.mozilla/firefox"),
+      ),
+      (
+        BrowserKind::Firefox,
         home.join(".var/app/org.mozilla.firefox/.mozilla/firefox"),
       ),
-      ("chrome", home.join(".config/google-chrome")),
-      ("edge", home.join(".config/microsoft-edge")),
-      ("brave", home.join(".config/BraveSoftware/Brave-Browser")),
+      (BrowserKind::Chrome, home.join(".config/google-chrome")),
+      (BrowserKind::Edge, home.join(".config/microsoft-edge")),
+      (
+        BrowserKind::Brave,
+        home.join(".config/BraveSoftware/Brave-Browser"),
+      ),
     ],
   };
   let mut roots = roots;
   roots.extend(match os {
     Os::Mac => vec![
       (
-        "chromium",
+        BrowserKind::Chromium,
         home.join("Library/Application Support/Chromium"),
       ),
-      ("vivaldi", home.join("Library/Application Support/Vivaldi")),
       (
-        "opera",
+        BrowserKind::Vivaldi,
+        home.join("Library/Application Support/Vivaldi"),
+      ),
+      (
+        BrowserKind::Opera,
         home.join("Library/Application Support/com.operasoftware.Opera"),
       ),
       (
-        "opera",
+        BrowserKind::Opera,
         home.join("Library/Application Support/com.operasoftware.OperaGX"),
+      ),
+      (
+        BrowserKind::Whale,
+        home.join("Library/Application Support/Naver/Whale"),
       ),
     ],
     Os::Windows => vec![
-      ("chromium", local.join("Chromium/User Data")),
-      ("vivaldi", local.join("Vivaldi/User Data")),
-      ("opera", roaming.join("Opera Software/Opera Stable")),
-      ("opera", roaming.join("Opera Software/Opera GX Stable")),
+      (BrowserKind::Chromium, local.join("Chromium/User Data")),
+      (BrowserKind::Vivaldi, local.join("Vivaldi/User Data")),
+      (
+        BrowserKind::Opera,
+        roaming.join("Opera Software/Opera Stable"),
+      ),
+      (
+        BrowserKind::Opera,
+        roaming.join("Opera Software/Opera GX Stable"),
+      ),
+      (
+        BrowserKind::Whale,
+        local.join("Naver/Naver Whale/User Data"),
+      ),
     ],
     Os::Linux => vec![
-      ("chromium", home.join(".config/chromium")),
-      ("vivaldi", home.join(".config/vivaldi")),
-      ("opera", home.join(".config/opera")),
+      (BrowserKind::Chromium, home.join(".config/chromium")),
+      (BrowserKind::Vivaldi, home.join(".config/vivaldi")),
+      (BrowserKind::Opera, home.join(".config/opera")),
+      (BrowserKind::Whale, home.join(".config/naver-whale")),
     ],
   });
   if matches!(os, Os::Linux) {
     roots.extend([
-      ("chromium", home.join("snap/chromium/common/chromium")),
       (
-        "chromium",
+        BrowserKind::Chromium,
+        home.join("snap/chromium/common/chromium"),
+      ),
+      (
+        BrowserKind::Chromium,
         home.join("snap/chromium/common/.config/chromium"),
       ),
       (
-        "chrome",
+        BrowserKind::Chrome,
         home.join("snap/google-chrome/common/.config/google-chrome"),
       ),
       (
-        "brave",
+        BrowserKind::Brave,
         home.join("snap/brave/current/.config/BraveSoftware/Brave-Browser"),
       ),
       (
-        "brave",
+        BrowserKind::Brave,
         home.join("snap/brave/common/.config/BraveSoftware/Brave-Browser"),
       ),
       (
-        "chrome",
+        BrowserKind::Chrome,
         home.join(".var/app/com.google.Chrome/config/google-chrome"),
       ),
       (
-        "chromium",
+        BrowserKind::Chromium,
         home.join(".var/app/org.chromium.Chromium/config/chromium"),
       ),
       (
-        "edge",
+        BrowserKind::Edge,
         home.join(".var/app/com.microsoft.Edge/config/microsoft-edge"),
       ),
       (
-        "brave",
+        BrowserKind::Brave,
         home.join(".var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser"),
       ),
       (
-        "vivaldi",
+        BrowserKind::Vivaldi,
         home.join(".var/app/com.vivaldi.Vivaldi/config/vivaldi"),
       ),
-      ("opera", home.join(".var/app/com.opera.Opera/config/opera")),
+      (
+        BrowserKind::Opera,
+        home.join(".var/app/com.opera.Opera/config/opera"),
+      ),
     ]);
   }
   let now = SystemTime::now()
@@ -169,13 +258,13 @@ fn discover_for_host_at(
       .filter(|p| p.is_dir())
       .collect();
     paths.extend(firefox_names.keys().cloned());
-    if browser == "opera" {
+    if browser.root_profile() {
       paths.push(root.clone());
     }
     paths.sort();
     paths.dedup();
     for path in paths {
-      let cookie_paths = if browser == "firefox" {
+      let cookie_paths = if browser.store() == CookieStore::Firefox {
         vec![path.join("cookies.sqlite")]
       } else {
         vec![path.join("Network/Cookies"), path.join("Cookies")]
@@ -188,7 +277,7 @@ fn discover_for_host_at(
         .max();
       if let Some(modified) = modified {
         let directory = path.file_name().unwrap_or_default().to_string_lossy();
-        let key = if browser == "opera" && path == root {
+        let key = if browser.root_profile() && path == root {
           "Default"
         } else {
           directory.as_ref()
@@ -199,7 +288,7 @@ fn discover_for_host_at(
             cookie_paths
               .iter()
               .filter(|p| p.is_file())
-              .map(|p| cookie_hint(p, browser, os, host, now))
+              .map(|p| cookie_hint(env, p, browser, host, now))
               .fold(CookieHint::default(), |best, hint| {
                 // An old root Cookies file must not hide the active Network database's v20.
                 let app_bound = best.app_bound || hint.app_bound;
@@ -215,9 +304,9 @@ fn discover_for_host_at(
           })
           .unwrap_or_default();
         found.push(BrowserCandidate {
-          id: format!("{}:{}", browser, path.to_string_lossy()),
-          browser: browser.into(),
-          profile: if browser == "firefox" {
+          id: format!("{}:{}", browser.name(), path.to_string_lossy()),
+          browser,
+          profile: if browser.store() == CookieStore::Firefox {
             firefox_names
               .get(&path)
               .cloned()
@@ -249,8 +338,8 @@ fn discover_for_host_at(
       if let Ok(m) = std::fs::metadata(path) {
         if m.is_file() {
           found.push(BrowserCandidate {
-            id: "safari".into(),
-            browser: "safari".into(),
+            id: BrowserKind::Safari.name().into(),
+            browser: BrowserKind::Safari,
             profile: "Default".into(),
             modified: m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
             signed_in: false,
@@ -265,12 +354,10 @@ fn discover_for_host_at(
   // Disambiguate only within a browser, preserving the discovery/ranking order.
   let mut counts = std::collections::HashMap::new();
   for c in &found {
-    *counts
-      .entry((c.browser.clone(), c.profile.clone()))
-      .or_insert(0) += 1;
+    *counts.entry((c.browser, c.profile.clone())).or_insert(0) += 1;
   }
   for c in &mut found {
-    if counts[&(c.browser.clone(), c.profile.clone())] > 1 {
+    if counts[&(c.browser, c.profile.clone())] > 1 {
       let directory = c
         .id
         .split_once(':')
@@ -280,18 +367,21 @@ fn discover_for_host_at(
       c.profile = format!("{} · {}", c.profile, directory);
     }
   }
-  let order = [
-    "firefox", "chrome", "edge", "brave", "chromium", "vivaldi", "opera", "safari",
-  ];
+  let order = {
+    use BrowserKind::*;
+    [
+      Firefox, Chrome, Edge, Brave, Chromium, Vivaldi, Opera, Whale, Safari,
+    ]
+  };
   found.sort_by(|a, b| {
     let tier = |candidate: &BrowserCandidate| {
       if candidate.app_bound {
         5
-      } else if candidate.signed_in && candidate.browser != "firefox" {
+      } else if candidate.signed_in && candidate.browser != BrowserKind::Firefox {
         0
       } else if candidate.signed_in {
         1
-      } else if candidate.browser == "safari" {
+      } else if candidate.browser == BrowserKind::Safari {
         2
       } else if remembered == Some(candidate.id.as_str()) {
         3
@@ -302,9 +392,7 @@ fn discover_for_host_at(
     tier(a)
       .cmp(&tier(b))
       .then_with(|| b.active_time.total_cmp(&a.active_time))
-      .then_with(|| {
-        (default != Some(a.browser.as_str())).cmp(&(default != Some(b.browser.as_str())))
-      })
+      .then_with(|| (default != Some(a.browser)).cmp(&(default != Some(b.browser))))
       .then_with(|| {
         order
           .iter()
@@ -318,31 +406,7 @@ fn discover_for_host_at(
 }
 
 pub fn discover(remembered: Option<&str>, host: &str) -> Vec<BrowserCandidate> {
-  let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-    .map(PathBuf::from)
-    .unwrap_or_default();
-  let local = std::env::var_os("LOCALAPPDATA")
-    .map(PathBuf::from)
-    .unwrap_or_default();
-  let roaming = std::env::var_os("APPDATA")
-    .map(PathBuf::from)
-    .unwrap_or_default();
-  let os = if cfg!(target_os = "macos") {
-    Os::Mac
-  } else if cfg!(windows) {
-    Os::Windows
-  } else {
-    Os::Linux
-  };
-  discover_for_host_at(
-    os,
-    &home,
-    &local,
-    &roaming,
-    default_browser(&home).as_deref(),
-    remembered,
-    Some(host),
-  )
+  discover_in(&BrowserEnv::current(), remembered, Some(host))
 }
 
 fn chromium_profile_name(info: &serde_json::Value, directory: &str) -> String {
@@ -388,18 +452,19 @@ fn firefox_profiles(root: &Path) -> std::collections::HashMap<PathBuf, String> {
 }
 
 #[cfg(test)]
-fn has_host_cookies(path: &Path, browser: &str, host: &str) -> bool {
-  cookie_hint(path, browser, Os::Mac, host, 1).signed_in
+fn has_host_cookies(path: &Path, browser: BrowserKind, host: &str) -> bool {
+  cookie_hint(&BrowserEnv::test(Os::Mac), path, browser, host, 1).signed_in
 }
 
 /// Names only, for displaying an already selected browser. Does not inspect cookies.
 pub fn describe(id: &str) -> Option<BrowserCandidate> {
-  let (browser, path) = id.split_once(':').unwrap_or((id, ""));
-  let path = Path::new(path);
+  let source = BrowserSource::parse(id)?;
+  let browser = source.kind;
+  let path = Path::new(source.profile.as_deref().unwrap_or_default());
   let directory = path.file_name().unwrap_or_default().to_string_lossy();
-  let profile = if browser == "safari" {
+  let profile = if browser.store() == CookieStore::Safari {
     "Default".into()
-  } else if browser == "firefox" {
+  } else if browser.store() == CookieStore::Firefox {
     let root = path.parent().unwrap_or(path);
     let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
       .map(PathBuf::from)
@@ -421,7 +486,7 @@ pub fn describe(id: &str) -> Option<BrowserCandidate> {
     .find_map(|root| firefox_profiles(&root).remove(path))
     .unwrap_or_else(|| directory.to_string())
   } else {
-    let root = if browser == "opera" && path.join("Local State").is_file() {
+    let root = if browser.root_profile() && path.join("Local State").is_file() {
       path
     } else {
       path.parent().unwrap_or(path)
@@ -441,7 +506,7 @@ pub fn describe(id: &str) -> Option<BrowserCandidate> {
   };
   Some(BrowserCandidate {
     id: id.into(),
-    browser: browser.into(),
+    browser,
     profile,
     modified: SystemTime::UNIX_EPOCH,
     signed_in: false,
@@ -450,29 +515,12 @@ pub fn describe(id: &str) -> Option<BrowserCandidate> {
   })
 }
 
-fn browser_name(value: &str) -> Option<String> {
-  let value = value.to_ascii_lowercase();
-  [
-    ("firefox", "firefox"),
-    ("chrome", "chrome"),
-    ("msedge", "edge"),
-    ("microsoft-edge", "edge"),
-    ("brave", "brave"),
-    ("safari", "safari"),
-    ("chromium", "chromium"),
-    ("vivaldi", "vivaldi"),
-    ("opera", "opera"),
-  ]
-  .into_iter()
-  .find(|(needle, _)| value.contains(needle))
-  .map(|(_, b)| b.into())
-}
-
-fn default_browser(home: &Path) -> Option<String> {
+fn default_browser(home: &Path) -> Option<BrowserKind> {
   #[cfg(target_os = "macos")]
   {
     let output =
-      std::process::Command::new("/usr/bin/plutil")
+      crate::runners::tool_process::command("/usr/bin/plutil")
+        .ok()?
         .args(["-extract", "LSHandlers", "json", "-o", "-"])
         .arg(home.join(
           "Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist",
@@ -485,14 +533,13 @@ fn default_browser(home: &Path) -> Option<String> {
       .iter()
       .find(|h| h["LSHandlerURLScheme"] == "http")
       .and_then(|h| h["LSHandlerRoleAll"].as_str())
-      .and_then(browser_name)
+      .and_then(BrowserKind::from_default_id)
   }
   #[cfg(target_os = "windows")]
   {
     let _ = home;
-    let mut command = std::process::Command::new("reg");
-    crate::runners::ytdlp_process::configure_command(&mut command).ok()?;
-    let output = command
+    let output = crate::runners::tool_process::command("reg")
+      .ok()?
       .args([
         "query",
         r"HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice",
@@ -501,16 +548,17 @@ fn default_browser(home: &Path) -> Option<String> {
       ])
       .output()
       .ok()?;
-    browser_name(&String::from_utf8_lossy(&output.stdout))
+    BrowserKind::from_default_id(&String::from_utf8_lossy(&output.stdout))
   }
   #[cfg(target_os = "linux")]
   {
     let _ = home;
-    let output = std::process::Command::new("xdg-settings")
+    let output = crate::runners::tool_process::command("xdg-settings")
+      .ok()?
       .args(["get", "default-web-browser"])
       .output()
       .ok()?;
-    browser_name(&String::from_utf8_lossy(&output.stdout))
+    BrowserKind::from_default_id(&String::from_utf8_lossy(&output.stdout))
   }
 }
 
@@ -532,6 +580,53 @@ mod tests {
     )
     .unwrap();
   }
+  /// Every browser key a default-browser id maps to can give a login.
+  #[test]
+  fn default_browser_ids_map_to_known_browser_keys() {
+    for (raw, expected) in [
+      ("com.google.chrome", Some("chrome")),
+      ("org.mozilla.firefox", Some("firefox")),
+      ("MSEdgeHTM", Some("edge")),
+      ("microsoft-edge.desktop", Some("edge")),
+      ("com.apple.Safari", Some("safari")),
+      ("BraveHTML", Some("brave")),
+      ("org.chromium.Chromium", Some("chromium")),
+      ("Vivaldi.xyz", Some("vivaldi")),
+      ("com.operasoftware.Opera", Some("opera")),
+      ("com.naver.Whale", Some("whale")),
+      ("naver-whale.desktop", Some("whale")),
+      ("company.thebrowser.Browser", None),
+      ("", None),
+    ] {
+      let kind = BrowserKind::from_default_id(raw);
+      assert_eq!(kind.map(BrowserKind::name), expected, "{raw}");
+      assert!(kind.is_none_or(BrowserKind::logins), "{raw}");
+    }
+  }
+
+  #[test]
+  fn consent_identity_folds_site_aliases() {
+    use crate::runners::browser_cookies::site_key;
+    for (host, key) in [
+      ("youtu.be", Some("youtube.com")),
+      ("www.youtube.com", Some("youtube.com")),
+      ("v.redd.it", Some("reddit.com")),
+      ("old.reddit.com", Some("reddit.com")),
+      ("twitter.com", Some("x.com")),
+      ("mobile.twitter.com", Some("x.com")),
+      ("threads.com", Some("threads.net")),
+      ("fb.watch", Some("fb.watch")),
+      ("music.youtube.com", Some("youtube.com")),
+      ("youtube-nocookie.com", Some("youtube.com")),
+      ("YouTube.COM.", Some("youtube.com")),
+      ("192.168.1.2", None),
+      ("[::1]", None),
+      ("", None),
+    ] {
+      assert_eq!(site_key(host).as_deref(), key, "{host}");
+    }
+  }
+
   #[test]
   fn site_session_cookie_names_and_registrable_domains() {
     use crate::runners::browser_cookies::{same_site, session_present};
@@ -645,9 +740,13 @@ mod tests {
       );
       let before = std::fs::read(&path).unwrap();
       let hint = cookie_hint(
+        &BrowserEnv::test(os),
         &path,
-        if firefox { "firefox" } else { "chrome" },
-        os,
+        if firefox {
+          BrowserKind::Firefox
+        } else {
+          BrowserKind::Chrome
+        },
         "www.instagram.com",
         now,
       );
@@ -671,7 +770,14 @@ mod tests {
         &[(".instagram.com", "sessionid", expires, 900_000, false)],
       );
       assert_eq!(
-        cookie_hint(&path, "firefox", Os::Linux, "instagram.com", now).signed_in,
+        cookie_hint(
+          &BrowserEnv::test(Os::Linux),
+          &path,
+          BrowserKind::Firefox,
+          "instagram.com",
+          now
+        )
+        .signed_in,
         signed,
         "expiry {expires}"
       );
@@ -686,13 +792,31 @@ mod tests {
         (".instagram.com", "sessionid", 0, 0, false),
       ],
     );
-    assert!(cookie_hint(&path, "chrome", Os::Mac, "www.threads.com", now).signed_in);
+    assert!(
+      cookie_hint(
+        &BrowserEnv::test(Os::Mac),
+        &path,
+        BrowserKind::Chrome,
+        "www.threads.com",
+        now
+      )
+      .signed_in
+    );
     let live_path = root.path.join("LiveCookies");
     metadata_db(&live_path, false, &[(".instagram.com", "mid", 0, 0, false)]);
     let live = rusqlite::Connection::open(&live_path).unwrap();
     live.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; UPDATE cookies SET name='sessionid';").unwrap();
     let before = std::fs::read(&live_path).unwrap();
-    assert!(cookie_hint(&live_path, "chrome", Os::Mac, "instagram.com", now).signed_in);
+    assert!(
+      cookie_hint(
+        &BrowserEnv::test(Os::Mac),
+        &live_path,
+        BrowserKind::Chrome,
+        "instagram.com",
+        now
+      )
+      .signed_in
+    );
     assert_eq!(std::fs::read(&live_path).unwrap(), before);
   }
 
@@ -717,9 +841,13 @@ mod tests {
       for host in ["redd.it", "v.redd.it", "old.reddit.com", "www.reddit.com"] {
         assert!(
           cookie_hint(
+            &BrowserEnv::test(Os::Mac),
             &path,
-            if firefox { "firefox" } else { "chrome" },
-            Os::Mac,
+            if firefox {
+              BrowserKind::Firefox
+            } else {
+              BrowserKind::Chrome
+            },
             host,
             now
           )
@@ -727,40 +855,58 @@ mod tests {
           "{host}"
         );
       }
-      assert!(!cookie_hint(&path, "chrome", Os::Mac, "reddit.com.attacker.test", now).signed_in);
+      assert!(
+        !cookie_hint(
+          &BrowserEnv::test(Os::Mac),
+          &path,
+          BrowserKind::Chrome,
+          "reddit.com.attacker.test",
+          now
+        )
+        .signed_in
+      );
       assert_eq!(std::fs::read(&path).unwrap(), before);
     }
   }
 
   #[test]
   fn locked_windows_cookie_copy_uses_immutable_or_reports_browser_protection() {
-    use crate::runners::browser_cookies::cookie_hint_with_copy;
+    use std::cell::RefCell;
+    thread_local! {
+      static SNAPSHOTS: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
+    }
     let root = crate::runners::gallery_files::Staging::new().unwrap();
     let path = root.path.join("Profile space #1").join("Cookies");
     metadata_db(&path, false, &[(".instagram.com", "sessionid", 0, 0, true)]);
     let before = std::fs::read(&path).unwrap();
-    let mut snapshots = Vec::new();
-    let hint = cookie_hint_with_copy(
-      &path,
-      "chrome",
-      Os::Windows,
-      "instagram.com",
-      2_000_000_000,
-      |from, to| {
-        snapshots.push(to.parent().unwrap().to_owned());
+    let recording = BrowserEnv {
+      copy_file: |from, to| {
+        SNAPSHOTS.with_borrow_mut(|snapshots| snapshots.push(to.parent().unwrap().to_owned()));
         std::fs::copy(from, to)
       },
+      ..BrowserEnv::test(Os::Windows)
+    };
+    let denied = BrowserEnv {
+      copy_file: |_, _| Err(std::io::ErrorKind::PermissionDenied.into()),
+      ..BrowserEnv::test(Os::Windows)
+    };
+    let hint = cookie_hint(
+      &recording,
+      &path,
+      BrowserKind::Chrome,
+      "instagram.com",
+      2_000_000_000,
     );
+    let snapshots = SNAPSHOTS.take();
     assert!(hint.signed_in && hint.app_bound);
     assert!(!snapshots.is_empty());
     assert!(snapshots.iter().all(|snapshot| !snapshot.exists()));
-    let hint = cookie_hint_with_copy(
+    let hint = cookie_hint(
+      &denied,
       &path,
-      "chrome",
-      Os::Windows,
+      BrowserKind::Chrome,
       "instagram.com",
       2_000_000_000,
-      |_, _| Err(std::io::ErrorKind::PermissionDenied.into()),
     );
     assert!(hint.signed_in && hint.app_bound);
     assert_eq!(std::fs::read(&path).unwrap(), before);
@@ -769,13 +915,12 @@ mod tests {
       1
     );
     std::fs::write(&path, b"unreadable database fixture").unwrap();
-    let hint = cookie_hint_with_copy(
+    let hint = cookie_hint(
+      &denied,
       &path,
-      "chrome",
-      Os::Windows,
+      BrowserKind::Chrome,
       "instagram.com",
       2_000_000_000,
-      |_, _| Err(std::io::ErrorKind::PermissionDenied.into()),
     );
     assert!(!hint.signed_in && hint.app_bound);
   }
@@ -841,17 +986,15 @@ mod tests {
         false,
       )],
     );
-    let found = discover_for_host_at(
-      Os::Windows,
-      &root.path,
-      &local,
-      &roaming,
-      Some("firefox"),
-      None,
-      Some("instagram.com"),
-    );
+    let env = BrowserEnv {
+      local: local.clone(),
+      roaming: roaming.clone(),
+      default: Some(BrowserKind::Firefox),
+      ..BrowserEnv::test(Os::Windows).at(&root.path)
+    };
+    let found = discover_in(&env, None, Some("instagram.com"));
     assert_eq!(
-      found.iter().map(|c| c.browser.as_str()).collect::<Vec<_>>(),
+      found.iter().map(|c| c.browser.name()).collect::<Vec<_>>(),
       ["brave", "chrome", "firefox", "edge"]
     );
     assert!(found.last().unwrap().app_bound);
@@ -915,7 +1058,7 @@ mod tests {
       serde_json::json!({"profile":{"info_cache":cache}}).to_string(),
     )
     .unwrap();
-    let found = discover_at(Os::Mac, &p, &p, &p, None, None);
+    let found = discover_in(&BrowserEnv::test(Os::Mac).at(&p), None, None);
     for (dir, _, expected) in cases {
       let candidate = found
         .iter()
@@ -980,15 +1123,11 @@ mod tests {
     let remembered = format!("chrome:{}", base.join("Profile 2").display());
     let db = base.join("Profile 1/Network/Cookies");
     let before = std::fs::read(&db).unwrap();
-    let found = discover_for_host_at(
-      Os::Mac,
-      &p,
-      &p,
-      &p,
-      Some("firefox"),
-      Some(&remembered),
-      Some("www.instagram.com"),
-    );
+    let env = BrowserEnv {
+      default: Some(BrowserKind::Firefox),
+      ..BrowserEnv::test(Os::Mac).at(&p)
+    };
+    let found = discover_in(&env, Some(&remembered), Some("www.instagram.com"));
     assert_eq!(
       found
         .iter()
@@ -1004,18 +1143,18 @@ mod tests {
     assert_eq!(std::fs::read(db).unwrap(), before);
     assert!(!has_host_cookies(
       &base.join("absent"),
-      "chrome",
+      BrowserKind::Chrome,
       "instagram.com"
     ));
     std::fs::write(base.join("broken"), "not sqlite").unwrap();
     assert!(!has_host_cookies(
       &base.join("broken"),
-      "chrome",
+      BrowserKind::Chrome,
       "instagram.com"
     ));
     assert!(!has_host_cookies(
       &base.join("Default/Network/Cookies"),
-      "chrome",
+      BrowserKind::Chrome,
       "%' OR 1=1;--"
     ));
     std::fs::remove_dir_all(p).unwrap();
@@ -1062,15 +1201,12 @@ mod tests {
         "other.test",
       );
       std::fs::write(base.join("profiles.ini"), format!("[Profile0]\nName=Ahmed.work\nIsRelative=1\nPath={profile}\n\n[Profile1]\nName=Custom\nIsRelative=0\nPath={}\n", custom.display())).unwrap();
-      let found = discover_for_host_at(
-        os,
-        p,
-        &p.join("local"),
-        &p.join("roaming"),
-        None,
-        None,
-        Some("instagram.com"),
-      );
+      let env = BrowserEnv {
+        local: p.join("local"),
+        roaming: p.join("roaming"),
+        ..BrowserEnv::test(os).at(p)
+      };
+      let found = discover_in(&env, None, Some("instagram.com"));
       assert_eq!(
         found
           .iter()
@@ -1102,15 +1238,19 @@ mod tests {
       "Library/Application Support/Google/Chrome/Profile 1/Network/Cookies",
       3,
     );
-    let found = discover_at(Os::Mac, &p, &p, &p, Some("chrome"), None);
+    let env = BrowserEnv {
+      default: Some(BrowserKind::Chrome),
+      ..BrowserEnv::test(Os::Mac).at(&p)
+    };
+    let found = discover_in(&env, None, None);
     assert_eq!(
       found.iter().map(|c| c.profile.as_str()).collect::<Vec<_>>(),
       ["Profile 1", "Default", "a"]
     );
     let remembered = &found[2].id;
     assert_eq!(
-      discover_at(Os::Mac, &p, &p, &p, Some("chrome"), Some(remembered))[0].browser,
-      "firefox"
+      discover_in(&env, Some(remembered), None)[0].browser,
+      BrowserKind::Firefox
     );
     std::fs::remove_dir_all(p).unwrap();
   }
@@ -1230,6 +1370,19 @@ mod tests {
         "opera",
         "",
       ),
+      (
+        Os::Mac,
+        "Library/Application Support/Naver/Whale",
+        "whale",
+        "Default",
+      ),
+      (
+        Os::Windows,
+        "Naver/Naver Whale/User Data",
+        "whale",
+        "Default",
+      ),
+      (Os::Linux, ".config/naver-whale", "whale", "Default"),
     ] {
       let p = root();
       let base = p.join(base);
@@ -1241,7 +1394,7 @@ mod tests {
       std::fs::create_dir_all(&profile_dir).unwrap();
       std::fs::write(profile_dir.join("Cookies"), "").unwrap();
       std::fs::write(base.join("Local State"), r#"{"profile":{"info_cache":{"Default":{"name":"Person 1","gaia_given_name":"chat","is_using_default_name":true}}}}"#).unwrap();
-      let found = discover_at(os, &p, &p, &p, None, None);
+      let found = discover_in(&BrowserEnv::test(os).at(&p), None, None);
       assert_eq!(
         found
           .iter()
@@ -1262,28 +1415,35 @@ mod tests {
       1,
     );
     touch(&p, "roaming/Mozilla/Firefox/Profiles/p/cookies.sqlite", 1);
-    let found = discover_at(
-      Os::Windows,
-      &p,
-      &p.join("local"),
-      &p.join("roaming"),
-      Some("edge"),
-      None,
-    );
+    let env = BrowserEnv {
+      local: p.join("local"),
+      roaming: p.join("roaming"),
+      default: Some(BrowserKind::Edge),
+      ..BrowserEnv::test(Os::Windows).at(&p)
+    };
+    let found = discover_in(&env, None, None);
     assert_eq!(
-      found.iter().map(|c| c.browser.as_str()).collect::<Vec<_>>(),
+      found.iter().map(|c| c.browser.name()).collect::<Vec<_>>(),
       ["edge", "firefox"]
     );
     touch(&p, ".config/google-chrome/Default/Cookies", 1);
     touch(&p, ".mozilla/firefox/default/cookies.sqlite", 2);
     assert_eq!(
-      discover_at(Os::Linux, &p, &p, &p, None, None)
+      discover_in(&BrowserEnv::test(Os::Linux).at(&p), None, None)
         .iter()
-        .map(|c| c.browser.as_str())
+        .map(|c| c.browser.name())
         .collect::<Vec<_>>(),
       ["firefox", "chrome"]
     );
-    assert!(discover_at(Os::Linux, &p.join("missing"), &p, &p, None, None).is_empty());
+    assert!(discover_in(
+      &BrowserEnv {
+        home: p.join("missing"),
+        ..BrowserEnv::test(Os::Linux).at(&p)
+      },
+      None,
+      None
+    )
+    .is_empty());
     std::fs::remove_dir_all(p).unwrap();
   }
 }

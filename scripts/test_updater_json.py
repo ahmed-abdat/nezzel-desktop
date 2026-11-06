@@ -1,4 +1,4 @@
-"""latest.json contract: every shipped platform, primary installer per OS (run by the Vitest push suite)."""
+"""latest.json contract: every shipped platform, primary installer per OS (`pnpm run test:tools`: Rust CI + nightly)."""
 import importlib.util
 from pathlib import Path
 import unittest

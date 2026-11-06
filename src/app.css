@@ -19,14 +19,6 @@
     prefersdark: false;
     color-scheme: light;
 
-    /* Rail: deep teal ink, the brand anchor. */
-    --nz-rail: #00352E;
-    --nz-rail-ink: #D3ECE6;
-    --nz-rail-muted: #8DB8AF;
-    --nz-rail-hover: rgb(255 255 255 / 0.07);
-    --nz-rail-active: #A6F1E1;
-    --nz-rail-active-ink: #00201B;
-
     /* Content surfaces. */
     --nz-page: #F4FAF7;
     --nz-raised: #FFFFFF;
@@ -38,22 +30,7 @@
 
     /* Brand action. */
     --nz-primary: #006B5E;
-    --nz-primary-hover: #005A4F;
     --nz-on-primary: #FFFFFF;
-    --nz-primary-soft: #D2EFE8;
-    --nz-wash: rgb(0 107 94 / 0.075);
-
-    /* "Needs you" (amber) and "failed" (red). Soft ground + ink pairs, AA on each other. */
-    --nz-amber-soft: #FDF0DA;
-    --nz-amber-ink: #63430C;
-    --nz-amber: #B07A1F;
-    --nz-danger-soft: #FCE8E5;
-    --nz-danger-ink: #8C1D18;
-    --nz-danger: #BA1A1A;
-
-    --nz-scrim: rgb(9 20 18 / 0.32);
-    --nz-shadow-sheet: 0 -12px 40px rgb(0 30 25 / 0.14), 0 -1px 0 rgb(0 30 25 / 0.04);
-    --nz-shadow-float: 0 10px 30px rgb(0 30 25 / 0.16), 0 1px 3px rgb(0 30 25 / 0.08);
     --nz-focus: #006B5E;
 
     /* shadcn-vue tokens (C2 "native library", owner-approved prototype 2026-11-02). */
@@ -121,13 +98,6 @@
     prefersdark: true;
     color-scheme: dark;
 
-    --nz-rail: #062C27;
-    --nz-rail-ink: #CFE9E2;
-    --nz-rail-muted: #86AFA6;
-    --nz-rail-hover: rgb(255 255 255 / 0.06);
-    --nz-rail-active: #A6F1E1;
-    --nz-rail-active-ink: #00201B;
-
     --nz-page: #0D1412;
     --nz-raised: #151C1A;
     --nz-sunken: #1A2220;
@@ -137,21 +107,8 @@
     --nz-muted: #98A6A1;
 
     --nz-primary: #7FD6C4;
-    --nz-primary-hover: #9BE3D3;
     --nz-on-primary: #00332C;
-    --nz-primary-soft: #133B35;
-    --nz-wash: rgb(127 214 196 / 0.07);
 
-    --nz-amber-soft: #352610;
-    --nz-amber-ink: #F6D7A6;
-    --nz-amber: #E2AE5C;
-    --nz-danger-soft: #3A1714;
-    --nz-danger-ink: #FFC3BB;
-    --nz-danger: #FFB4AB;
-
-    --nz-scrim: rgb(0 0 0 / 0.5);
-    --nz-shadow-sheet: 0 -12px 40px rgb(0 0 0 / 0.45), 0 -1px 0 rgb(255 255 255 / 0.04);
-    --nz-shadow-float: 0 10px 30px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.3);
     --nz-focus: #7FD6C4;
 
     /* shadcn-vue tokens, dark. */
@@ -255,23 +212,16 @@
     --nz-fs-meta: 0.8125rem;    /* 13 */
     --nz-fs-body: 0.875rem;     /* 14 */
     --nz-fs-title: 0.9375rem;   /* 15 row titles */
-    --nz-fs-heading: 1.125rem;  /* 18 page headings */
-    --nz-fs-display: 1.375rem;  /* 22 empty state */
     --nz-lh-body: 1.45;
-    --nz-lh-tight: 1.25;
 
-    /* Radius: controls < surfaces < sheet. */
+    /* Radius: controls < surfaces. */
     --nz-r-control: 0.5rem;   /* 8 */
     --nz-r-surface: 0.75rem;  /* 12 */
-    --nz-r-sheet: 1.25rem;    /* 20 */
 
     /* Motion: short, decelerating; off under reduced motion. */
     --nz-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
     --nz-dur-fast: 120ms;
     --nz-dur: 180ms;
-    --nz-dur-sheet: 260ms;
-
-    --nz-rail-width: 13.5rem;
 }
 
 [dir="rtl"] {
@@ -279,17 +229,13 @@
     --nz-fs-meta: 0.875rem;
     --nz-fs-body: 0.9375rem;
     --nz-fs-title: 1rem;
-    --nz-fs-heading: 1.25rem;
-    --nz-fs-display: 1.5rem;
     --nz-lh-body: 1.7;
-    --nz-lh-tight: 1.5;
 }
 
 @media (prefers-reduced-motion: reduce) {
     :root {
         --nz-dur-fast: 0ms;
         --nz-dur: 0ms;
-        --nz-dur-sheet: 0ms;
     }
 }
 
@@ -297,42 +243,9 @@
     --font-sans: "Inter", "IBM Plex Sans Arabic", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --font-arabic: "IBM Plex Sans Arabic", "Inter", ui-sans-serif, system-ui, sans-serif;
 
-    --color-nz-rail: var(--nz-rail);
-    --color-nz-rail-ink: var(--nz-rail-ink);
-    --color-nz-rail-muted: var(--nz-rail-muted);
-    --color-nz-rail-hover: var(--nz-rail-hover);
-    --color-nz-rail-active: var(--nz-rail-active);
-    --color-nz-rail-active-ink: var(--nz-rail-active-ink);
-    --color-nz-page: var(--nz-page);
-    --color-nz-raised: var(--nz-raised);
-    --color-nz-sunken: var(--nz-sunken);
-    --color-nz-line: var(--nz-line);
-    --color-nz-line-strong: var(--nz-line-strong);
-    --color-nz-ink: var(--nz-ink);
-    --color-nz-muted: var(--nz-muted);
-    --color-nz-primary: var(--nz-primary);
-    --color-nz-primary-hover: var(--nz-primary-hover);
-    --color-nz-on-primary: var(--nz-on-primary);
-    --color-nz-primary-soft: var(--nz-primary-soft);
-    --color-nz-amber-soft: var(--nz-amber-soft);
-    --color-nz-amber-ink: var(--nz-amber-ink);
-    --color-nz-amber: var(--nz-amber);
-    --color-nz-danger-soft: var(--nz-danger-soft);
-    --color-nz-danger-ink: var(--nz-danger-ink);
-    --color-nz-danger: var(--nz-danger);
-
     --text-nz-caption: var(--nz-fs-caption);
     --text-nz-meta: var(--nz-fs-meta);
-    --text-nz-body: var(--nz-fs-body);
     --text-nz-title: var(--nz-fs-title);
-    --text-nz-heading: var(--nz-fs-heading);
-    --text-nz-display: var(--nz-fs-display);
-
-    --radius-nz-control: var(--nz-r-control);
-    --radius-nz-surface: var(--nz-r-surface);
-    --radius-nz-sheet: var(--nz-r-sheet);
-
-    --ease-nz: var(--nz-ease);
 }
 
 /* ── Base ──────────────────────────────────────────────────────────────────── */

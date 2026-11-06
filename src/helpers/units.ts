@@ -64,12 +64,13 @@ export function formatBytesPerSec(bps: number): string {
   return `${value.toFixed(1)} ${units[idx]}`;
 }
 
-export function formatDuration(secs: number): string {
+/** `1:05`, or `01:05` with `pad` (tiles and the inspector pad the leading unit). */
+export function formatDuration(secs: number, { pad = false }: { pad?: boolean } = {}): string {
   const wholeSeconds = Math.max(0, Math.floor(secs));
   const h = Math.floor(wholeSeconds / 3600);
   const m = Math.floor((wholeSeconds % 3600) / 60);
   const s = wholeSeconds % 60;
-  const mm = String(m).padStart(2, '0');
-  const ss = String(s).padStart(2, '0');
-  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
+  const two = (n: number) => String(n).padStart(2, '0');
+  const lead = (n: number) => (pad ? two(n) : String(n));
+  return h > 0 ? `${lead(h)}:${two(m)}:${two(s)}` : `${lead(m)}:${two(s)}`;
 }

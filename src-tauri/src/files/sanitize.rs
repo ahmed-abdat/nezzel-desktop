@@ -26,6 +26,8 @@ const WINDOWS_RESERVED: &[&str] = &[
 /// - Removes leading dots and spaces (no hidden files, no `..`) and trailing
 ///   dots and spaces (Windows drops them silently).
 /// - Prefixes Windows reserved names (`CON`, `NUL.txt`, …) with `_`.
+/// - Gives names that collide with our own `.nezzel-part`/`.nezzel-state`
+///   files a `.download` suffix.
 /// - Shortens the name to [`MAX_NAME_BYTES`], keeping a short extension.
 pub fn sanitize_file_name(raw: &str) -> String {
   let last_segment = raw.rsplit(['/', '\\']).next().unwrap_or_default();
@@ -53,7 +55,24 @@ pub fn sanitize_file_name(raw: &str) -> String {
       name = tidy(shorten(&name));
     }
   }
+  if reserved_name(&name) {
+    let mut end = name.len().min(MAX_NAME_BYTES - ".download".len());
+    while !name.is_char_boundary(end) {
+      end -= 1;
+    }
+    name.truncate(end);
+    name.push_str(".download");
+  }
   name
+}
+
+/// Our own sidecar and temp names; a download may never take one.
+pub(crate) fn reserved_name(name: &str) -> bool {
+  let name = name.to_ascii_lowercase();
+  name.ends_with(".nezzel-state")
+    || name.ends_with(".nezzel-part")
+    || ((name.contains(".nezzel-state.") || name.contains(".nezzel-part."))
+      && name.ends_with(".tmp"))
 }
 
 /// Trims the edges and drops misplaced joiners until neither changes the
@@ -181,7 +200,7 @@ fn trim_edges(name: &str) -> &str {
     .trim_end_matches(|c: char| c == '.' || c.is_whitespace())
 }
 
-fn is_windows_reserved(name: &str) -> bool {
+pub(crate) fn is_windows_reserved(name: &str) -> bool {
   // Windows ignores everything from the first dot, and trailing spaces
   // before it: `nul .txt` is also the NUL device.
   let stem = name.split('.').next().unwrap_or_default().trim_end();

@@ -22,9 +22,9 @@
         @paste="onNativePaste" />
       <Kbd v-if="!url" class="hidden sm:inline-flex">{{ isMac ? t('shell.keys.pasteMac') : t('shell.keys.paste') }}</Kbd>
       <!-- Clipboard state as a small indicator, not placeholder text. -->
-      <tooltip :content="watchClipboard.isActive ? t('downloads.field.watchOnTip') : t('downloads.field.watchOffTip')">
-        <span class="inline-flex size-5 shrink-0 items-center justify-center" :aria-label="watchClipboard.isActive ? t('downloads.field.watchOnTip') : t('downloads.field.watchOffTip')" role="img">
-          <ClipboardCheck v-if="watchClipboard.isActive" class="size-3.5 text-primary" aria-hidden="true" />
+      <tooltip :content="watchClipboard.enabled ? t('downloads.field.watchOnTip') : t('downloads.field.watchOffTip')">
+        <span class="inline-flex size-5 shrink-0 items-center justify-center" :aria-label="watchClipboard.enabled ? t('downloads.field.watchOnTip') : t('downloads.field.watchOffTip')" role="img">
+          <ClipboardCheck v-if="watchClipboard.enabled" class="size-3.5 text-primary" aria-hidden="true" />
           <ClipboardX v-else class="size-3.5 text-muted-foreground/60" aria-hidden="true" />
         </span>
       </tooltip>
@@ -60,13 +60,13 @@
             </button>
           </li>
           <li role="none">
-            <button role="menuitemcheckbox" type="button" :class="itemCls" :aria-checked="watchClipboard.isActive ? 'true' : 'false'" @click="toggleWatch">
+            <button role="menuitemcheckbox" type="button" :class="itemCls" :aria-checked="watchClipboard.enabled ? 'true' : 'false'" @click="toggleWatch">
               <ClipboardCheck aria-hidden="true" />
               <span class="min-w-0 flex-1">
                 <span class="block">{{ t('downloads.field.watch') }}</span>
                 <span class="block text-[12px] text-muted-foreground">{{ t('downloads.field.watchHint') }}</span>
               </span>
-              <Switch :model-value="watchClipboard.isActive" tabindex="-1" aria-hidden="true" class="pointer-events-none mt-0.5" />
+              <Switch :model-value="watchClipboard.enabled" tabindex="-1" aria-hidden="true" class="pointer-events-none mt-0.5" />
             </button>
           </li>
           <li role="none">

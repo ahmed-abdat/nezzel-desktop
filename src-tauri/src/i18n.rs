@@ -5,6 +5,8 @@ use std::{collections::HashMap, sync::RwLock};
 use tauri::{AppHandle, Manager};
 
 pub const FALLBACK_LOCALE: &str = "en";
+/// Languages written right to left (primary subtags). The webview's `localeDirection` uses the same list.
+pub const RTL_LANGS: [&str; 1] = ["ar"];
 
 static LOCALES_DIR: Dir = include_dir!("./locales");
 
@@ -54,6 +56,15 @@ impl I18nManager {
 
     *guard = resolved;
     true
+  }
+
+  /// The UI locale in use, e.g. `ar` or `pt-BR`.
+  pub fn locale(&self) -> String {
+    self
+      .current_locale
+      .read()
+      .map(|locale| locale.clone())
+      .unwrap_or_default()
   }
 
   pub fn unset_locale(&self) -> bool {

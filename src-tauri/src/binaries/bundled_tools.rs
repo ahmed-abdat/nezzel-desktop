@@ -50,6 +50,16 @@ fn candidates_for(
     .collect()
 }
 
+/// A tool's file name on this platform (`yt-dlp.exe` on Windows). Archive entries whose names
+/// differ (for example `AtomicParsley.exe`, `yt-dlp_arm64.exe`) stay in the manifest.
+pub(crate) fn exe_name(tool: &str) -> String {
+  if cfg!(windows) {
+    format!("{tool}.exe")
+  } else {
+    tool.to_owned()
+  }
+}
+
 pub(crate) fn executable(path: &Path) -> bool {
   let Ok(meta) = std::fs::metadata(path) else {
     return false;

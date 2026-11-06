@@ -6,7 +6,6 @@ import { useSettingsStore } from './settings';
 export const useWatchClipboardStore = defineStore('watch-clipboard', () => {
   const settings = useSettingsStore();
   const enabled = computed(() => settings.settings.input.watchClipboard);
-  const isActive = enabled;
   function enable() {
     void settings.patchNow({ input: { watchClipboard: true } });
   }
@@ -17,5 +16,5 @@ export const useWatchClipboardStore = defineStore('watch-clipboard', () => {
     if (enabled.value) disable();
     else enable();
   }
-  return { enabled, isActive, enable, disable, toggle };
+  return { enabled, enable, disable, toggle };
 });

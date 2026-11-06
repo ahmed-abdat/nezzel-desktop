@@ -18,6 +18,15 @@ export const onboardingHandlers: Record<string, IPCHandler> = {
     (window as Window & { __appReadyRendered?: boolean }).__appReadyRendered = (document.getElementById('app')?.childElementCount ?? 0) > 0;
     return null;
   },
+  // The backend clipboard reader/writer, backed by the browser's clipboard in e2e (supportedOnly = links only).
+  capture_read_clipboard: async (_cmd, args) => {
+    const text = await navigator.clipboard.readText();
+    return (args as { supportedOnly?: boolean } | undefined)?.supportedOnly && !/^https?:\/\//.test(text) ? '' : text;
+  },
+  capture_write_clipboard: async (_cmd, args) => {
+    await navigator.clipboard.writeText((args as { text: string }).text);
+    return null;
+  },
   // Welcome "Try it": the backend writes the clipboard and shows the real card.
   capture_try_link: async () => {
     await navigator.clipboard.writeText('https://www.youtube.com/watch?v=jNQXAC9IVRw');

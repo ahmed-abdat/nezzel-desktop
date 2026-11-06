@@ -5,10 +5,48 @@
 
 use crate::parsers::ytdlp_error::redact_diagnostic;
 use regex::Regex;
+use std::fmt;
 use std::sync::LazyLock;
 
+/// Free text that passed [`scrub`]. Only `scrub` builds one (private field, no `From<String>`), so a report or an
+/// outgoing event that takes it can't be handed raw text.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ScrubbedText(String);
+
+impl ScrubbedText {
+  pub fn as_str(&self) -> &str {
+    &self.0
+  }
+
+  /// Each line on its own; a line of scrubbed text is still scrubbed.
+  pub fn lines(&self) -> impl Iterator<Item = ScrubbedText> + '_ {
+    self.0.lines().map(|line| ScrubbedText(line.to_string()))
+  }
+
+  /// A fixed label in front (`ERROR panic: `): a literal can't carry private data.
+  pub fn with_prefix(&self, prefix: &'static str) -> ScrubbedText {
+    ScrubbedText(format!("{prefix}{}", self.0))
+  }
+}
+
+impl fmt::Display for ScrubbedText {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(&self.0)
+  }
+}
+
+impl fmt::Debug for ScrubbedText {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fmt::Debug::fmt(&self.0, f)
+  }
+}
+
 /// Scrub one or more lines. `names` are local account names (see [`local_names`]).
-pub fn scrub(text: &str, names: &[String]) -> String {
+pub fn scrub(text: &str, names: &[String]) -> ScrubbedText {
+  ScrubbedText(scrub_text(text, names))
+}
+
+fn scrub_text(text: &str, names: &[String]) -> String {
   static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+").expect("valid email regex")
   });
@@ -154,9 +192,10 @@ fn replace_in_context(haystack: &str, name: &str) -> String {
 }
 
 /// The account names that would identify the person: `$USER`/`$USERNAME` and the home folder name.
-pub fn local_names() -> Vec<String> {
+/// Read once per run; every scrub borrows the same list.
+pub fn local_names() -> &'static [String] {
   static NAMES: LazyLock<Vec<String>> = LazyLock::new(collect_local_names);
-  NAMES.clone()
+  &NAMES
 }
 
 /// Account names plus this computer's names (host name, macOS computer name).
@@ -188,9 +227,8 @@ fn machine_names() -> Vec<String> {
   #[cfg(unix)]
   {
     let run = |program: &str, args: &[&str]| {
-      std::process::Command::new(program)
-        .args(args)
-        .output()
+      crate::runners::tool_process::command(program)
+        .and_then(|mut command| command.args(args).output())
         .ok()
         .filter(|out| out.status.success())
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -262,7 +300,7 @@ mod tests {
       ("instagram.com/p/DfQIowKutL3/ unavailable", "DfQIowKutL3"),
       ("file:///Users/samira/Desktop/x.html failed", "Desktop"),
     ] {
-      let redacted = scrub(line, &names());
+      let redacted = scrub(line, &names()).to_string();
       assert!(!redacted.contains(secret), "{line:?} -> {redacted:?}");
     }
   }
@@ -299,7 +337,7 @@ mod tests {
       ),
       ("progress 50% done, 100%", "progress 50% done, 100%"),
     ] {
-      let redacted = scrub(line, &names());
+      let redacted = scrub(line, &names()).to_string();
       assert!(redacted.contains(keep), "{line:?} -> {redacted:?}");
     }
   }
@@ -307,12 +345,18 @@ mod tests {
   #[test]
   fn user_name_only_replaced_as_a_word() {
     let names = vec!["sam".to_string()];
-    assert_eq!(scrub("user sam samples", &names), "user [user] samples");
+    assert_eq!(
+      scrub("user sam samples", &names).as_str(),
+      "user [user] samples"
+    );
     // Too-short names would mangle ordinary words.
-    assert_eq!(scrub("al is here", &["al".to_string()]), "al is here");
+    assert_eq!(
+      scrub("al is here", &["al".to_string()]).as_str(),
+      "al is here"
+    );
     // …but replaced where a name is expected.
     assert_eq!(
-      scrub("logged in as jo, user=jo", &["jo".to_string()]),
+      scrub("logged in as jo, user=jo", &["jo".to_string()]).as_str(),
       "logged in as [user], user=[user]"
     );
   }

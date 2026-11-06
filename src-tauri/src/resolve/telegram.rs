@@ -1,15 +1,14 @@
 //! Port of Android's Telegram public-widget reader. Only this message's own media is eligible.
-use super::{dom::Document, http, post, Outcome, Resolution};
+use super::{dom::Document, http, post, Resolution, Verdict};
 use regex::Regex;
 use reqwest::Url;
 use std::sync::LazyLock;
-pub(super) const MATCHER: crate::extract::registry::Matcher =
-  crate::extract::registry::Matcher::reader(
-    crate::extract::outcome::ReaderId::Telegram,
-    "telegram-message",
-    20,
-    |raw| Identity::parse(raw).is_some(),
-  );
+pub(super) const MATCHER: crate::routing::Matcher = crate::routing::Matcher::reader(
+  crate::routing::ReaderId::Telegram,
+  "telegram-message",
+  20,
+  |raw| Identity::parse(raw).is_some(),
+);
 
 const CAP: usize = 1024 * 1024;
 static PATH: LazyLock<Regex> = LazyLock::new(|| {
@@ -64,25 +63,25 @@ fn asset(raw: &str) -> Option<String> {
   (CDN.is_match(url.host_str()?) && FILE.is_match(url.path()) && url.query().is_none())
     .then(|| url.into())
 }
-pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Outcome {
+pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Verdict {
   let Some(identity) = Identity::parse(input) else {
-    return Outcome::NoMatch;
+    return Verdict::NoMatch;
   };
   // Widget endpoints do not redirect. Private/error/login pages never provide media.
   let Ok(response) = transport.get(&identity.url, CAP).await else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   if response.status != 200 || response.body.len() > CAP {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   }
   let Ok(body) = std::str::from_utf8(&response.body) else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   let Some(doc) = Document::parse(body) else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   if doc.0.iter().any(|n| n.class("tgme_widget_message_error")) {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   }
   let messages: Vec<_> = doc
     .0
@@ -96,7 +95,7 @@ pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Outc
     .map(|(i, _)| i)
     .collect();
   if messages.len() != 1 {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   }
   let message = messages[0];
   let own = |i| {
@@ -174,11 +173,11 @@ pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Outc
     .enumerate()
     .any(|(i, n)| own(i) && n.tag.name == "video" && !n.attr("src").is_empty());
   if video && !unavailable {
-    Outcome::Verified(Resolution::Passthrough(format!(
+    Verdict::Verified(Resolution::Passthrough(format!(
       "https://t.me/{}",
       identity.key
     )))
   } else {
-    Outcome::Unknown
+    Verdict::Unknown
   }
 }

@@ -1,7 +1,7 @@
 //! Android's LinkedIn attachment association: JSON-LD and an explicitly owned image grid must agree.
 use super::{
   dom::{Document, Node},
-  http, post, Outcome, Resolution,
+  http, post, Resolution, Verdict,
 };
 use regex::Regex;
 use reqwest::Url;
@@ -11,13 +11,12 @@ use std::{
   collections::{BTreeMap, BTreeSet},
   sync::LazyLock,
 };
-pub(super) const MATCHER: crate::extract::registry::Matcher =
-  crate::extract::registry::Matcher::reader(
-    crate::extract::outcome::ReaderId::Linkedin,
-    "linkedin-post",
-    20,
-    |raw| Identity::parse(raw).is_some(),
-  );
+pub(super) const MATCHER: crate::routing::Matcher = crate::routing::Matcher::reader(
+  crate::routing::ReaderId::Linkedin,
+  "linkedin-post",
+  20,
+  |raw| Identity::parse(raw).is_some(),
+);
 
 const CAP: usize = 6 * 1024 * 1024;
 static POST: LazyLock<Regex> =
@@ -125,43 +124,43 @@ impl Identity {
   }
 }
 
-pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Outcome {
+pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Verdict {
   let Some(mut identity) = Identity::parse(input) else {
-    return Outcome::NoMatch;
+    return Verdict::NoMatch;
   };
   let mut seen = BTreeSet::new();
   for hop in 0..=3 {
     if !seen.insert(identity.url.to_string()) {
-      return Outcome::Unknown;
+      return Verdict::Unknown;
     }
     let Ok(response) = transport.get(&identity.url, CAP).await else {
-      return Outcome::Unknown;
+      return Verdict::Unknown;
     };
     if (300..400).contains(&response.status) {
       if hop == 3 {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       }
       let Some(target) = response.location.and_then(|v| identity.url.join(&v).ok()) else {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       };
       // Android admits only the www post host as a redirect target, not login/regional/other sites.
       if target.host_str() != Some("www.linkedin.com") {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       }
       let Some(next) = Identity::parse(target.as_str()) else {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       };
       if next.short || (!identity.short && !identity.same(&next)) {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       }
       identity = next;
       continue;
     }
     if identity.short || response.status != 200 || response.body.len() > CAP {
-      return Outcome::Unknown;
+      return Verdict::Unknown;
     }
     let Ok(body) = std::str::from_utf8(&response.body) else {
-      return Outcome::Unknown;
+      return Verdict::Unknown;
     };
     if let Some(parsed) = parse(body, &identity) {
       let title = parsed.title;
@@ -183,9 +182,9 @@ pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Outc
     }
     // Video/document/inconclusive pages keep the native extractor. In particular lnkd.in must
     // reach yt-dlp as the landed post URL; never feed a video poster through the image path.
-    return Outcome::Verified(Resolution::Passthrough(identity.url.into()));
+    return Verdict::Verified(Resolution::Passthrough(identity.url.into()));
   }
-  Outcome::Unknown
+  Verdict::Unknown
 }
 
 struct Parsed {

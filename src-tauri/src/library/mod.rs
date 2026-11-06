@@ -1,6 +1,6 @@
 mod index;
 use crate::{
-  commands::{recorded_files, safe_library_root, scanned_files, DownloadRecords},
+  download_records::{recorded_files, safe_library_root, scanned_files, DownloadRecords},
   models::MediaProgressComplete,
   paths::PathsManager,
   scheduling::download_pipeline::DownloadEntry,
@@ -15,7 +15,7 @@ use std::{
   sync::Mutex,
   time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,7 +101,11 @@ pub async fn complete(app: &AppHandle, entry: &DownloadEntry) {
     // No paths, titles, or source URLs in telemetry/log errors.
     tracing::warn!("Unable to save local download history");
   }
-  let _ = app.emit("media_complete", MediaProgressComplete { id, group_id });
+  crate::events::emit(
+    app,
+    crate::events::MEDIA_COMPLETE,
+    MediaProgressComplete { id, group_id },
+  );
 }
 
 fn persist_completion(app: &AppHandle, entry: &DownloadEntry) -> Result<(), String> {

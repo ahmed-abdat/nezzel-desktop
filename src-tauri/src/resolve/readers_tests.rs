@@ -14,7 +14,7 @@ async fn page(input: &str, fetched: &'static str, body: &str) -> Option<serde_js
     [(fetched, reply(200, None, body.as_bytes()))].into(),
   ));
   match read_site(input, &fake).await {
-    Outcome::Verified(Resolution::Attachments { metadata }) => {
+    Verdict::Verified(Resolution::Attachments { metadata }) => {
       Some(serde_json::from_str(&metadata).unwrap())
     }
     _ => None,
@@ -206,7 +206,7 @@ async fn linkedin_shortlinks_bridge_share_images_and_keep_video_on_ytdlp() {
     ]
     .into(),
   ));
-  let Outcome::Verified(Resolution::Attachments { metadata }) = read_site(short, &fake).await
+  let Verdict::Verified(Resolution::Attachments { metadata }) = read_site(short, &fake).await
   else {
     panic!("share not read");
   };
@@ -233,7 +233,7 @@ async fn linkedin_shortlinks_bridge_share_images_and_keep_video_on_ytdlp() {
     .into(),
   ));
   assert!(
-    matches!(read_site(short, &fake).await, Outcome::Verified(Resolution::Passthrough(url)) if url == LINKEDIN)
+    matches!(read_site(short, &fake).await, Verdict::Verified(Resolution::Passthrough(url)) if url == LINKEDIN)
   );
   for target in [
     "https://evil.test/posts/synthetic-activity-123",
@@ -244,7 +244,7 @@ async fn linkedin_shortlinks_bridge_share_images_and_keep_video_on_ytdlp() {
     let fake = FakeTransport(std::sync::Mutex::new(
       [(LINKEDIN, reply(302, Some(target), b""))].into(),
     ));
-    assert!(matches!(read_site(LINKEDIN, &fake).await, Outcome::Unknown));
+    assert!(matches!(read_site(LINKEDIN, &fake).await, Verdict::Unknown));
   }
 }
 
@@ -311,7 +311,7 @@ async fn telegram_identity_media_policy_and_video_handoff() {
   ] {
     let fake = FakeTransport(std::sync::Mutex::new([].into()));
     assert!(
-      matches!(read_site(input, &fake).await, Outcome::NoMatch),
+      matches!(read_site(input, &fake).await, Verdict::NoMatch),
       "{input}"
     );
   }
@@ -352,7 +352,7 @@ async fn telegram_identity_media_policy_and_video_handoff() {
     .into(),
   ));
   assert!(
-    matches!(read_site(TELEGRAM,&fake).await, Outcome::Verified(Resolution::Passthrough(url)) if url == "https://t.me/synthetic_channel/123")
+    matches!(read_site(TELEGRAM,&fake).await, Verdict::Verified(Resolution::Passthrough(url)) if url == "https://t.me/synthetic_channel/123")
   );
   for status in [302, 403, 404, 410] {
     let fake = FakeTransport(std::sync::Mutex::new(
@@ -362,7 +362,7 @@ async fn telegram_identity_media_policy_and_video_handoff() {
       )]
       .into(),
     ));
-    assert!(matches!(read_site(TELEGRAM, &fake).await, Outcome::Unknown));
+    assert!(matches!(read_site(TELEGRAM, &fake).await, Verdict::Unknown));
   }
 }
 
@@ -398,7 +398,7 @@ async fn readers_reject_media_dns_and_generic_fallback_for_owned_sites() {
     }
   }
   for input in [LINKEDIN, TELEGRAM] {
-    assert!(matches!(read_site(input, &Blocked).await, Outcome::Unknown));
+    assert!(matches!(read_site(input, &Blocked).await, Verdict::Unknown));
     assert_eq!(
       after_unsupported(input, "ERROR: Unsupported URL:").await,
       None

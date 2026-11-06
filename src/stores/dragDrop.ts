@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 import { defineStore } from 'pinia';
-import { downloadSearchQuery } from '../composables/useDownloadList';
+import { clearSearch } from '../composables/useDownloadList';
 import { useToastStore } from './toast.ts';
 import { useMediaStore } from './media/media.ts';
 import { i18n } from '../i18n';
@@ -57,7 +57,7 @@ export const useDragDropStore = defineStore('dragDrop', () => {
     ]);
 
     if (result.urls.length > 0) {
-      downloadSearchQuery.value = '';
+      clearSearch();
       await mediaStore.addUrlBatch(result.urls);
     } else if (unreadable || unsupported) {
       const toast = unreadable ? getUrlImportReadErrorToast() : getUrlImportUnsupportedToast();

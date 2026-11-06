@@ -1,68 +1,98 @@
+use super::choice::{Choice, MAX_FPS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{process::Stdio, time::Duration};
+use std::process::Stdio;
 use tokio::{io::AsyncReadExt, process::Command};
-
-/// The only preview-completion event. It deliberately cannot carry an input URL or stderr.
-#[derive(Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewStatus {
-  pub id: u64,
-  pub title: String,
-  pub details: PreviewDetails,
-  pub failed: bool,
-  /// Why the read failed, from a fixed vocabulary (see `fail_reason`); never engine text.
-  pub reason: Option<&'static str>,
-}
 
 /// Plain reasons the bar and card can explain: `login`, `unavailable` (removed or private), `unsupported`,
 /// `region`, `protected`, `busy` (rate limited), `network`, `slow` (timed out), `unknown`.
-pub fn reason_for_code(code: &str) -> &'static str {
+/// The webview words each as `capture.fail.<reason>.title/.hint` (vocabulary rendered by `crate::contract`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FailReason {
+  Login,
+  Unavailable,
+  Unsupported,
+  Region,
+  Protected,
+  Busy,
+  Network,
+  Slow,
+  Unknown,
+}
+
+impl FailReason {
+  #[cfg_attr(not(test), allow(dead_code))]
+  pub const ALL: [Self; 9] = [
+    Self::Login,
+    Self::Unavailable,
+    Self::Unsupported,
+    Self::Region,
+    Self::Protected,
+    Self::Busy,
+    Self::Network,
+    Self::Slow,
+    Self::Unknown,
+  ];
+
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Login => "login",
+      Self::Unavailable => "unavailable",
+      Self::Unsupported => "unsupported",
+      Self::Region => "region",
+      Self::Protected => "protected",
+      Self::Busy => "busy",
+      Self::Network => "network",
+      Self::Slow => "slow",
+      Self::Unknown => "unknown",
+    }
+  }
+}
+
+pub fn reason_for_code(code: &str) -> FailReason {
   match code {
-    "signInRequired"
-    | "signInRequiredForBotDetection"
-    | "membersOnly"
-    | "videoPasswordRequired" => "login",
+    code if crate::extract::outcome::LOGIN_CODES.contains(&code) => FailReason::Login,
     "videoNotFoundOrPrivate"
     | "playlistPrivateOrMissing"
     | "notFound404"
     | "mediaUnavailable"
     | "channelUnavailable"
     | "copyrightClaimed"
-    | "accessForbidden403" => "unavailable",
+    | "accessForbidden403" => FailReason::Unavailable,
     "urlNotSupported" | "urlUnsupported" | "unknownUrlType" | "noMediaFound" | "embedOnly" => {
-      "unsupported"
+      FailReason::Unsupported
     }
-    "geoBlocked" => "region",
-    "drmProtected" => "protected",
-    "rateLimited429" | "blockedGeneric" => "busy",
+    "geoBlocked" => FailReason::Region,
+    "drmProtected" => FailReason::Protected,
+    "rateLimited429" | "blockedGeneric" => FailReason::Busy,
     "networkNameResolutionFailed" | "unableToConnectToProxy" | "sslVerifyFailed" | "server5xx" => {
-      "network"
+      FailReason::Network
     }
-    _ => "unknown",
+    _ => FailReason::Unknown,
   }
 }
 
 /// The first recognised yt-dlp error line decides the reason; anything unrecognised is `unknown`.
-pub fn fail_reason(stderr: &str) -> &'static str {
+pub fn fail_reason(stderr: &str) -> FailReason {
   use crate::parsers::ytdlp_error::{DiagnosticMatcher, YtdlpErrorParser};
   static PARSER: std::sync::OnceLock<Option<YtdlpErrorParser>> = std::sync::OnceLock::new();
   let Some(parser) = PARSER
     .get_or_init(|| {
-      DiagnosticMatcher::from_json(include_str!("../diagnostic_rules.json"))
+      DiagnosticMatcher::shared()
         .ok()
         .map(|matcher| YtdlpErrorParser::new("capture", "capture", matcher))
     })
     .as_ref()
   else {
-    return "unknown";
+    return FailReason::Unknown;
   };
   stderr
     .lines()
     .filter_map(|line| parser.parse_fetch_line(line, false))
     .map(|event| reason_for_code(&event.code))
-    .find(|reason| *reason != "unknown")
-    .unwrap_or("unknown")
+    .find(|reason| *reason != FailReason::Unknown)
+    .unwrap_or(FailReason::Unknown)
 }
 
 /// What the quick bar shows about a link: plain facts, never raw format ids.
@@ -90,10 +120,29 @@ pub struct PreviewDetails {
   pub small_height: Option<u64>,
   /// Bytes of that smaller video (+ best audio when it has none of its own).
   pub small_size: Option<u64>,
+  /// The copied-link card's format menu: one row per height (and 60 fps tier), then audio bitrates.
+  #[serde(default)]
+  pub choices: Vec<CardChoice>,
 }
 
-/// Quick "Smaller" pick ceiling, the same as the app's `SMALL_MAX_HEIGHT`.
-const SMALL_MAX_HEIGHT: u64 = 720;
+/// One row of the copied-link card's format menu. Plain facts only, never a raw format id or URL.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardChoice {
+  /// A video row (with sound when the link has any; its own row for a frame rate ≥ `HIGH_FPS_MIN`) or an
+  /// audio row (a bitrate, or none for sound only inside the video). What the row sends when picked.
+  pub choice: Choice,
+  /// Bytes, video + best audio when the video has no sound of its own.
+  pub size: Option<u64>,
+}
+
+const MAX_VIDEO_CHOICES: usize = 24;
+const MAX_AUDIO_CHOICES: usize = 4;
+
+/// Quick "Smaller" pick ceiling; the webview's own Smaller pick uses the same number (`crate::contract`).
+pub const SMALL_MAX_HEIGHT: u64 = 720;
+/// Rounded frame rates from here up are a high frame rate tier: a 60 fps row is its own choice.
+pub const HIGH_FPS_MIN: u64 = 48;
 
 fn text(item: &Value, key: &str, max: usize) -> String {
   item
@@ -143,9 +192,11 @@ pub fn summarize(item: &Value) -> PreviewDetails {
         .is_some_and(|codecs| !codecs.is_empty())
   };
   let height = |f: &Value| f.get("height").and_then(Value::as_u64).filter(|h| *h > 0);
+  let is_video =
+    |f: &Value| height(f).is_some() && (codec(f, "vcodec") || f.get("vcodec").is_none());
   let best_video = formats
     .iter()
-    .filter(|f| height(f).is_some() && (codec(f, "vcodec") || f.get("vcodec").is_none()))
+    .filter(|f| is_video(f))
     .max_by_key(|f| (height(f), bytes(f)));
   let best_audio = formats
     .iter()
@@ -177,6 +228,11 @@ pub fn summarize(item: &Value) -> PreviewDetails {
       .max_by_key(|f| (height(f), bytes(f)));
     under_cap.or_else(|| lower.max_by_key(|f| (height(f), bytes(f))))
   });
+  let choices = if media_kind.as_deref() == Some("file") {
+    Vec::new()
+  } else {
+    card_choices(&formats, &is_video, &height, &with_audio, video_has_audio)
+  };
   let best_ext = match best_video {
     Some(f) if video_has_audio => text(f, "ext", 8),
     Some(_) => "mp4".into(),
@@ -217,7 +273,100 @@ pub fn summarize(item: &Value) -> PreviewDetails {
     audio_size: audio_bytes,
     small_height: small_video.and_then(|f| height(f)),
     small_size: small_video.and_then(|f| with_audio(f)),
+    choices,
   }
+}
+
+/// High frame rate tier of a format (rounded fps ≥ `HIGH_FPS_MIN`), None for ordinary frame rates.
+fn fps_tier(format: &Value) -> Option<u64> {
+  format
+    .get("fps")
+    .and_then(Value::as_f64)
+    .filter(|v| v.is_finite() && (HIGH_FPS_MIN as f64..=MAX_FPS as f64).contains(v))
+    .map(|v| v.round() as u64)
+}
+
+fn abr(format: &Value) -> Option<u64> {
+  format
+    .get("abr")
+    .and_then(Value::as_f64)
+    .filter(|v| v.is_finite() && *v > 0.0 && *v < 10_000.0)
+    .map(|v| v.round() as u64)
+}
+
+/// Menu rows: videos deduped by (height, fps tier), the biggest file of each tier, highest first;
+/// audio deduped by bitrate (within 10 % counts as the same), highest first. Numbers past the `Choice` limits
+/// (site metadata is untrusted) leave the row out.
+fn card_choices(
+  formats: &[&Value],
+  is_video: &dyn Fn(&Value) -> bool,
+  height: &dyn Fn(&Value) -> Option<u64>,
+  with_audio: &dyn Fn(&Value) -> Option<u64>,
+  video_has_audio: bool,
+) -> Vec<CardChoice> {
+  let mut videos: Vec<&Value> = formats.iter().copied().filter(|f| is_video(f)).collect();
+  videos.sort_by_key(|f| std::cmp::Reverse((height(f), fps_tier(f), bytes(f))));
+  let mut out: Vec<CardChoice> = Vec::new();
+  for video in videos {
+    let Some(choice) = height(video).and_then(|h| Choice::video(h, fps_tier(video))) else {
+      continue;
+    };
+    if out.iter().any(|c| c.choice == choice) {
+      continue;
+    }
+    out.push(CardChoice {
+      choice,
+      size: with_audio(video),
+    });
+    if out.len() == MAX_VIDEO_CHOICES {
+      break;
+    }
+  }
+  let audio_only = |f: &&Value| {
+    let has = |key: &str, listed: &str| {
+      f.get(key)
+        .and_then(Value::as_str)
+        .is_some_and(|c| c != "none")
+        || f
+          .get(listed)
+          .and_then(Value::as_array)
+          .is_some_and(|codecs| !codecs.is_empty())
+    };
+    has("acodec", "audioCodecs") && !has("vcodec", "videoCodecs") && height(f).is_none()
+  };
+  let mut audios: Vec<&Value> = formats.iter().copied().filter(audio_only).collect();
+  audios.sort_by_key(|f| std::cmp::Reverse((abr(f), bytes(f))));
+  let mut audio: Vec<CardChoice> = Vec::new();
+  for format in audios {
+    let rate = abr(format);
+    let Some(choice) = Choice::audio(rate) else {
+      continue;
+    };
+    let near = |c: &CardChoice| match (c.choice, rate) {
+      (Choice::Audio { kbps: Some(a) }, Some(b)) => a.abs_diff(b) * 10 <= a.max(b),
+      (Choice::Audio { kbps }, b) => kbps == b,
+      _ => false,
+    };
+    if audio.iter().any(near) {
+      continue;
+    }
+    audio.push(CardChoice {
+      choice,
+      size: bytes(format),
+    });
+    if audio.len() == MAX_AUDIO_CHOICES {
+      break;
+    }
+  }
+  // Sound only inside the video (no separate track): one plain audio row, the app extracts it.
+  if audio.is_empty() && video_has_audio {
+    audio.push(CardChoice {
+      choice: Choice::Audio { kbps: None },
+      size: None,
+    });
+  }
+  out.extend(audio);
+  out
 }
 
 #[cfg(test)]
@@ -232,15 +381,13 @@ pub async fn read_output(
 pub async fn read_output_reason(
   command: &mut Command,
   process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
-) -> Result<Vec<u8>, &'static str> {
+) -> Result<Vec<u8>, FailReason> {
   command
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .kill_on_drop(true);
-  #[cfg(windows)]
-  command.creation_flags(0x08000000); // CREATE_NO_WINDOW
-  let mut child = command.spawn().map_err(|_| "unknown")?;
+  let mut child = command.spawn().map_err(|_| FailReason::Unknown)?;
   // Drained concurrently so a chatty stderr can never block stdout; capped, never forwarded as text.
   let stderr = child.stderr.take().map(|stderr| {
     tokio::spawn(async move {
@@ -249,12 +396,11 @@ pub async fn read_output_reason(
       String::from_utf8_lossy(&bytes).into_owned()
     })
   });
-  // 20 s leaves room for a second engine within capture_action's 46-second metadata wait.
-  // Cancellation signals the owner to kill + reap before releasing its process guard.
+  // One engine's read (`read::READ_LIMIT`). Cancellation signals the owner to kill + reap before releasing its process guard.
   let (cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
   let owner = tokio::spawn(async move {
     let _process_guard = process_guard;
-    let read = tokio::time::timeout(Duration::from_secs(20), async {
+    let read = tokio::time::timeout(super::read::READ_LIMIT, async {
       let stdout = child.stdout.take()?;
       let mut bytes = Vec::new();
       stdout
@@ -268,7 +414,7 @@ pub async fn read_output_reason(
       Some(bytes)
     });
     let result = tokio::select! {
-      result = read => result.map_err(|_| "slow"),
+      result = read => result.map_err(|_| FailReason::Slow),
       _ = cancelled => Ok(None),
     };
     // Also reap on oversized output and timeout; kill_on_drop alone does not wait.
@@ -283,7 +429,7 @@ pub async fn read_output_reason(
     Err(reason) => Err(reason),
     Ok(None) => match stderr {
       Some(task) => Err(fail_reason(&task.await.unwrap_or_default())),
-      None => Err("unknown"),
+      None => Err(FailReason::Unknown),
     },
   }
 }
@@ -292,6 +438,22 @@ pub async fn read_output_reason(
 mod summary_tests {
   use super::*;
   use serde_json::json;
+
+  /// Gallery previews arrive in the parsed shape: listed codecs still count as sound.
+  #[test]
+  fn summarize_reads_the_parsed_shape() {
+    let item = serde_json::json!({
+      "views": 9,
+      "formats": [
+        {"id": "v", "height": 720, "audioCodecs": [], "videoCodecs": [{"id": "avc1", "label": "H.264"}]},
+        {"id": "a", "abr": 128, "audioCodecs": [{"id": "aac", "label": "AAC"}], "videoCodecs": []}
+      ]
+    });
+    let details = summarize(&item);
+    assert!(details.has_audio);
+    assert_eq!(details.best_height, Some(720));
+    assert_eq!(details.views, Some(9));
+  }
 
   #[test]
   fn summarizes_file_size_without_inventing_video_or_audio_quality() {
@@ -322,7 +484,7 @@ mod summary_tests {
       ("some unrecognised failure", "unknown"),
       ("", "unknown"),
     ] {
-      assert_eq!(fail_reason(stderr), reason, "{stderr}");
+      assert_eq!(fail_reason(stderr).as_str(), reason, "{stderr}");
     }
   }
 
@@ -352,6 +514,76 @@ mod summary_tests {
     }
     let silent = summarize(&json!({"formats": [fmt(1080, 1)]}));
     assert!(!silent.has_audio, "a video-only link offers no Audio pick");
+  }
+
+  #[test]
+  fn card_choices_dedupe_heights_and_bitrates_highest_first() {
+    let video = |h: u64, fps: f64, bytes: u64| json!({"height": h, "fps": fps, "vcodec": "vp9", "acodec": "none", "filesize": bytes});
+    let audio = |abr: f64, bytes: u64| json!({"abr": abr, "vcodec": "none", "acodec": "opus", "filesize": bytes});
+    let d = summarize(&json!({ "formats": [
+      video(720, 30.0, 70), video(1080, 30.0, 300), video(1080, 30.0, 200), video(1080, 60.0, 500),
+      video(360, 25.0, 20), audio(129.0, 13), audio(130.4, 14), audio(48.0, 5), audio(160.0, 16),
+    ]}));
+    let rows: Vec<(Choice, Option<u64>)> = d.choices.iter().map(|c| (c.choice, c.size)).collect();
+    let video = |height, fps| Choice::Video { height, fps };
+    let audio = |kbps| Choice::Audio { kbps: Some(kbps) };
+    assert_eq!(
+      rows,
+      [
+        // 60 fps is its own row; the bigger of two same-height files wins; size adds the best audio (16).
+        (video(1080, Some(60)), Some(516)),
+        (video(1080, None), Some(316)),
+        (video(720, None), Some(86)),
+        (video(360, None), Some(36)),
+        // 130 and 129 kbps are one row (within 10 %).
+        (audio(160), Some(16)),
+        (audio(130), Some(14)),
+        (audio(48), Some(5)),
+      ]
+    );
+  }
+
+  #[test]
+  fn card_choices_for_muxed_photos_files_and_absurd_values() {
+    // One muxed format: a single video row plus a plain audio row (the app extracts the sound).
+    let muxed = summarize(
+      &json!({"formats": [{"height": 720, "vcodec": "h264", "acodec": "aac", "filesize": 9, "fps": 1e9}]}),
+    );
+    assert_eq!(muxed.choices.len(), 2);
+    assert_eq!(
+      muxed.choices[0].choice,
+      Choice::Video {
+        height: 720,
+        fps: None
+      },
+      "absurd fps is ignored"
+    );
+    assert_eq!(muxed.choices[1].choice, Choice::Audio { kbps: None });
+    // Heights past the `Choice` limit are no row at all; the sane one stays.
+    let tall = summarize(&json!({"formats": [
+      {"height": 99_999, "vcodec": "h264", "acodec": "none"},
+      {"height": 1080, "vcodec": "h264", "acodec": "none"},
+    ]}));
+    assert_eq!(
+      tall.choices.iter().map(|c| c.choice).collect::<Vec<_>>(),
+      [Choice::Video {
+        height: 1080,
+        fps: None
+      }]
+    );
+    let photos =
+      summarize(&json!({"mediaKind": "carousel", "formats": [{"height": 1080, "vcodec": "h264"}]}));
+    assert!(photos.choices.is_empty());
+    let file =
+      summarize(&json!({"mediaKind": "file", "formats": [{"height": 1080, "vcodec": "h264"}]}));
+    assert!(file.choices.is_empty());
+    let many: Vec<Value> = (1..=60)
+      .map(|h| json!({"height": h * 10, "vcodec": "h264"}))
+      .collect();
+    assert_eq!(
+      summarize(&json!({ "formats": many })).choices.len(),
+      MAX_VIDEO_CHOICES
+    );
   }
 
   #[test]
@@ -459,6 +691,46 @@ mod tests {
     sync::{Arc, Mutex},
   };
 
+  /// The word the card shows for a failed read (the webview gets the vocabulary from `crate::contract`).
+  #[test]
+  fn failure_codes_map_to_the_fixed_reason_vocabulary() {
+    for (code, reason) in [
+      ("signInRequired", "login"),
+      ("signInRequiredForBotDetection", "login"),
+      ("membersOnly", "login"),
+      ("videoPasswordRequired", "login"),
+      ("videoNotFoundOrPrivate", "unavailable"),
+      ("playlistPrivateOrMissing", "unavailable"),
+      ("notFound404", "unavailable"),
+      ("mediaUnavailable", "unavailable"),
+      ("channelUnavailable", "unavailable"),
+      ("copyrightClaimed", "unavailable"),
+      ("accessForbidden403", "unavailable"),
+      ("urlNotSupported", "unsupported"),
+      ("urlUnsupported", "unsupported"),
+      ("unknownUrlType", "unsupported"),
+      ("noMediaFound", "unsupported"),
+      ("embedOnly", "unsupported"),
+      ("geoBlocked", "region"),
+      ("drmProtected", "protected"),
+      ("rateLimited429", "busy"),
+      ("blockedGeneric", "busy"),
+      ("networkNameResolutionFailed", "network"),
+      ("unableToConnectToProxy", "network"),
+      ("sslVerifyFailed", "network"),
+      ("server5xx", "network"),
+      // characterisation: codes the engine classes elsewhere fall to "unknown" here (no "slow" from a code).
+      ("livestreamNotStarted", "unknown"),
+      ("ageRestricted", "unknown"),
+      ("photosOnly", "unknown"),
+      ("fileNotFile", "unknown"),
+      ("imageSourceUnavailable", "unknown"),
+      ("", "unknown"),
+    ] {
+      assert_eq!(reason_for_code(code).as_str(), reason, "{code}");
+    }
+  }
+
   struct LogWriter(Arc<Mutex<Vec<u8>>>);
   impl Write for LogWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -541,14 +813,6 @@ mod tests {
       result.is_none(),
       "failed preview must not expose raw stdout/stderr"
     );
-    let event = serde_json::to_string(&PreviewStatus {
-      id: 1,
-      failed: true,
-      ..PreviewStatus::default()
-    })
-    .unwrap();
-    assert!(event.contains("\"failed\":true"));
-    assert!(!event.contains("youtu.be") && !event.contains("capture-secret"));
     assert!(
       logs.lock().unwrap().is_empty(),
       "preview failures must be silent in logs"

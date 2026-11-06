@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test';
 import { test } from './utils/fixtures';
+import { ROW_SELECTOR } from '../../src/helpers/domIds';
 
 /** The engine asks (media_login_needed); the row shows the card; "Not now" leaves a plain failure. */
 test('a login request shows on its row and Not now turns it into a plain failure', async ({ page }) => {
@@ -28,7 +29,7 @@ test('a login request shows on its row and Not now turns it into a plain failure
     });
   });
 
-  const row = page.locator('li.row');
+  const row = page.locator(ROW_SELECTOR);
   await expect(row.getByText('This Instagram post needs you to be logged in')).toBeVisible();
   await expect(row.getByRole('combobox')).toHaveText('Chrome (Ahmed · Default) · logged in to www.instagram.com');
   await row.getByRole('combobox').click();

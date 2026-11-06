@@ -6,7 +6,7 @@
       class="text-muted-foreground hover:text-foreground"
       :aria-label="label"
       :aria-expanded="!collapsed"
-      aria-keyshortcuts="Meta+B Control+B"
+      :aria-keyshortcuts="ariaKeyShortcuts(BUILT_IN_KEYS.sidebar)"
       @click="emit('toggle')"
     >
       <panel-left class="rtl:rotate-180" aria-hidden="true" />
@@ -23,11 +23,12 @@ import { PanelLeft } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import Tooltip from '@/components/ui/tooltip/Tooltip.vue';
 import { usePlatform } from '../../composables/usePlatform';
+import { ariaKeyShortcuts, BUILT_IN_KEYS, shortcutLabel } from '../../helpers/shortcut';
 
 const props = defineProps<{ collapsed: boolean }>();
 const emit = defineEmits<{ toggle: [] }>();
 const { t } = useI18n();
 const { isMac } = usePlatform();
 const label = computed(() => (props.collapsed ? t('shell.sidebar.show') : t('shell.sidebar.hide')));
-const shortcut = computed(() => (isMac.value ? '⌘B' : 'Ctrl+B'));
+const shortcut = computed(() => shortcutLabel(BUILT_IN_KEYS.sidebar, isMac.value));
 </script>

@@ -1,9 +1,13 @@
 //! Local crash catcher: a panic hook writes a scrubbed crash file to the app dir; the next
-//! launch offers it once, then deletes it. Nothing is sent anywhere.
+//! launch reads it, and deletes it once it is sent or staged for the user's click. Nothing is sent from here.
 
 use super::redact::{local_names, scrub};
 use std::backtrace::Backtrace;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// This run's panic hook wrote the crash file (it replaces any earlier one).
+static WRITTEN_THIS_RUN: AtomicBool = AtomicBool::new(false);
 
 pub const CRASH_FILE: &str = "crash-report.txt";
 const MAX_FRAMES: usize = 30;
@@ -31,30 +35,41 @@ pub fn install(dir: PathBuf, version: String, os: String) {
       &version,
       &os,
     );
-    let clean = scrub(&text, &names);
+    let clean = scrub(&text, names);
     let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(dir.join(CRASH_FILE), &clean);
+    let _ = std::fs::write(dir.join(CRASH_FILE), clean.as_str());
+    WRITTEN_THIS_RUN.store(true, Ordering::SeqCst);
     // Non-blocking: the panic may have happened while the log lock was held.
-    super::file_log::try_record(&format!(
-      "ERROR panic: {}",
-      clean.lines().nth(2).unwrap_or_default()
-    ));
+    if let Some(line) = clean.lines().nth(2) {
+      super::file_log::try_record(line.with_prefix("ERROR panic: "));
+    }
     previous(info);
   }));
 }
 
-/// Read the previous run's crash file and delete it, so it is offered only once.
-pub fn take(dir: &Path) -> Option<String> {
-  let path = dir.join(CRASH_FILE);
-  let text = std::fs::read_to_string(&path).ok();
-  let _ = std::fs::remove_file(&path);
-  text.filter(|text| !text.trim().is_empty())
+/// The previous run's crash file, if any. The caller deletes it ([`clear`]) once the crash is handled.
+pub fn read(dir: &Path) -> Option<String> {
+  std::fs::read_to_string(dir.join(CRASH_FILE))
+    .ok()
+    .filter(|text| !text.trim().is_empty())
 }
 
 /// A clean exit means the app did not close unexpectedly: a panic in a background task
 /// stays in the log, not in a "closed unexpectedly" prompt.
 pub fn clear(dir: &Path) {
   let _ = std::fs::remove_file(dir.join(CRASH_FILE));
+}
+
+/// A clean exit: a crash this run wrote (a panic in a background task) was not an unexpected close. A file
+/// from an earlier run stays until it is sent or staged.
+pub fn clear_on_clean_exit(dir: &Path) {
+  clear_if_written(dir, &WRITTEN_THIS_RUN);
+}
+
+fn clear_if_written(dir: &Path, written: &AtomicBool) {
+  if written.load(Ordering::SeqCst) {
+    clear(dir);
+  }
 }
 
 pub fn format_crash(
@@ -163,7 +178,7 @@ mod tests {
       "1.2.0",
       "macOS 15.6 (aarch64)",
     );
-    let clean = scrub(&text, &["samira".to_string()]);
+    let clean = scrub(&text, &["samira".to_string()]).to_string();
     assert!(
       clean.starts_with("Nezzel 1.2.0 on macOS 15.6 (aarch64)\n"),
       "{clean}"
@@ -195,12 +210,28 @@ mod tests {
   }
 
   #[test]
-  fn take_returns_once_then_deletes() {
+  fn a_clean_exit_clears_only_this_runs_crash() {
+    let dir = std::env::temp_dir().join(format!("nezzel-exit-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(CRASH_FILE), "earlier run").unwrap();
+    let written = AtomicBool::new(false);
+    clear_if_written(&dir, &written);
+    assert_eq!(read(&dir).as_deref(), Some("earlier run"));
+    written.store(true, Ordering::SeqCst);
+    clear_if_written(&dir, &written);
+    assert_eq!(read(&dir), None);
+    let _ = std::fs::remove_dir_all(dir);
+  }
+
+  #[test]
+  fn read_keeps_the_file_until_cleared() {
     let dir = std::env::temp_dir().join(format!("nezzel-crash-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(CRASH_FILE), "boom").unwrap();
-    assert_eq!(take(&dir).as_deref(), Some("boom"));
-    assert_eq!(take(&dir), None);
+    assert_eq!(read(&dir).as_deref(), Some("boom"));
+    assert_eq!(read(&dir).as_deref(), Some("boom"));
+    clear(&dir);
+    assert_eq!(read(&dir), None);
     let _ = std::fs::remove_dir_all(dir);
   }
 

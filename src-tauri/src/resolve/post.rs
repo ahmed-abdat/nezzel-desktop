@@ -1,4 +1,4 @@
-use super::{http, Outcome, Resolution};
+use super::{http, Resolution, Verdict};
 use crate::models::parsed::{
   AttachmentKind, MediaAttachment, MediaKind, ParsedSingleVideo, SubtitleInventory,
 };
@@ -39,9 +39,9 @@ pub(super) async fn attachments<T: http::Transport>(
   title: Option<String>,
   author: Option<String>,
   items: Vec<MediaAttachment>,
-) -> Outcome {
+) -> Verdict {
   if !admit_attachments(transport, &items).await {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   }
   let images = items
     .iter()
@@ -86,8 +86,8 @@ pub(super) async fn attachments<T: http::Transport>(
     chapters: vec![],
     filesize: None,
   };
-  serde_json::to_string(&media).map_or(Outcome::Unknown, |metadata| {
-    Outcome::Verified(Resolution::Attachments { metadata })
+  serde_json::to_string(&media).map_or(Verdict::Unknown, |metadata| {
+    Verdict::Verified(Resolution::Attachments { metadata })
   })
 }
 pub(super) fn image(url: String, title: Option<String>) -> MediaAttachment {

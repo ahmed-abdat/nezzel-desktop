@@ -2,22 +2,32 @@ mod background;
 mod binaries;
 mod capture;
 mod commands;
+#[cfg(test)]
+mod contract;
 mod diagnostics;
+mod download_records;
+mod events;
 mod extract;
 pub mod files;
 mod i18n;
 mod library;
 mod logging;
+mod media_types;
 mod menu;
 mod models;
+mod net;
 mod parsers;
 mod paths;
+mod platform;
 mod resolve;
+mod routing;
 mod runners;
 mod scheduling;
+mod sites;
 mod state;
 mod stronghold;
 mod tray;
+mod usage;
 mod window;
 
 #[cfg(feature = "link-matrix")]
@@ -27,6 +37,7 @@ pub mod link_matrix;
 use crate::binaries::binaries_manager::BinariesManager;
 use crate::binaries::binaries_state::BinariesState;
 use crate::commands::*;
+use crate::download_records::DownloadRecords;
 use crate::i18n::I18nManager;
 use crate::logging::LogStoreState;
 use crate::menu::setup_menu;
@@ -106,6 +117,7 @@ pub fn run() {
       let config_handle = ConfigHandle::init(handle)?;
       let shared_config = Arc::new(config_handle);
       handle.manage::<SharedConfig>(shared_config);
+      usage::setup(handle, path_handle.app_dir());
 
       let preferences_handle = PreferencesHandle::init(handle)?;
       let shared_preferences = Arc::new(preferences_handle);
@@ -190,16 +202,16 @@ pub fn run() {
       app_ready,
       commands::shortcuts_pause,
       capture::capture_ready,
-      capture::capture_clipboard_current,
       capture::capture_read_clipboard,
       capture::capture_platform,
       capture::capture_snapshot,
       capture::capture_edit,
       capture::capture_retry,
       capture::capture_action,
-      capture::capture_take_pending,
+      capture::capture_fit,
+      capture::capture_pull,
       capture::capture_write_clipboard,
-      capture::capture_shortcut_status,
+      commands::shortcuts::capture_shortcut_status,
       tray::capture_tray_progress,
       capture::capture_try_link,
       background::close_note_ready,
@@ -212,10 +224,10 @@ pub fn run() {
       media_trash_file,
       library::library_list,
       library::library_remove,
-      crate::runners::login::media_login_accept,
-      crate::runners::login::media_login_choices,
-      crate::runners::login::media_login_dismiss,
-      crate::runners::login::engine_availability,
+      crate::runners::login::registry::media_login_accept,
+      crate::runners::login::registry::media_login_choices,
+      crate::runners::login::registry::media_login_dismiss,
+      crate::runners::transport::engine_availability,
       group_cancel,
       logging_subscribe,
       logging_unsubscribe,
@@ -243,13 +255,16 @@ pub fn run() {
       diagnostics::diagnostics_crash_check,
       diagnostics::diagnostics_send_crash,
       diagnostics::diagnostics_log,
+      usage::usage_count,
     ])
     .build(tauri::generate_context!())
     .expect("error while running tauri application");
 
   app.run(|_app_handle, _event| {
     if matches!(_event, tauri::RunEvent::Exit) {
+      runners::ytdlp_process::terminate_all_live(std::time::Duration::from_millis(1500));
       diagnostics::on_clean_exit(_app_handle);
+      usage::on_exit(_app_handle);
     }
     #[cfg(target_os = "macos")]
     {

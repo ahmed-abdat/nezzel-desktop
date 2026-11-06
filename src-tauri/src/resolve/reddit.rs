@@ -1,16 +1,15 @@
 //! Logged-out Reddit HTML, bound to one post. Unknown pages retain yt-dlp/login fallback.
-use super::{dom::Document, http, post, Outcome, Resolution};
+use super::{dom::Document, http, post, Resolution, Verdict};
 use crate::models::parsed::{AttachmentKind, MediaAttachment};
 use reqwest::Url;
 use std::collections::HashSet;
 
-pub(super) const MATCHER: crate::extract::registry::Matcher =
-  crate::extract::registry::Matcher::reader(
-    crate::extract::outcome::ReaderId::Reddit,
-    "reddit-post",
-    20,
-    is_post_url,
-  );
+pub(super) const MATCHER: crate::routing::Matcher = crate::routing::Matcher::reader(
+  crate::routing::ReaderId::Reddit,
+  "reddit-post",
+  20,
+  is_post_url,
+);
 
 const PAGE_CAP: usize = 4 * 1024 * 1024;
 
@@ -124,9 +123,9 @@ pub(crate) fn is_post_url(raw: &str) -> bool {
   Identity::parse(raw).is_some()
 }
 
-pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Outcome {
+pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdict {
   let Some(requested) = Identity::parse(raw) else {
-    return Outcome::NoMatch;
+    return Verdict::NoMatch;
   };
   let mut url = requested.url.clone();
   let mut fallback = requested.fallback_url();
@@ -210,7 +209,7 @@ pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Outcom
               break;
             }
           }
-          Outcome::Verified(Resolution::PostMedia {
+          Verdict::Verified(Resolution::PostMedia {
             url: target,
             title,
             thumbnail,
@@ -240,7 +239,7 @@ pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Outcom
     }
     break;
   }
-  Outcome::Verified(Resolution::Passthrough(fallback))
+  Verdict::Verified(Resolution::Passthrough(fallback))
 }
 
 /// The one known check doubles a hex literal; no script is ever executed and no cookies are used.

@@ -1,9 +1,10 @@
 /**
  * A failed read in the quick bar or card: say why in plain words and offer only actions that can work.
- * Reasons come from the Rust preview (`preview::reason_for_code`), a fixed vocabulary.
+ * Reasons come from the Rust preview (`preview::FailReason`), rendered into the generated contract.
  */
-export const FAIL_REASONS = ['login', 'unavailable', 'unsupported', 'region', 'protected', 'busy', 'network', 'slow', 'unknown'] as const;
-export type FailReason = typeof FAIL_REASONS[number];
+import { FAIL_REASONS, type FailReason } from '@/generated/contract';
+
+export type { FailReason };
 export type FailAction = 'retry' | 'options' | 'report';
 
 export function failReason(reason: string | null | undefined): FailReason {

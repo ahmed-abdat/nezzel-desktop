@@ -18,8 +18,9 @@ import {
 } from '../helpers/urlImport';
 import { isInputFiltersActive } from '../helpers/inputFilters';
 import { useDownloadSheetStore } from '../stores/downloadSheet';
-import { downloadSearchQuery } from './useDownloadList';
+import { clearSearch } from './useDownloadList';
 import { useUiPrefs } from './useUiPrefs';
+import { countUsage } from '../tauri/usage';
 
 /**
  * Everything that brings a link into Nezzel: the link field, pasting, a file of links and the
@@ -56,7 +57,8 @@ export function useLinkIntake() {
     fromInput = false,
   ) {
     if (result.urls.length > 0) {
-      downloadSearchQuery.value = '';
+      if (fromInput) countUsage('paste');
+      clearSearch();
       if (immediateDownload) {
         await mediaStore.addUrlBatchAndDownload(result.urls, false, true);
       } else {

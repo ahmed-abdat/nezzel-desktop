@@ -1,4 +1,5 @@
 use crate::models::error::{AppliesTo, DiagnosticEvent, DiagnosticLevel, PatternKind, RulesFile};
+use crate::sites::{site_by_domain, SiteId};
 use regex::Regex;
 use std::borrow::Cow;
 use std::sync::LazyLock;
@@ -47,6 +48,29 @@ pub fn network_down(code: &str, message: &str) -> bool {
   .any(|needle| lower.contains(needle))
 }
 
+/// yt-dlp wording the fetch chain uses to refine an inconclusive yt-dlp stage diagnostic.
+pub(crate) mod stage_hint {
+  /// The extractor ran and found nothing to download.
+  pub(crate) fn no_media_found(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("no media found")
+  }
+
+  /// The item has no video representation (photo posts, audio-only slideshows).
+  pub(crate) fn no_formats(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    ["no video formats", "no formats", "no available formats"]
+      .iter()
+      .any(|hint| message.contains(hint))
+  }
+
+  /// The requested selection failed; other formats may still exist.
+  pub(crate) fn requested_format_unavailable(message: &str) -> bool {
+    message
+      .to_ascii_lowercase()
+      .contains("requested format is not available")
+  }
+}
+
 pub fn redact_urls(text: &str) -> String {
   static URL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\b(?:https?|ftp)://[^\s<>"']+"#).expect("valid URL redaction regex")
@@ -81,12 +105,14 @@ pub fn redact_diagnostic(text: &str) -> String {
     .into_owned()
 }
 
+#[derive(Clone)]
 struct LoadedPattern {
   kind: PatternKind,
   value_lower: Option<String>,
   regex: Option<Regex>,
 }
 
+#[derive(Clone)]
 struct LoadedRule {
   code: String,
   component_lower: Option<String>,
@@ -94,12 +120,22 @@ struct LoadedRule {
   patterns: Vec<LoadedPattern>,
 }
 
+#[derive(Clone)]
 pub struct DiagnosticMatcher {
   rules: Vec<LoadedRule>,
   fallback_code: String,
 }
 
 impl DiagnosticMatcher {
+  /// The app's `diagnostic_rules.json`, parsed once per run (a copy shares the compiled regexes).
+  pub fn shared() -> Result<Self, String> {
+    static SHARED: std::sync::OnceLock<Result<DiagnosticMatcher, String>> =
+      std::sync::OnceLock::new();
+    SHARED
+      .get_or_init(|| Self::from_json(include_str!("../diagnostic_rules.json")))
+      .clone()
+  }
+
   pub fn from_json(json: &str) -> Result<Self, String> {
     let parsed: RulesFile =
       serde_json::from_str(json).map_err(|e| format!("Failed to parse rules: {e}"))?;
@@ -355,13 +391,13 @@ impl YtdlpErrorParser {
     let Some(source) = &self.source_url else {
       return false;
     };
-    let host = normalized_host(source);
+    let host = SiteOrHost::of(source);
     let path = source.path();
     let photo_path = match host {
-      "x.com" => path.contains("/status/") && path.contains("/photo/"),
-      "tiktok.com" => path.contains("/photo/"),
-      "reddit.com" => path.starts_with("/gallery/"),
-      "facebook.com" => path.contains("/photos/") || path == "/photo.php",
+      SiteOrHost::Site(SiteId::X) => path.contains("/status/") && path.contains("/photo/"),
+      SiteOrHost::Site(SiteId::TikTok) => path.contains("/photo/"),
+      SiteOrHost::Site(SiteId::Reddit) => path.starts_with("/gallery/"),
+      SiteOrHost::Site(SiteId::Facebook) => path.contains("/photos/") || path == "/photo.php",
       _ => false,
     };
     let image_file = path.rsplit_once('.').is_some_and(|(_, ext)| {
@@ -373,16 +409,19 @@ impl YtdlpErrorParser {
     if photo_path || image_file {
       return true;
     }
-    let social_post = match host {
-      "x.com" => path.contains("/status/"),
-      "instagram.com" => path.starts_with("/p/"),
-      "threads.com" => path.contains("/post/"),
-      "linkedin.com" => path.starts_with("/posts/") || path.starts_with("/feed/update/"),
-      "facebook.com" => path.contains("/posts/"),
-      "reddit.com" => path.contains("/comments/"),
-      "pinterest.com" => path.starts_with("/pin/"),
-      "bsky.app" => path.starts_with("/profile/") && path.contains("/post/"),
-      "t.me" => path
+    let SiteOrHost::Site(site) = host else {
+      return false;
+    };
+    let social_post = match site {
+      SiteId::X => path.contains("/status/"),
+      SiteId::Instagram => path.starts_with("/p/"),
+      SiteId::Threads => path.contains("/post/"),
+      SiteId::LinkedIn => path.starts_with("/posts/") || path.starts_with("/feed/update/"),
+      SiteId::Facebook => path.contains("/posts/"),
+      SiteId::Reddit => path.contains("/comments/"),
+      SiteId::Pinterest => path.starts_with("/pin/"),
+      SiteId::Bluesky => path.starts_with("/profile/") && path.contains("/post/"),
+      SiteId::Telegram => path
         .rsplit('/')
         .next()
         .is_some_and(|id| !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit())),
@@ -402,7 +441,7 @@ impl YtdlpErrorParser {
       .next()
       .and_then(|target| reqwest::Url::parse(target).ok())
       .is_some_and(|target| {
-        matches!(target.scheme(), "http" | "https") && normalized_host(&target) != host
+        matches!(target.scheme(), "http" | "https") && SiteOrHost::of(&target) != host
       })
   }
 
@@ -425,14 +464,20 @@ impl YtdlpErrorParser {
   }
 }
 
-fn normalized_host(url: &reqwest::Url) -> &str {
-  let host = url.host_str().unwrap_or_default();
-  match host.strip_prefix("www.").unwrap_or(host) {
-    "twitter.com" | "mobile.twitter.com" => "x.com",
-    "m.facebook.com" => "facebook.com",
-    "threads.net" => "threads.com",
-    "old.reddit.com" => "reddit.com",
-    host => host,
+/// A link's site (any of its domains, `twitter.com` is X), else its host without `www.`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SiteOrHost<'a> {
+  Site(SiteId),
+  Host(&'a str),
+}
+
+impl<'a> SiteOrHost<'a> {
+  fn of(url: &'a reqwest::Url) -> Self {
+    let host = url.host_str().unwrap_or_default();
+    match site_by_domain(host) {
+      Some(site) => Self::Site(site),
+      None => Self::Host(host.strip_prefix("www.").unwrap_or(host)),
+    }
   }
 }
 

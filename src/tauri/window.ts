@@ -3,7 +3,8 @@ import { getCurrentWindow, ProgressBarStatus, UserAttentionType } from '@tauri-a
 import { useMediaProgressStore } from '../stores/media/progress';
 import { MediaState, useMediaStateStore } from '../stores/media/state';
 import { notify } from './notifications';
-import { NotificationKind } from './types/app';
+import { NotificationKind, Platform } from './types/app';
+import { currentPlatform } from '../composables/usePlatform';
 
 export function startWindowWatcher(): void {
   const windowHandle = getCurrentWindow();
@@ -12,7 +13,9 @@ export function startWindowWatcher(): void {
 
   const previousActiveDownloadCount = ref(0);
   const attentionCooldownUntilMs = ref(0);
-  const aggregateProgress = computed(() => progressStore.findAllProgress());
+  let lastBadge: number | undefined;
+  let lastBarKey = '';
+  let sentOnce = false;
 
   function clampPercent0to100(value: number): number {
     return Math.max(0, Math.min(100, value));
@@ -43,48 +46,47 @@ export function startWindowWatcher(): void {
     return undefined;
   }
 
-  async function setDockOrTaskbarBadge(activeDownloadCount: number): Promise<void> {
+  type BarSignal
+    = | { status: 'none' }
+      | { status: 'indeterminate' }
+      | { status: 'normal'; percent: number };
+
+  function computeBar(activeDownloadCount: number, doneCount: number, totalCount: number): BarSignal {
+    if (activeDownloadCount <= 0) return { status: 'none' };
+    if (activeDownloadCount === 1) {
+      const single = findActiveItemPercentIfSingleDownloading();
+      if (typeof single === 'number') return { status: 'normal', percent: single };
+    }
+    const aggregate = computeAggregatePercent(doneCount, totalCount);
+    if (typeof aggregate === 'number') return { status: 'normal', percent: aggregate };
+    return { status: 'indeterminate' };
+  }
+
+  // Everything the OS shows, as one primitive: the watcher fires only when it changes.
+  const signalKey = computed(() => {
+    const counts = progressStore.findAllCounts();
+    const bar = computeBar(counts.downloading, counts.done, counts.total);
+    const percent = bar.status === 'normal' ? bar.percent : '';
+    return `${counts.downloading}|${counts.ready}|${bar.status}|${percent}`;
+  });
+
+  async function setDockOrTaskbarBadge(count: number): Promise<void> {
     try {
-      await windowHandle.setBadgeCount(activeDownloadCount > 0 ? activeDownloadCount : undefined);
+      await windowHandle.setBadgeCount(count > 0 ? count : undefined);
     } catch {
       // ignore (some platforms may not support this)
     }
   }
 
-  async function setProgressBarState(params: {
-    activeDownloadCount: number;
-    doneCount: number;
-    totalCount: number;
-  }): Promise<void> {
-    const { activeDownloadCount, doneCount, totalCount } = params;
-
+  async function setProgressBarState(bar: BarSignal): Promise<void> {
     try {
-      if (activeDownloadCount <= 0) {
+      if (bar.status === 'none') {
         await windowHandle.setProgressBar({ status: ProgressBarStatus.None });
-        return;
+      } else if (bar.status === 'normal') {
+        await windowHandle.setProgressBar({ status: ProgressBarStatus.Normal, progress: bar.percent });
+      } else {
+        await windowHandle.setProgressBar({ status: ProgressBarStatus.Indeterminate });
       }
-
-      if (activeDownloadCount === 1) {
-        const singleItemPercent = findActiveItemPercentIfSingleDownloading();
-        if (typeof singleItemPercent === 'number') {
-          await windowHandle.setProgressBar({
-            status: ProgressBarStatus.Normal,
-            progress: singleItemPercent,
-          });
-          return;
-        }
-      }
-
-      const aggregatePercent = computeAggregatePercent(doneCount, totalCount);
-      if (typeof aggregatePercent === 'number') {
-        await windowHandle.setProgressBar({
-          status: ProgressBarStatus.Normal,
-          progress: aggregatePercent,
-        });
-        return;
-      }
-
-      await windowHandle.setProgressBar({ status: ProgressBarStatus.Indeterminate });
     } catch {
       // ignore (some platforms may not support this)
     }
@@ -111,7 +113,7 @@ export function startWindowWatcher(): void {
     }
     try {
       // macOS completion stays quiet: requesting attention bounces the Dock icon.
-      if (!navigator.userAgent.includes('Mac')) {
+      if (currentPlatform() !== Platform.MacOS) {
         await windowHandle.requestUserAttention(UserAttentionType.Informational);
       }
     } catch {
@@ -120,35 +122,29 @@ export function startWindowWatcher(): void {
   }
 
   async function syncWindowState(): Promise<void> {
-    const activeDownloadCount = aggregateProgress.value.downloading ?? 0;
-    const doneCount = aggregateProgress.value.done ?? 0;
-    const totalCount = aggregateProgress.value.total ?? 0;
-    const readyCount = aggregateProgress.value.ready ?? 0;
+    const counts = progressStore.findAllCounts();
+    const activeDownloadCount = counts.downloading;
+    const readyCount = counts.ready;
 
-    await setDockOrTaskbarBadge(activeDownloadCount + readyCount);
-
-    await setProgressBarState({
-      activeDownloadCount,
-      doneCount,
-      totalCount,
-    });
-
-    await maybeRequestUserAttention({
-      activeDownloadCount,
-      readyCount,
-    });
+    // Each OS call only when its own value changed (the key covers both together).
+    const badge = activeDownloadCount + readyCount;
+    const bar = computeBar(activeDownloadCount, counts.done, counts.total);
+    const barKey = `${bar.status}|${bar.status === 'normal' ? bar.percent : ''}`;
+    if (!sentOnce || badge !== lastBadge) await setDockOrTaskbarBadge(badge);
+    if (!sentOnce || barKey !== lastBarKey) await setProgressBarState(bar);
+    lastBadge = badge;
+    lastBarKey = barKey;
+    sentOnce = true;
+    await maybeRequestUserAttention({ activeDownloadCount, readyCount });
 
     previousActiveDownloadCount.value = activeDownloadCount;
   }
 
   watch(
-    () => ({
-      aggregate: aggregateProgress.value,
-      perItem: progressStore.progress,
-    }),
+    signalKey,
     () => {
       void syncWindowState();
     },
-    { immediate: true, deep: true },
+    { immediate: true },
   );
 }

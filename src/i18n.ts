@@ -13,6 +13,7 @@ import ptBRRaw from './locales/pt-BR.json';
 import zhTWRaw from './locales/zh-TW.json';
 import arRaw from './locales/ar.json';
 import { detectBrowserLanguageCodes } from './helpers/subtitles/languages.ts';
+import { RTL_LANGS } from './generated/contract';
 
 export const availableLocales = {
   'en': true,
@@ -46,7 +47,7 @@ const ptBR = ptBRRaw as unknown as MessageSchema;
 const zhTW = zhTWRaw as unknown as MessageSchema;
 const ar = arRaw as unknown as MessageSchema;
 
-const rtlLocales: ReadonlySet<string> = new Set(['ar']);
+const rtlLocales: ReadonlySet<string> = new Set(RTL_LANGS);
 
 export function localeDirection(locale: string): 'ltr' | 'rtl' {
   return rtlLocales.has(locale.split('-')[0]) ? 'rtl' : 'ltr';

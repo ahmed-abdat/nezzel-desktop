@@ -1,13 +1,22 @@
 use super::http;
 
-pub(super) const MATCHER: crate::extract::registry::Matcher =
-  crate::extract::registry::Matcher::new(
-    crate::extract::outcome::StageId::Ytdlp,
-    "vimeo-player",
-    30,
-    crate::extract::outcome::Confidence::High,
-    crate::extract::registry::Pattern::Identity(|raw| player_url(raw).is_some()),
-  );
+pub(super) const MATCHER: crate::routing::Matcher = crate::routing::Matcher::new(
+  crate::routing::StageId::Ytdlp,
+  "vimeo-player",
+  30,
+  crate::routing::Confidence::High,
+  crate::routing::Pattern::Identity(|raw| player_url(raw).is_some()),
+);
+
+/// Vimeo's anonymous web client can mislabel an account gate as DRM, so the fetch chain treats
+/// anonymous yt-dlp DRM on Vimeo as a login cause. Real page DRM still stops.
+pub(crate) fn drm_may_be_login(url: &str) -> bool {
+  reqwest::Url::parse(url).ok().is_some_and(|url| {
+    url
+      .host_str()
+      .is_some_and(|host| host == "vimeo.com" || host.ends_with(".vimeo.com"))
+  })
+}
 
 const REFERER: &str = "https://vimeo.com/";
 

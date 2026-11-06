@@ -1,8 +1,8 @@
 //! macOS MP4 compatibility, after yt-dlp has merged and moved the final output.
+use super::tool_process::async_command;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
 use tokio::sync::watch;
 
 #[cfg(target_os = "macos")]
@@ -75,7 +75,7 @@ async fn probe(
   if !*cancel.borrow() {
     return Ok(None);
   }
-  let mut command = Command::new(ffprobe);
+  let mut command = async_command(ffprobe).map_err(|_| "Unable to start QuickTime codec probe")?;
   command
     .args([
       "-v",
@@ -128,7 +128,7 @@ async fn encode(
     .filter(|stream| stream["codec_type"] == "video")
     .position(|stream| stream == video)
     .ok_or("QuickTime video stream is missing")?;
-  let mut command = Command::new(ffmpeg);
+  let mut command = async_command(ffmpeg).map_err(|_| "Unable to start QuickTime encoder")?;
   command
     .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i"])
     .arg(input)

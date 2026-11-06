@@ -1,126 +1,11 @@
 //! URL-only capability declarations. Matching is pure; registration order breaks confidence ties.
 use super::outcome::{Confidence, ReaderId, StageId};
+use crate::media_types::{ext_in, MANIFEST_EXTS, MEDIA_EXTS};
+pub(crate) use crate::routing::Matcher;
+use crate::routing::{host_path, Path, Pattern};
+use crate::sites::{site_by_domain, site_of, SiteId};
 use reqwest::Url;
 use std::cmp::Reverse;
-
-#[derive(Clone, Copy)]
-pub(crate) struct Matcher {
-  pub stage: StageId,
-  pub name: &'static str,
-  pub priority: u8,
-  pub confidence: Confidence,
-  pub exclusive: bool,
-  pattern: Pattern,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum Pattern {
-  Any,
-  HostPath {
-    hosts: &'static [&'static str],
-    subdomains: bool,
-    path: Path,
-  },
-  Identity(fn(&str) -> bool),
-  UrlOnly(fn(&Url) -> bool),
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum Path {
-  Any,
-  Prefixes(&'static [&'static str]),
-  Contains {
-    marker: &'static str,
-    exclude: Option<&'static str>,
-  },
-}
-
-impl Path {
-  fn matches(self, path: &str) -> bool {
-    match self {
-      Self::Any => true,
-      Self::Prefixes(prefixes) => prefixes.iter().any(|prefix| {
-        path
-          .strip_prefix(prefix)
-          .is_some_and(|suffix| !suffix.is_empty())
-      }),
-      Self::Contains { marker, exclude } => {
-        path
-          .split_once(marker)
-          .is_some_and(|(_, suffix)| !suffix.is_empty())
-          && !exclude.is_some_and(|excluded| path.contains(excluded))
-      }
-    }
-  }
-}
-
-impl Matcher {
-  pub(crate) const fn new(
-    stage: StageId,
-    name: &'static str,
-    priority: u8,
-    confidence: Confidence,
-    pattern: Pattern,
-  ) -> Self {
-    Self {
-      stage,
-      name,
-      priority,
-      confidence,
-      exclusive: false,
-      pattern,
-    }
-  }
-
-  pub(crate) const fn reader(
-    reader: ReaderId,
-    name: &'static str,
-    priority: u8,
-    accepts: fn(&str) -> bool,
-  ) -> Self {
-    Self::new(
-      StageId::Reader(reader),
-      name,
-      priority,
-      Confidence::High,
-      Pattern::Identity(accepts),
-    )
-  }
-
-  fn matches(&self, url: &Url) -> bool {
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-      return false;
-    }
-    match self.pattern {
-      Pattern::Any => true,
-      Pattern::Identity(accepts) => accepts(url.as_str()),
-      Pattern::UrlOnly(accepts) => accepts(url),
-      Pattern::HostPath {
-        hosts,
-        subdomains,
-        path,
-      } => {
-        url.host_str().is_some_and(|host| {
-          hosts.iter().any(|domain| {
-            host == *domain
-              || subdomains
-                && host
-                  .strip_suffix(domain)
-                  .is_some_and(|prefix| prefix.ends_with('.'))
-          })
-        }) && path.matches(url.path())
-      }
-    }
-  }
-}
-
-const fn host_path(hosts: &'static [&'static str], subdomains: bool, path: Path) -> Pattern {
-  Pattern::HostPath {
-    hosts,
-    subdomains,
-    path,
-  }
-}
 
 fn direct_file(url: &Url) -> bool {
   if crate::files::probe::file_extension(url) {
@@ -133,23 +18,22 @@ fn direct_file(url: &Url) -> bool {
     .next()
     .and_then(|name| name.rsplit_once('.'))
     .is_some_and(|(stem, ext)| {
-      !stem.is_empty()
-        && matches!(
-          ext.to_ascii_lowercase().as_str(),
-          "mp4"
-            | "mp3"
-            | "webm"
-            | "m4a"
-            | "ogg"
-            | "flac"
-            | "wav"
-            | "mov"
-            | "mkv"
-            | "m3u8"
-            | "m3u"
-            | "mpd"
-        )
+      !stem.is_empty() && (ext_in(MEDIA_EXTS, ext) || ext_in(MANIFEST_EXTS, ext))
     })
+}
+
+// `routes()` builds the share plan once, before matching: a share link takes no other stage.
+const FILE_SHARE: Matcher = Matcher::new(
+  StageId::Files,
+  "file-share",
+  40,
+  Confidence::High,
+  Pattern::Identity(share_link),
+)
+.exclusive();
+
+fn share_link(raw: &str) -> bool {
+  crate::files::hosts::is_share(raw)
 }
 
 const FILES: &[Matcher] = &[
@@ -160,18 +44,6 @@ const FILES: &[Matcher] = &[
     Confidence::High,
     Pattern::UrlOnly(direct_file),
   ),
-  Matcher {
-    exclusive: true,
-    ..Matcher::new(
-      StageId::Files,
-      "file-share",
-      40,
-      Confidence::High,
-      Pattern::Identity(|raw| {
-        crate::files::hosts::plan(raw, crate::files::hosts::Export::Pdf).is_some()
-      }),
-    )
-  },
   Matcher::new(
     StageId::Files,
     "file-probe",
@@ -181,6 +53,15 @@ const FILES: &[Matcher] = &[
   ),
 ];
 
+/// The X hosts whose status links route as posts: exact, so `archive.twitter.com` stays generic.
+const X_ROUTE_HOSTS: &[&str] = &[
+  "x.com",
+  "www.x.com",
+  "twitter.com",
+  "www.twitter.com",
+  "mobile.twitter.com",
+];
+
 const GALLERY: &[Matcher] = &[
   Matcher::new(
     StageId::Gallery,
@@ -188,13 +69,7 @@ const GALLERY: &[Matcher] = &[
     30,
     Confidence::High,
     host_path(
-      &[
-        "x.com",
-        "www.x.com",
-        "twitter.com",
-        "www.twitter.com",
-        "mobile.twitter.com",
-      ],
+      X_ROUTE_HOSTS,
       false,
       Path::Contains {
         marker: "/status/",
@@ -259,20 +134,14 @@ const GALLERY: &[Matcher] = &[
 ];
 
 const YTDLP: &[Matcher] = &[
-  Matcher {
-    exclusive: true,
-    ..Matcher::new(
-      StageId::Ytdlp,
-      "youtube-exclusive",
-      30,
-      Confidence::High,
-      host_path(
-        &["youtube.com", "youtu.be", "youtube-nocookie.com"],
-        true,
-        Path::Any,
-      ),
-    )
-  },
+  Matcher::new(
+    StageId::Ytdlp,
+    "youtube-exclusive",
+    30,
+    Confidence::High,
+    Pattern::UrlOnly(|url| url.host_str().and_then(site_of) == Some(SiteId::YouTube)),
+  )
+  .exclusive(),
   Matcher::new(
     StageId::Ytdlp,
     "video-host",
@@ -327,29 +196,14 @@ const REGISTRY: &[&[Matcher]] = &[
 /// Keep the highest-confidence/priority rule for each stage, then sort by confidence and
 /// static registration order. Priority chooses a named URL kind within a stage, not a new stage.
 pub(crate) fn routes(raw: &str) -> Vec<&'static Matcher> {
-  if crate::files::hosts::plan(raw, crate::files::hosts::Export::Pdf).is_some() {
-    return FILES.iter().filter(|matcher| matcher.exclusive).collect();
+  if share_link(raw) {
+    return vec![&FILE_SHARE];
   }
   let Ok(url) = Url::parse(raw) else {
     return Vec::new();
   };
-  let mut routes: Vec<&Matcher> = Vec::new();
-  for matcher in REGISTRY
-    .iter()
-    .flat_map(|group| group.iter())
-    .filter(|matcher| matcher.matches(&url))
-  {
-    if let Some(existing) = routes
-      .iter_mut()
-      .find(|existing| existing.stage == matcher.stage)
-    {
-      if (matcher.confidence, matcher.priority) > (existing.confidence, existing.priority) {
-        *existing = matcher;
-      }
-    } else {
-      routes.push(matcher);
-    }
-  }
+  let mut routes =
+    crate::routing::best_per_stage(REGISTRY.iter().flat_map(|group| group.iter()), &url);
   if routes.iter().any(|matcher| matcher.exclusive) {
     routes.retain(|matcher| matcher.exclusive);
   }
@@ -378,18 +232,20 @@ pub(crate) fn gallery_first(raw: &str) -> bool {
     .unwrap_or_default()
     .trim_start_matches("www.");
   let path = url.path();
+  let site = site_by_domain(host);
   if crate::resolve::reddit::is_host(host)
     || matches!(host, "vimeo.com" | "soundcloud.com" | "snapchat.com")
     || host.ends_with(".snapchat.com")
     || path.starts_with("/reel/")
     || path.starts_with("/reels/")
-    || (host.ends_with("tiktok.com") && path.contains("/video/"))
-    || ((host == "x.com" || host.ends_with("twitter.com")) && path.contains("/video/"))
+    || (matches!(site, Some(SiteId::TikTok | SiteId::X)) && path.contains("/video/"))
   {
     return false;
   }
+  if X_ROUTE_HOSTS.contains(&host) {
+    return path.contains("/status/");
+  }
   match host {
-    "x.com" | "twitter.com" | "mobile.twitter.com" => path.contains("/status/"),
     "instagram.com" => path.starts_with("/p/"),
     "bsky.app" => path.contains("/post/"),
     "pinterest.com" => path.starts_with("/pin/"),
@@ -401,19 +257,13 @@ pub(crate) fn exclusive(raw: &str) -> bool {
   routes(raw).iter().any(|matcher| matcher.exclusive)
 }
 
+/// Readers that claim the URL, highest priority first. An exclusive route (file share, YouTube)
+/// leaves no reader; otherwise the readers' own matchers decide.
 pub(crate) fn readers(raw: &str) -> Vec<ReaderId> {
-  let mut candidates: Vec<_> = routes(raw)
-    .into_iter()
-    .filter(|matcher| matches!(matcher.stage, StageId::Reader(_)))
-    .collect();
-  candidates.sort_by_key(|matcher| Reverse(matcher.priority));
-  candidates
-    .into_iter()
-    .filter_map(|matcher| match matcher.stage {
-      StageId::Reader(reader) => Some(reader),
-      _ => None,
-    })
-    .collect()
+  if exclusive(raw) {
+    return Vec::new();
+  }
+  crate::resolve::readers(raw)
 }
 
 /// Keep the legacy Files gate first unless a stage is exclusive. It declines unsupported
@@ -456,13 +306,9 @@ fn prefer_ytdlp(stages: &mut Vec<StageId>) {
 
 fn video_first(raw: &str) -> bool {
   Url::parse(raw).is_ok_and(|url| {
-    let host = url
-      .host_str()
-      .unwrap_or_default()
-      .trim_start_matches("www.");
-    (matches!(host, "x.com" | "twitter.com" | "mobile.twitter.com")
-      && url.path().contains("/status/"))
-      || ((host == "tiktok.com" || host.ends_with(".tiktok.com")) && url.path().contains("/video/"))
+    let host = url.host_str().unwrap_or_default();
+    (X_ROUTE_HOSTS.contains(&host) && url.path().contains("/status/"))
+      || (site_by_domain(host) == Some(SiteId::TikTok) && url.path().contains("/video/"))
   })
 }
 

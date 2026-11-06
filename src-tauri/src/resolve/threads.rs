@@ -1,6 +1,6 @@
 //! Port of Android's ThreadsPostIdentity / ThreadsPostParser.
 //! Read only the requested post's TargetQuery; recommendations and replies cannot supply media.
-use super::{html, http, Outcome, Resolution};
+use super::{html, http, Resolution, Verdict};
 use crate::models::parsed::{
   AttachmentKind, MediaAttachment, MediaKind, ParsedSingleVideo, SubtitleInventory,
 };
@@ -11,13 +11,12 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
-pub(super) const MATCHER: crate::extract::registry::Matcher =
-  crate::extract::registry::Matcher::reader(
-    crate::extract::outcome::ReaderId::Threads,
-    "threads-post",
-    20,
-    |raw| Identity::parse(raw).is_some(),
-  );
+pub(super) const MATCHER: crate::routing::Matcher = crate::routing::Matcher::reader(
+  crate::routing::ReaderId::Threads,
+  "threads-post",
+  20,
+  |raw| Identity::parse(raw).is_some(),
+);
 
 const CAP: usize = 3 * 512 * 1024;
 static POST: LazyLock<Regex> = LazyLock::new(|| {
@@ -62,22 +61,22 @@ impl Identity {
   }
 }
 
-pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Outcome {
+pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Verdict {
   let Some(identity) = Identity::parse(input) else {
-    return Outcome::NoMatch;
+    return Verdict::NoMatch;
   };
   // Unlike generic pages, Threads never follows a redirect (login and challenge included).
   let Ok(response) = transport.get(&identity.url, CAP).await else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   if response.status != 200 || response.body.len() > CAP {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   }
   let Ok(body) = std::str::from_utf8(&response.body) else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   let Some(post) = parse(body, &identity.code) else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   // yt-dlp and the picker will fetch these URLs themselves. Match the generic reader's
   // public-address admission before handing off any stream or preview URL.
@@ -85,12 +84,12 @@ pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Outc
   for attachment in &post.attachments {
     for raw in std::iter::once(&attachment.url).chain(attachment.thumbnail.iter()) {
       let Ok(url) = http::https_url(raw) else {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       };
       if checked.insert(url.host_str().map(str::to_owned))
         && transport.admit_media(&url).await.is_err()
       {
-        return Outcome::Unknown;
+        return Verdict::Unknown;
       }
     }
   }
@@ -100,13 +99,13 @@ pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Outc
       .iter()
       .all(|a| matches!(a.kind, AttachmentKind::Video))
   {
-    return post.video.map_or(Outcome::Unknown, |url| {
-      Outcome::Verified(Resolution::Passthrough(url))
+    return post.video.map_or(Verdict::Unknown, |url| {
+      Verdict::Verified(Resolution::Passthrough(url))
     });
   }
   match serde_json::to_string(&post.into_media(input, &identity.code)) {
-    Ok(metadata) => Outcome::Verified(Resolution::Attachments { metadata }),
-    Err(_) => Outcome::Unknown,
+    Ok(metadata) => Verdict::Verified(Resolution::Attachments { metadata }),
+    Err(_) => Verdict::Unknown,
   }
 }
 

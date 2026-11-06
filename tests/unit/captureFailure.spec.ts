@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { FAIL_REASONS, failActions, failReason } from '../../src/helpers/captureFailure';
+import { FAIL_REASONS } from '../../src/generated/contract';
+import { failActions, failReason } from '../../src/helpers/captureFailure';
 import en from '../../src/locales/en.json';
 import ar from '../../src/locales/ar.json';
 import fr from '../../src/locales/fr.json';

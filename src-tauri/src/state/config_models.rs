@@ -314,15 +314,20 @@ impl Default for UpdateSettings {
 }
 
 /// Crash and error reports to our own Sentry (build-time DSN). On by default, owner decision 2026-11-04.
+/// Usage counts ("Help improve Nezzel", `usage/`): on by default, owner decision 2026-11-05.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PrivacySettings {
   pub send_reports: bool,
+  pub send_usage: bool,
 }
 
 impl Default for PrivacySettings {
   fn default() -> Self {
-    Self { send_reports: true }
+    Self {
+      send_reports: true,
+      send_usage: true,
+    }
   }
 }
 

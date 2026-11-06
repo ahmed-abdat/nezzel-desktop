@@ -9,7 +9,7 @@ use crate::extract::{
   outcome::{Confidence, Outcome, StageId},
 };
 use crate::{
-  commands::DownloadRecords,
+  download_records::DownloadRecords,
   models::{
     progress::{
       MediaDestination, MediaDestinationPath, MediaProgress, MediaProgressStage, ProgressCategory,
@@ -28,7 +28,7 @@ use std::{
   sync::{LazyLock, Mutex},
   time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 struct Cached {
   group: String,
   identity: String,
@@ -118,7 +118,7 @@ async fn metadata_stage(app: &AppHandle, entry: &FetchEntry, unsupported: bool) 
       stage.record_code(code, "", false, start);
       stage
     }
-    None if super::hosts::plan(&entry.url, super::hosts::Export::Pdf).is_some() => {
+    None if super::hosts::is_share(&entry.url) => {
       stage.record_code(Error::State.code(), "", false, start);
       stage
     }
@@ -130,7 +130,7 @@ async fn info_impl(
   entry: &FetchEntry,
   unsupported: bool,
 ) -> Option<Result<ParsedMedia>> {
-  let shared = super::hosts::plan(&entry.url, super::hosts::Export::Pdf).is_some();
+  let shared = super::hosts::is_share(&entry.url);
   if !(shared
     || probe::should_probe_metadata(&entry.url, entry.total, entry.format.is_some())
     || unsupported && entry.total <= 1 && entry.format.is_none() && probe::should_probe(&entry.url))
@@ -212,7 +212,7 @@ async fn probe_metadata_impl(
   cancel: tokio::sync::watch::Receiver<bool>,
   unsupported: bool,
 ) -> Option<Result<Probe>> {
-  if super::hosts::plan(url, super::hosts::Export::Pdf).is_some() {
+  if super::hosts::is_share(url) {
     return Some(engine.probe(url, cancel).await);
   }
   match tokio::time::timeout(Duration::from_secs(5), engine.probe(url, cancel)).await {
@@ -223,6 +223,9 @@ async fn probe_metadata_impl(
     _ => None,
   }
 }
+/// Subfolder of the download folder that file-share downloads go to (the inspector shows the same path).
+pub(crate) const FILES_FOLDER: &str = "Files";
+
 fn root(app: &AppHandle, entry: &DownloadEntry) -> Result<PathBuf> {
   if let Some(dir) = entry
     .overrides
@@ -242,7 +245,7 @@ fn root(app: &AppHandle, entry: &DownloadEntry) -> Result<PathBuf> {
       .map_err(|_| Error::Io)?
       .join("Nezzel"),
   };
-  Ok(root.join("Files"))
+  Ok(root.join(FILES_FOLDER))
 }
 pub(crate) async fn download(app: AppHandle, entry: DownloadEntry) -> Result<()> {
   let cancel = subscribe_group(&entry.group_id);
@@ -278,8 +281,9 @@ async fn attempt(
     .remove(&entry.id)
     .filter(|p| p.created.elapsed() < TTL && p.identity == state::identity(&entry.url))
     .map(|p| p.probe);
-  let _ = app.emit(
-    "media_progress_stage",
+  crate::events::emit(
+    app,
+    crate::events::MEDIA_PROGRESS_STAGE,
     MediaProgressStage {
       id: entry.id.clone(),
       group_id: entry.group_id.clone(),
@@ -329,8 +333,10 @@ async fn attempt(
           speed,
         } = event
         {
-          let _ = app.emit(
-            "media_progress",
+          crate::usage::speed_sample(app, &entry.group_id, &entry.id, Some(speed));
+          crate::events::emit(
+            app,
+            crate::events::MEDIA_PROGRESS,
             MediaProgress {
               id: entry.id.clone(),
               group_id: entry.group_id.clone(),
@@ -366,8 +372,9 @@ async fn attempt(
     records.record_item(&entry.group_id, &entry.id, &path.to_string_lossy());
     records.seal(&entry.group_id);
   }
-  let _ = app.emit(
-    "media_destination",
+  crate::events::emit(
+    app,
+    crate::events::MEDIA_DESTINATION,
     MediaDestination {
       id: entry.id.clone(),
       group_id: entry.group_id.clone(),
@@ -389,7 +396,7 @@ pub(crate) fn diagnostic(app: &AppHandle, group: &str, id: &str, error: &Error) 
   let message = app
     .state::<crate::i18n::I18nManager>()
     .t(&format!("files.errors.{code}"));
-  crate::extract::chain::emit_terminal(
+  crate::extract::terminal::emit_terminal(
     app,
     MediaDiagnosticPayload {
       id: id.into(),

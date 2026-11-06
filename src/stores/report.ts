@@ -1,11 +1,16 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { copyText } from '../tauri/clipboard';
 import { i18n } from '../i18n';
 import { useToastStore } from './toast';
 import { usePreferencesStore } from './preferences';
 import { useOnboardingStore } from './onboarding';
+import { useSettingsStore } from './settings';
 import router from '../router';
+import { countUsage } from '../tauri/usage';
+import type { SendError } from '../generated/contract';
+import { fireAndForget } from '../tauri/fireAndForget';
 
 /** Built and scrubbed in Rust (`diagnostics::report`). */
 export interface ProblemReport {
@@ -28,14 +33,32 @@ export interface ReportedDownload {
 
 const t = (key: string) => i18n.global.t(key);
 
+export interface CrashConsentInput {
+  /** The welcome sheet (with the reports switch) was shown this launch. */
+  sawReportsSwitch: boolean;
+  /** Saved onboarding preferences; undefined when they did not load. */
+  onboarding: { reportsNoticeDone?: boolean } | undefined;
+  sendReports: boolean;
+}
+
+/**
+ * The one consent decision at startup. Installs from before reports existed get a one-time notice first; until
+ * the user has seen that reports are on (or with reports off), a previous run's crash is offered, never sent on
+ * its own. Rust still checks the switch and the build's DSN before sending.
+ */
+export function crashConsent(input: CrashConsentInput): { showNotice: boolean; autoSend: boolean } {
+  const showNotice = !input.sawReportsSwitch
+    && input.onboarding !== undefined
+    && !input.onboarding.reportsNoticeDone;
+  // Unknown (preferences did not load): the user may never have seen the notice, so offer, don't send.
+  const known = input.sawReportsSwitch || input.onboarding !== undefined;
+  return { showNotice, autoSend: known && !showNotice && input.sendReports };
+}
+
 /** A download failed: Rust sends it when reports are on (site + link shape only). */
 export function reportFailedDownload(download: ReportedDownload): void {
-  // Never let reporting break failure handling (a mocked or missing backend may not return a promise).
-  try {
-    void Promise.resolve(invoke('diagnostics_download_failed', { download: download.context, url: download.url, extractor: download.extractor })).catch(() => {});
-  } catch {
-    // Reporting is best effort.
-  }
+  // Never lets reporting break failure handling.
+  fireAndForget('diagnostics_download_failed', { download: download.context, url: download.url, extractor: download.extractor });
 }
 
 export const useReportStore = defineStore('report', () => {
@@ -45,6 +68,7 @@ export const useReportStore = defineStore('report', () => {
   const toast = useToastStore();
 
   function openReport(failed?: ReportedDownload) {
+    countUsage('report.opened');
     download.value = failed ?? null;
     sending.value = false;
     open.value = true;
@@ -68,7 +92,7 @@ export const useReportStore = defineStore('report', () => {
   async function copyDetails(note: string, includeLink: boolean) {
     try {
       const report = await invoke<ProblemReport>('diagnostics_report', args(note, includeLink));
-      await navigator.clipboard.writeText(report.body);
+      await copyText(report.body);
       toast.showToast(t('report.copied'), { style: 'success' });
     } catch {
       toast.showToast(t('report.copyFailed'), { style: 'error' });
@@ -101,10 +125,12 @@ export const useReportStore = defineStore('report', () => {
     if (started) return;
     started = true;
     const preferences = usePreferencesStore();
-    const needsNotice = !useOnboardingStore().sawReportsSwitch
-      && preferences.preferences?.onboarding !== undefined
-      && !preferences.preferences.onboarding.reportsNoticeDone;
-    if (needsNotice) {
+    const { showNotice, autoSend } = crashConsent({
+      sawReportsSwitch: useOnboardingStore().sawReportsSwitch,
+      onboarding: preferences.preferences?.onboarding,
+      sendReports: useSettingsStore().settings.privacy.sendReports,
+    });
+    if (showNotice) {
       toast.showToast(t('report.notice.text'), {
         style: 'info',
         duration: 0,
@@ -112,10 +138,23 @@ export const useReportStore = defineStore('report', () => {
       });
       void preferences.patch({ onboarding: { reportsNoticeDone: true } }).catch(() => {});
     }
-    await checkCrash(!needsNotice);
+    await checkCrash(autoSend);
   }
 
-  /** Previous run's crash: Rust deletes the file as it reads it, so this shows once. */
+  /** The staged crash, on the user's click. Not delivered: it stays staged and the click is offered again. */
+  function sendCrash() {
+    void invoke('diagnostics_send_crash')
+      .then(() => toast.showToast(t('report.sent'), { style: 'success' }))
+      .catch((error: SendError | unknown) => toast.showToast(t('report.sendFailed'), {
+        style: 'error',
+        action: error === 'notDelivered' ? { label: t('report.sendCrash'), run: sendCrash } : undefined,
+      }));
+  }
+
+  /**
+   * Previous run's crash. Rust deletes the file once the crash is sent or staged for a click, so this shows once;
+   * null also when it could not be staged (the file stays for the next launch).
+   */
   async function checkCrash(auto = true) {
     let notice: { sent: boolean } | null = null;
     try {
@@ -131,12 +170,7 @@ export const useReportStore = defineStore('report', () => {
     toast.showToast(t('report.crashTitle'), {
       style: 'warning',
       duration: 0,
-      action: {
-        label: t('report.sendCrash'),
-        run: () => void invoke('diagnostics_send_crash')
-          .then(() => toast.showToast(t('report.sent'), { style: 'success' }))
-          .catch(() => toast.showToast(t('report.sendFailed'), { style: 'error' })),
-      },
+      action: { label: t('report.sendCrash'), run: sendCrash },
     });
   }
 

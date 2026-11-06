@@ -7,7 +7,7 @@
       </settings-row>
     </settings-section>
 
-    <prefs-advanced>
+    <base-disclosure class="mt-8" :label="t('perDownload.advanced')">
       <settings-row stacked for-id="override-headers" :label="t('perDownload.network.headers')" :help="t('perDownload.network.headersHint')">
         <Textarea
           id="override-headers"
@@ -31,7 +31,7 @@
           {{ t('settings.network.extractorArgs.flagWarning') }}
         </p>
       </settings-row>
-    </prefs-advanced>
+    </base-disclosure>
   </div>
 </template>
 
@@ -43,7 +43,7 @@ import NetworkSettingsEditor from '../network/NetworkSettingsEditor.vue';
 import { SelectField } from '../ui/select';
 import SettingsRow from '../settings/SettingsRow.vue';
 import SettingsSection from '../settings/SettingsSection.vue';
-import PrefsAdvanced from './PrefsAdvanced.vue';
+import BaseDisclosure from '../base/BaseDisclosure.vue';
 import { buildImpersonatePresets } from '../../helpers/network.ts';
 import { useMediaOptionsStore } from '../../stores/media/options.ts';
 import { DownloadOverrides } from '../../tauri/types/media.ts';

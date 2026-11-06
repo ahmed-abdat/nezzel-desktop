@@ -7,6 +7,7 @@ use tauri::State;
 
 #[tauri::command]
 pub fn media_info(
+  app: tauri::AppHandle,
   url: String,
   id: String,
   group_id: String,
@@ -14,6 +15,7 @@ pub fn media_info(
   pipeline: State<'_, FetchSender>,
 ) -> Result<String, String> {
   ensure_group_running(&group_id);
+  crate::usage::link_received(&app, &group_id, &id, &url);
 
   pipeline
     .0

@@ -103,7 +103,8 @@
 <script setup lang="ts">
 import LoginProfile from './LoginProfile.vue';
 import FileTypeIcon from './FileTypeIcon.vue';
-import { fileCategory, hostOnly } from '../../helpers/fileCategory';
+import { groupFileKind, groupSite, isImageOnly as isImageOnlyGroup } from '../../helpers/groupView';
+import { hostOf } from '../../helpers/siteName';
 import { useMediaDestinationStore } from '../../stores/media/destination';
 // Flat inspector for one download's options. Renders only its panel; the shell decides where it sits.
 // The choice is never kept in local state: it is read from the options stored on the group, so reopening
@@ -129,13 +130,13 @@ import { useMediaStore } from '../../stores/media/media';
 import { useMediaSizeStore } from '../../stores/media/size';
 import { useSettingsStore } from '../../stores/settings';
 import { choiceForOptions, choiceHeight, hasAudio, optionsForChoice, type QuickChoice } from '../../helpers/quickChoice';
-import { formatDuration } from '../../composables/useDuration';
-import { siteName } from '../../helpers/siteName';
+import { formatDuration } from '../../helpers/units';
 import { useUiPrefs } from '../../composables/useUiPrefs';
 import { useDialog } from '../../composables/useDialog';
 import { shortFolderPath } from '../../helpers/folderPath';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import type { DownloadOptions } from '../../tauri/types/media';
+import { FILES_FOLDER } from '@/generated/contract';
 
 defineProps<{ modal?: boolean }>();
 
@@ -167,14 +168,14 @@ const state = computed(() => (group.value ? stateStore.getGroupState(group.value
 const isReading = computed(() => state.value === MediaState.fetching || state.value === MediaState.fetchingList);
 const loginBusy = computed(() => isReading.value || state.value === MediaState.downloading || state.value === MediaState.downloadingList);
 const formats = computed(() => group.value?.formats ?? []);
-const isImageOnly = computed(() => group.value?.mediaKind === 'image' || group.value?.mediaKind === 'carousel');
+const isImageOnly = computed(() => isImageOnlyGroup(group.value));
 const isFile = computed(() => group.value?.mediaKind === 'file');
 const savedPath = computed(() => (group.value ? useMediaDestinationStore().getPrimaryDestination(group.value.id)?.path : undefined));
-const fileKind = computed(() => (isFile.value ? fileCategory(savedPath.value ?? group.value?.title ?? group.value?.url) : undefined));
+const fileKind = computed(() => groupFileKind(group.value, savedPath.value));
 /** File downloads: type, size, where it was saved, and the source host (never the full link). */
 const fileDetails = computed(() => {
   if (!isFile.value || !group.value || !fileKind.value) return undefined;
-  const host = hostOnly(group.value.url);
+  const host = hostOf(group.value.url);
   return [
     { key: 'type', label: t('files.type'), value: t(`files.category.${fileKind.value}`), ltr: false },
     group.value.filesize ? { key: 'size', label: t('files.size'), value: formatSizeLocal(group.value.filesize), ltr: false } : undefined,
@@ -185,14 +186,14 @@ const fileDetails = computed(() => {
 const hasFormatControls = computed(() => !isImageOnly.value && !isFile.value);
 const hasAttachments = computed(() => !!group.value?.attachments?.length);
 const title = computed(() => group.value?.title ?? group.value?.url ?? '');
-const duration = computed(() => formatDuration(group.value?.duration ?? 0));
-const site = computed(() => siteName(group.value?.extractor, group.value?.url));
+const duration = computed(() => formatDuration(group.value?.duration ?? 0, { pad: true }));
+const site = computed(() => (group.value ? groupSite(group.value) : undefined));
 /** This download's folder: the one picked in the sheet, else the app default. */
 const folder = computed(() => {
   const picked = group.value && optionsStore.getOverrides(group.value.id)?.output?.downloadDir;
   if (picked) return picked;
   const base = settingsStore.settings.output.downloadDir || '';
-  return isFile.value && base ? `${base.replace(/[\\/]$/, '')}${base.includes('\\') ? '\\' : '/'}Files` : base;
+  return isFile.value && base ? `${base.replace(/[\\/]$/, '')}${base.includes('\\') ? '\\' : '/'}${FILES_FOLDER}` : base;
 });
 
 /** Native folder picker for this download only; the sheet stays open. */

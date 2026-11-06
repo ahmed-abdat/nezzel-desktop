@@ -1,4 +1,3 @@
-import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { flushPromises, mount } from '@vue/test-utils';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { defineComponent, reactive, ref } from 'vue';
@@ -11,7 +10,6 @@ import { useDragDropStore } from '../../src/stores/dragDrop';
 import { downloadSearchQuery } from '../../src/composables/useDownloadList';
 import { createDefaultInputFilterSettings } from '../../src/helpers/inputFilters';
 
-vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ readText: vi.fn() }));
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
@@ -25,7 +23,7 @@ const markSeen = vi.fn();
 const poll = vi.fn();
 const clipboardContent = ref('');
 const watchClipboardState = reactive({
-  isActive: false,
+  enabled: false,
 });
 const settingsState = reactive({
   input: {
@@ -52,8 +50,8 @@ vi.mock('../../src/stores/toast', () => ({
 
 vi.mock('../../src/stores/watchClipboard', () => ({
   useWatchClipboardStore: () => ({
-    get isActive() {
-      return watchClipboardState.isActive;
+    get enabled() {
+      return watchClipboardState.enabled;
     },
     toggle: toggleClipboard,
     hasSeen: vi.fn(() => false),
@@ -82,7 +80,6 @@ function createBlankView() {
 
 describe('LinkField', () => {
   beforeEach(() => {
-    vi.mocked(readText).mockReset();
     invoke.mockReset().mockRejectedValue(new Error('no backend'));
     dispatchMediaInfoFetch.mockReset();
     addUrlBatch.mockReset();
@@ -94,7 +91,7 @@ describe('LinkField', () => {
     markSeen.mockReset();
     poll.mockReset();
     clipboardContent.value = '';
-    watchClipboardState.isActive = false;
+    watchClipboardState.enabled = false;
     settingsState.input.autoFillClipboard = false;
     settingsState.inputFilters = createDefaultInputFilterSettings();
     useUiPrefs().skipOptionsSheet.value = false;
@@ -199,7 +196,9 @@ describe('LinkField', () => {
   });
 
   it('pastes native clipboard text without submitting or adding it twice', async () => {
-    vi.mocked(readText).mockResolvedValue('https://example.com/pasted');
+    invoke.mockImplementation((cmd: string) => cmd === 'capture_read_clipboard'
+      ? Promise.resolve('https://example.com/pasted')
+      : Promise.reject(new Error('unexpected')));
     const { wrapper } = await mountField();
     await wrapper.get('#queue-url-input').setValue('https://example.com/old');
     await (wrapper.vm as unknown as { paste: () => Promise<void> }).paste();
@@ -207,15 +206,13 @@ describe('LinkField', () => {
     expect(addUrlBatch).not.toHaveBeenCalled();
   });
 
-  it('pastes through the backend reader before the plugin (GTK on Linux Wayland)', async () => {
+  it('pastes through the one backend reader (GTK on Linux Wayland)', async () => {
     invoke.mockImplementation((cmd: string) => cmd === 'capture_read_clipboard'
       ? Promise.resolve('https://example.com/gtk')
       : Promise.reject(new Error('unexpected')));
-    vi.mocked(readText).mockResolvedValue('https://example.com/stale');
     const { wrapper } = await mountField();
     await (wrapper.vm as unknown as { paste: () => Promise<void> }).paste();
     expect((wrapper.get('#queue-url-input').element as HTMLInputElement).value).toBe('https://example.com/gtk');
-    expect(readText).not.toHaveBeenCalled();
   });
 
   it('fills the field itself only when the webview hands it an empty native paste', async () => {
@@ -230,24 +227,8 @@ describe('LinkField', () => {
     expect((field.element as HTMLInputElement).value).toBe('https://example.com/wayland');
   });
 
-  it('uses the browser clipboard in previews without a native clipboard plugin', async () => {
-    vi.mocked(readText).mockRejectedValue(new Error('no native clipboard'));
-    const browserRead = vi.fn().mockResolvedValue('https://example.com/browser-paste');
-    const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: browserRead } });
-    try {
-      const { wrapper } = await mountField();
-      await (wrapper.vm as unknown as { paste: () => Promise<void> }).paste();
-      expect((wrapper.get('#queue-url-input').element as HTMLInputElement).value).toBe('https://example.com/browser-paste');
-      expect(browserRead).toHaveBeenCalledOnce();
-    } finally {
-      if (original) Object.defineProperty(navigator, 'clipboard', original);
-      else Reflect.deleteProperty(navigator, 'clipboard');
-    }
-  });
-
   it('keeps the draft when clipboard access fails', async () => {
-    vi.mocked(readText).mockRejectedValue(new Error('denied'));
+    invoke.mockRejectedValue(new Error('denied'));
     const { wrapper } = await mountField();
     await wrapper.get('#queue-url-input').setValue('draft');
     await (wrapper.vm as unknown as { paste: () => Promise<void> }).paste();

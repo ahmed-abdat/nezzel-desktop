@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test';
 import { test } from './utils/fixtures';
+import { ROW_SELECTOR } from '../../src/helpers/domIds';
 
 test('it keeps an advanced format choice after viewing details', async ({ page }) => {
   await page.goto('/');
@@ -11,13 +12,13 @@ test('it keeps an advanced format choice after viewing details', async ({ page }
   await page.getByRole('option', { name: 'Audio', exact: true }).click();
   await page.keyboard.press('Escape');
 
-  const row = page.locator('li.row').first();
+  const row = page.locator(ROW_SELECTOR).first();
   await row.getByRole('button', { name: 'More actions' }).click();
   await page.getByRole('menuitem', { name: 'Details' }).click();
   await expect(page.getByText('Technical details')).toBeVisible();
   await page.goBack();
 
-  await page.locator('li.row').first().getByRole('button', { name: 'Options' }).click();
+  await page.locator(ROW_SELECTOR).first().getByRole('button', { name: 'Options' }).click();
   await sheet.getByText('All formats and extras').click();
   await expect(sheet.getByRole('combobox', { name: 'Select track to download' })).toHaveText('Audio');
 });
@@ -30,7 +31,7 @@ test('it keeps carousel selections when reopening options and requires at least 
   await expect(sheet.getByLabel('Photo 2', { exact: true })).toBeChecked();
   await sheet.getByLabel('Photo 2', { exact: true }).uncheck();
   await sheet.getByRole('button', { name: 'Not now', exact: true }).click();
-  await page.locator('li.row').first().getByRole('button', { name: 'Options', exact: true }).click();
+  await page.locator(ROW_SELECTOR).first().getByRole('button', { name: 'Options', exact: true }).click();
   await expect(sheet.getByLabel('Photo 2', { exact: true })).not.toBeChecked();
   await sheet.getByLabel('Select all', { exact: true }).check();
   await expect(sheet.getByLabel('Photo 2', { exact: true })).toBeChecked();

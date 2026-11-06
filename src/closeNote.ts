@@ -1,9 +1,10 @@
 import { createApp } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import CloseNote from './components/welcome/CloseNote.vue';
-import { applyDocumentLocale, getDefaultLocale, i18n, type Locale } from './i18n';
-import { applyTheme } from './composables/useTheme';
+import { i18n } from './i18n';
+import { applyAppearance, applyLanguage } from './appearance';
 import type { Settings } from './tauri/types/config';
+import { LINUX_DESKTOPS } from './generated/contract';
 
 /** The one-time note after the first close, in its own small native window by the tray. */
 export async function mountCloseNote() {
@@ -11,17 +12,14 @@ export async function mountCloseNote() {
   document.documentElement.classList.add('nz-capture');
   try {
     const settings = await invoke<Settings>('config_get');
-    const locale = settings.appearance.language === 'system' ? getDefaultLocale() : settings.appearance.language as Locale;
-    i18n.global.locale.value = locale;
-    applyDocumentLocale(locale);
-    if (settings.appearance.theme !== 'system') applyTheme(settings.appearance.theme);
+    applyAppearance(settings.appearance);
   } catch {
-    applyDocumentLocale(getDefaultLocale());
+    applyLanguage('system');
   }
   const q = new URLSearchParams(location.search);
   const app = createApp(CloseNote, {
     os: q.get('os') ?? 'mac',
-    desktop: (['gnome', 'kde', 'other'] as const).find(d => d === q.get('desktop')) ?? 'other',
+    desktop: LINUX_DESKTOPS.find(d => d === q.get('desktop')) ?? 'other',
     edge: q.get('edge') === 'bottom' ? 'bottom' : 'top',
     arrowX: Number(q.get('nx')) || 160,
   }).use(i18n);

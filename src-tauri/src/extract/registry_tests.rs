@@ -7,7 +7,6 @@ fn preferring_video_preserves_intervening_stage_order() {
     StageId::Gallery,
     StageId::PageScan,
     StageId::Ytdlp,
-    StageId::Embed,
   ];
   prefer_ytdlp(&mut stages);
   assert_eq!(
@@ -16,8 +15,7 @@ fn preferring_video_preserves_intervening_stage_order() {
       StageId::Files,
       StageId::Ytdlp,
       StageId::Gallery,
-      StageId::PageScan,
-      StageId::Embed
+      StageId::PageScan
     ]
   );
 }
@@ -267,7 +265,9 @@ fn every_matcher_has_offline_positive_and_negative_cases() {
       ],
     },
   ];
-  let matchers: Vec<_> = REGISTRY.iter().flat_map(|group| group.iter()).collect();
+  let matchers: Vec<_> = std::iter::once(&FILE_SHARE)
+    .chain(REGISTRY.iter().flat_map(|group| group.iter()))
+    .collect();
   assert_eq!(
     cases.len(),
     matchers.len(),
@@ -397,4 +397,8 @@ fn legacy_capture_preference_is_independent_of_fetch_confidence() {
       "fetch claim must stay Low: {url}"
     );
   }
+  // A lookalike is not X (sites.rs dot boundary): its `/video/` path is not an X video.
+  assert!(crate::parsers::gallery::gallery_first(
+    "https://nottwitter.com/nasa/status/123/video/1"
+  ));
 }

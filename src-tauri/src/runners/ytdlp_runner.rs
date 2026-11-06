@@ -1,4 +1,4 @@
-use crate::extract::chain::{remaining_budget, wait_until, Interrupted, FETCH_TIMEOUT};
+use crate::extract::deadline::{remaining_budget, wait_until, Interrupted, FETCH_TIMEOUT};
 use crate::models::download::{DownloadOverrides, FormatOptions, PlaylistMode};
 use crate::models::SubtitleInventory;
 use crate::models::TrackType;
@@ -55,6 +55,23 @@ pub struct YtdlpChild {
   _cookies: Option<super::browser_cookies::CookieAccess>,
 }
 
+/// `--proxy` (when switched on) and `--impersonate`: the route yt-dlp takes to a site. Capture previews use the
+/// same (`capture::read`).
+pub(crate) fn route_args(network: &crate::state::config_models::NetworkSettings) -> Vec<String> {
+  let mut args = Vec::new();
+  if network.enable_proxy.is_some_and(|enabled| enabled) {
+    if let Some(proxy) = network.proxy.as_ref() {
+      args.extend(["--proxy".to_string(), proxy.clone()]);
+    }
+  }
+  match network.impersonate.as_str() {
+    "none" => {}
+    "any" => args.extend(["--impersonate".to_string(), String::new()]),
+    other => args.extend(["--impersonate".to_string(), other.to_string()]),
+  }
+  args
+}
+
 pub struct YtdlpRunner<'a> {
   app: &'a AppHandle,
   cfg: Arc<Config>,
@@ -100,25 +117,7 @@ impl<'a> YtdlpRunner<'a> {
       &self.cfg.network,
       overrides.and_then(|value| value.network.as_ref()),
     );
-    let proxy_enabled = network.enable_proxy.is_some_and(|enabled| enabled);
-    if proxy_enabled {
-      if let Some(proxy) = network.proxy.as_ref() {
-        self.args.push("--proxy".to_string());
-        self.args.push(proxy.clone());
-      }
-    }
-
-    match network.impersonate.as_str() {
-      "none" => {}
-      "any" => {
-        self.args.push("--impersonate".to_string());
-        self.args.push(String::new());
-      }
-      other => {
-        self.args.push("--impersonate".to_string());
-        self.args.push(other.to_string());
-      }
-    }
+    self.args.extend(route_args(&network));
 
     if let Some(extractor_args) = normalize_extractor_args(&network.extractor_args) {
       self.args.push("--extractor-args".into());
@@ -426,11 +425,13 @@ impl<'a> YtdlpRunner<'a> {
     }
 
     let wait_tx = tx.clone();
+    let reap_token = platform.reap_token();
     let child_cookies = cookies.clone();
     thread::spawn(move || {
       let _process_guard = process_guard;
       let cookie_guard = cookies;
       let status = raw_child.wait();
+      drop(reap_token);
       for reader in readers {
         let _ = reader.join();
       }
@@ -494,26 +495,6 @@ impl<'a> YtdlpRunner<'a> {
       self.args.push(h);
     }
   }
-}
-
-/// Selects the input for cookie preparation, never arguments for a downloading engine.
-pub(super) fn cookie_source_args(settings: &AuthSettings, browser: Option<&str>) -> Vec<String> {
-  if browser == Some(super::login::ANONYMOUS_BROWSER) {
-    return vec![];
-  }
-  if let Some(browser) = browser {
-    return vec!["--cookies-from-browser".into(), browser.into()];
-  }
-  if let Some(file) = settings.cookie_file.as_ref().filter(|f| !f.is_empty()) {
-    return vec!["--cookies".into(), file.clone()];
-  }
-  if !matches!(settings.cookie_browser.as_str(), "none" | "automatic" | "") {
-    return vec![
-      "--cookies-from-browser".into(),
-      settings.cookie_browser.clone(),
-    ];
-  }
-  vec![]
 }
 
 /// Presence-only summary of a yt-dlp invocation, safe to log or send to
@@ -1073,8 +1054,7 @@ fn subtitle_language_bases(languages: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
   use super::{
-    build_sponsorblock_args, build_subtitle_args, cookie_source_args, normalize_extractor_args,
-    summarize_args_for_log, AuthSettings,
+    build_sponsorblock_args, build_subtitle_args, normalize_extractor_args, summarize_args_for_log,
   };
   use crate::models::SubtitleInventory;
   use crate::state::config_models::{SponsorBlockSettings, SubtitleSettings};
@@ -1125,7 +1105,7 @@ mod tests {
       });
       let (_cancel_tx, cancel) = watch::channel(true);
       let child = YtdlpChild {
-        platform: PlatformProcess { pgid: None },
+        platform: PlatformProcess::detached(),
         _cookies: None,
       };
       let result = collect_output(rx, child, cancel, deadline).await;
@@ -1257,28 +1237,6 @@ mod tests {
       manual_languages: manual.iter().map(|value| (*value).to_string()).collect(),
       auto_languages: automatic.iter().map(|value| (*value).to_string()).collect(),
     }
-  }
-
-  #[test]
-  fn engine_cookie_source_args_require_consent_but_preserve_manual_overrides() {
-    let mut settings = AuthSettings::default();
-    assert!(cookie_source_args(&settings, None).is_empty());
-    settings.cookie_browser = "none".into();
-    assert!(cookie_source_args(&settings, None).is_empty());
-    settings.cookie_browser = "firefox".into();
-    assert_eq!(
-      cookie_source_args(&settings, None),
-      ["--cookies-from-browser", "firefox"]
-    );
-    settings.cookie_file = Some("/tmp/manual.txt".into());
-    assert_eq!(
-      cookie_source_args(&settings, None),
-      ["--cookies", "/tmp/manual.txt"]
-    );
-    assert_eq!(
-      cookie_source_args(&settings, Some("chrome:/tmp/Profile 1")),
-      ["--cookies-from-browser", "chrome:/tmp/Profile 1"]
-    );
   }
 
   #[test]

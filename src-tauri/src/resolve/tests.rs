@@ -11,7 +11,7 @@ mod readers;
 fn facebook_read(html: &str, url: &str) -> Option<Resolution> {
   let identity = facebook::Identity::parse(url)?;
   match facebook::read(html, &identity, &identity) {
-    Outcome::Verified(result) => Some(result),
+    Verdict::Verified(result) => Some(result),
     _ => None,
   }
 }
@@ -67,7 +67,7 @@ fn facebook_reads_only_the_bound_attachment() {
   let identity = facebook::Identity::parse(POST).unwrap();
   assert!(matches!(
     facebook::read(&oversized_string, &identity, &identity),
-    Outcome::Unknown
+    Verdict::Unknown
   ));
 }
 
@@ -104,49 +104,6 @@ fn generic_youtube_frontends_require_evidence_and_an_unambiguous_id() {
       )),
       "{path}"
     );
-  }
-}
-
-// These literals exercise the SSRF boundary, including transition address encodings.
-#[test]
-fn dns_guard_rejects_special_ranges() {
-  for ip in [
-    "0.0.0.0",
-    "10.1.2.3",
-    "100.64.1.1",
-    "127.0.0.1",
-    "169.254.169.254",
-    "172.16.0.1",
-    "192.0.0.8",
-    "192.168.1.1",
-    "198.18.0.1",
-    "192.0.2.1",
-    "198.51.100.2",
-    "203.0.113.1",
-    "224.0.0.1",
-    "255.255.255.255",
-    "::",
-    "::1",
-    "fc00::1",
-    "fe80::1",
-    "ff02::1",
-    "2001:db8::1",
-    "2002:808:808::1",
-    "2001::1",
-    "3fff::1",
-    "::ffff:127.0.0.1",
-    "64:ff9b::a00:1",
-  ] {
-    assert!(!http::public_address(ip.parse().unwrap()), "{ip}");
-  }
-  for ip in [
-    "8.8.8.8",
-    "1.1.1.1",
-    "2606:4700:4700::1111",
-    "::ffff:8.8.8.8",
-    "64:ff9b::808:808",
-  ] {
-    assert!(http::public_address(ip.parse().unwrap()), "{ip}");
   }
 }
 
@@ -348,18 +305,18 @@ async fn page_budget_and_login_wall_precede_metadata() {
     let identity = facebook::Identity::parse(POST).unwrap();
     assert!(matches!(
       facebook::read(&fixture(fixture_name), &identity, &identity),
-      Outcome::Unknown
+      Verdict::Unknown
     ));
   }
   let identity = facebook::Identity::parse(POST).unwrap();
   assert!(matches!(
     facebook::read(&fixture("mixed-post.html"), &identity, &identity),
-    Outcome::Verified(Resolution::Passthrough(url)) if url == "https://www.facebook.com/watch/?v=900000000000003"
+    Verdict::Verified(Resolution::Passthrough(url)) if url == "https://www.facebook.com/watch/?v=900000000000003"
   ));
   let missing_video_id = fixture("mixed-post.html").replace("900000000000003", "invalid-video-id");
   assert!(matches!(
     facebook::read(&missing_video_id, &identity, &identity),
-    Outcome::Unknown
+    Verdict::Unknown
   ));
   let multiple_videos = fixture("mixed-post.html").replace(
     "\"nodes\":[",
@@ -367,12 +324,12 @@ async fn page_budget_and_login_wall_precede_metadata() {
   );
   assert!(matches!(
     facebook::read(&multiple_videos, &identity, &identity),
-    Outcome::Unknown
+    Verdict::Unknown
   ));
   let consent = "<meta property='og:image' content='https://scontent.example.fbcdn.net/1.jpg'><form id='consent_form' action='/privacy/consent/'></form>";
   assert!(matches!(
     facebook::read(consent, &identity, &identity),
-    Outcome::Unknown
+    Verdict::Unknown
   ));
 }
 
@@ -386,7 +343,7 @@ async fn facebook_regional_and_login_wrappers_keep_post_binding() {
   ].into()));
   assert!(matches!(
     read_site(short, &fake).await,
-    Outcome::Verified(Resolution::Unsupported {
+    Verdict::Verified(Resolution::Unsupported {
       reason: Reason::PhotosOnly
     })
   ));
@@ -401,7 +358,7 @@ async fn facebook_regional_and_login_wrappers_keep_post_binding() {
     ]
     .into(),
   ));
-  assert!(matches!(read_site(POST, &fake).await, Outcome::Unknown));
+  assert!(matches!(read_site(POST, &fake).await, Verdict::Unknown));
   let fake = FakeTransport(std::sync::Mutex::new(
     [
       ("https://fb.watch/AbC/", reply(302, Some(moved), b"")),
@@ -413,12 +370,12 @@ async fn facebook_regional_and_login_wrappers_keep_post_binding() {
     .into(),
   ));
   assert!(
-    matches!(read_site("https://fb.watch/AbC/", &fake).await, Outcome::Verified(Resolution::Passthrough(url)) if url == "https://www.facebook.com/watch/?v=900000000000789")
+    matches!(read_site("https://fb.watch/AbC/", &fake).await, Verdict::Verified(Resolution::Passthrough(url)) if url == "https://www.facebook.com/watch/?v=900000000000789")
   );
   let fake = FakeTransport(std::sync::Mutex::new(
     [(short, reply(302, Some("/checkpoint/"), b""))].into(),
   ));
-  assert!(matches!(read_site(short, &fake).await, Outcome::Unknown));
+  assert!(matches!(read_site(short, &fake).await, Verdict::Unknown));
 }
 
 #[tokio::test]
@@ -434,7 +391,7 @@ async fn generic_fallback_keeps_native_errors_and_ambiguous_facebook_pages() {
 }
 
 #[test]
-fn streaming_and_dns_admission_fail_closed() {
+fn streaming_body_limit_fails_closed() {
   let mut body = b"abc".to_vec();
   http::append(&mut body, b"de", 5).unwrap();
   assert_eq!(
@@ -442,17 +399,6 @@ fn streaming_and_dns_admission_fail_closed() {
     Err(http::FetchError::BodyLimit)
   );
   assert_eq!(body, b"abcde");
-  assert_eq!(
-    http::admit_addresses(vec![
-      "8.8.8.8:443".parse().unwrap(),
-      "10.0.0.1:443".parse().unwrap()
-    ]),
-    Err(http::FetchError::Address)
-  );
-  assert_eq!(
-    http::admit_addresses(vec![]),
-    Err(http::FetchError::Address)
-  );
 }
 
 #[tokio::test]
@@ -478,17 +424,17 @@ async fn shortlink_reader_verifies_photos_video_and_preserves_unknown() {
       .into(),
     ));
     assert!(
-      matches!(read_site(short, &fake).await, Outcome::Verified(result) if result == expected)
+      matches!(read_site(short, &fake).await, Verdict::Verified(result) if result == expected)
     );
   }
   let fake = FakeTransport(std::sync::Mutex::new(
     [(POST, reply(404, None, b"error"))].into(),
   ));
-  assert!(matches!(read_site(POST, &fake).await, Outcome::Unknown));
+  assert!(matches!(read_site(POST, &fake).await, Verdict::Unknown));
   let fake = FakeTransport(std::sync::Mutex::new([].into()));
   assert!(matches!(
     read_site("https://example.invalid/", &fake).await,
-    Outcome::NoMatch
+    Verdict::NoMatch
   ));
 }
 
@@ -631,7 +577,7 @@ async fn generic_media_uses_the_fetched_response_instead_of_the_extension() {
     .into(),
   ));
   assert!(
-    matches!(read_generic(url, &fake).await, Outcome::Verified(Resolution::Passthrough(target)) if target == "https://8.8.8.8/stream")
+    matches!(read_generic(url, &fake).await, Verdict::Verified(Resolution::Passthrough(target)) if target == "https://8.8.8.8/stream")
   );
 }
 
@@ -929,7 +875,7 @@ async fn threads_refuses_redirects_oversized_bodies_and_unbound_previews() {
     ),
   ] {
     let transport = FakeTransport(std::sync::Mutex::new([(url, response)].into()));
-    assert!(matches!(read_site(url, &transport).await, Outcome::Unknown));
+    assert!(matches!(read_site(url, &transport).await, Verdict::Unknown));
     assert!(transport.0.lock().unwrap().is_empty());
   }
   assert_eq!(
@@ -985,6 +931,127 @@ async fn threads_refuses_media_when_cdn_dns_is_not_public() {
     let transport = RefusingCdn(FakeTransport(std::sync::Mutex::new(
       [(url, reply(200, None, html.as_bytes()))].into(),
     )));
-    assert!(matches!(read_site(url, &transport).await, Outcome::Unknown));
+    assert!(matches!(read_site(url, &transport).await, Verdict::Unknown));
+  }
+}
+
+// Bound hosts skip generic page scans. Every registered reader binds its hosts (Snapchat did not).
+#[test]
+fn every_registered_reader_binds_its_hosts() {
+  for url in [
+    "https://www.reddit.com/r/videos",
+    "https://fb.watch/abc",
+    "https://m.facebook.com/page",
+    "https://www.threads.com/@nasa",
+    "https://www.linkedin.com/feed/",
+    "https://t.me/channel",
+    "https://www.snapchat.com/@creator",
+  ] {
+    assert!(reader_bound(url), "{url}");
+  }
+  for url in [
+    "https://example.com/post",
+    "https://vimeo.com/123",
+    "https://stories.snapchat.com/123",
+  ] {
+    assert!(!reader_bound(url), "{url}");
+  }
+}
+
+/// Rejects hosts named `private.*`, the way `PublicHttp` rejects private/loopback/link-local answers.
+struct PrivateHosts;
+impl http::Transport for PrivateHosts {
+  async fn admit_media(&self, url: &reqwest::Url) -> Result<(), http::FetchError> {
+    match url.host_str() {
+      Some(host) if host.starts_with("private.") => Err(http::FetchError::Address),
+      _ => Ok(()),
+    }
+  }
+  async fn get(&self, _: &reqwest::Url, _: usize) -> Result<http::Response, http::FetchError> {
+    unreachable!("admission never fetches")
+  }
+}
+
+async fn attachments_of(urls: &[&str]) -> Resolution {
+  let items = urls
+    .iter()
+    .map(|u| post::image((*u).into(), None))
+    .collect();
+  let permissive = FakeTransport(Default::default());
+  match post::attachments(
+    &permissive,
+    "https://example.com/p",
+    "1",
+    "Test",
+    None,
+    None,
+    items,
+  )
+  .await
+  {
+    Verdict::Verified(result) => result,
+    _ => panic!("fixture must build"),
+  }
+}
+
+#[tokio::test]
+async fn every_resolution_variant_needs_public_addresses() {
+  let post_media = |url: &str, thumbnail: Option<&str>| Resolution::PostMedia {
+    url: url.into(),
+    title: None,
+    thumbnail: thumbnail.map(Into::into),
+    uploader: None,
+  };
+  let cases = [
+    (
+      Resolution::Passthrough("https://public.example/v.mp4".into()),
+      true,
+    ),
+    (
+      Resolution::Passthrough("https://private.example/v.mp4".into()),
+      false,
+    ),
+    (
+      post_media(
+        "https://public.example/v.mp4",
+        Some("https://public.example/t.jpg"),
+      ),
+      true,
+    ),
+    (post_media("https://private.example/v.mp4", None), false),
+    (
+      post_media(
+        "https://public.example/v.mp4",
+        Some("https://private.example/t.jpg"),
+      ),
+      false,
+    ),
+    (post_media("http://public.example/v.mp4", None), false),
+    (
+      attachments_of(&["https://public.example/a.jpg", "https://cdn.example/b.jpg"]).await,
+      true,
+    ),
+    // One private candidate rejects the whole set, like a failing Passthrough.
+    (
+      attachments_of(&[
+        "https://public.example/a.jpg",
+        "https://private.example/b.jpg",
+      ])
+      .await,
+      false,
+    ),
+    (
+      Resolution::Attachments {
+        metadata: "not json".into(),
+      },
+      false,
+    ),
+  ];
+  for (resolution, expected) in cases {
+    assert_eq!(
+      admit_resolution(&PrivateHosts, &resolution).await,
+      expected,
+      "{resolution:?}"
+    );
   }
 }

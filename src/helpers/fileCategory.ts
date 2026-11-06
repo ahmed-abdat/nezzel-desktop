@@ -1,4 +1,4 @@
-import { canOpenFile } from './mediaKind';
+import { baseName } from './folderPath';
 
 export type FileCategory = 'document' | 'spreadsheet' | 'presentation' | 'archive' | 'installer' | 'diskImage' | 'data' | 'other';
 
@@ -53,7 +53,7 @@ export function fileCategory(name: string | undefined, mime?: string): FileCateg
   try {
     if (/^https?:\/\//i.test(path)) path = decodeURIComponent(new URL(path).pathname);
   } catch { /* Keep malformed names as generic files. */ }
-  const base = path.split(/[\\/]/).pop() ?? '';
+  const base = baseName(path);
   const dot = base.lastIndexOf('.');
   const byExtension = dot > 0 || (dot === 0 && base.length > 1) ? BY_EXTENSION[base.slice(dot + 1).toLowerCase()] : undefined;
   if (byExtension) return byExtension;
@@ -65,11 +65,8 @@ export function revealsInFolder(path: string | undefined): boolean {
   return !!path && !canOpenFile(path);
 }
 
-/** Host only (no scheme, path or query), so a signed download link never shows in the UI. */
-export function hostOnly(url: string | undefined): string {
-  try {
-    return new URL(url ?? '').hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
+/** Only passive formats launch a viewer; installers, scripts and unknown types open their folder. */
+export function canOpenFile(path: string): boolean {
+  const extension = baseName(path).split('.').pop()?.toLowerCase();
+  return !!extension && ['pdf', 'txt', 'csv', 'json', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp', 'mp3', 'm4a', 'flac', 'wav', 'ogg', 'opus', 'mp4', 'mkv', 'webm', 'mov'].includes(extension);
 }

@@ -1,0 +1,49 @@
+#!/bin/sh
+# Pre-push gate: `pnpm run test:push` (+ cargo fmt/test when the push touches src-tauri/) inside a time budget.
+# Installed by `pnpm install` (the `prepare` script sets core.hooksPath=.githooks; worktrees share it).
+# By hand: `git config core.hooksPath .githooks`. Skip once: `git push --no-verify`.
+#
+# Budget (testing policy: push suite < 60 s). Measured 2026-11-06 on the dev laptop, quiet:
+#   test:push 14 s / 7 s / 8 s (cold eslint cache adds ~7 s); cargo test (already built) 10 s / 9 s.
+#   Worst push with Rust changes ~24 s, so the gate is 45 s: ~2x headroom, still under 60 s.
+# Over budget fails the push: make the tests faster, never raise BUDGET silently.
+# Cargo compile time is not counted (built first with --no-run); clippy stays in CI.
+set -u
+BUDGET=45
+
+export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+remote="${1:-origin}"
+rust=no
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  case "$local_sha" in *[!0]*) ;; *) continue ;; esac # deleting a ref: nothing to test
+  case "$remote_sha" in
+    *[!0]*) base="$remote_sha" ;;
+    *) base=$(git merge-base "$local_sha" "$remote/main" 2>/dev/null || true) ;; # new branch
+  esac
+  if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+    rust=yes # unknown base: test everything
+  elif [ -n "$(git diff --name-only "$base" "$local_sha" -- src-tauri)" ]; then
+    rust=yes
+  fi
+done
+
+start=$(date +%s)
+build=0
+pnpm run test:push || exit 1
+if [ "$rust" = yes ]; then
+  manifest=src-tauri/Cargo.toml
+  cargo fmt --manifest-path "$manifest" --all --check || exit 1
+  t=$(date +%s)
+  cargo test --manifest-path "$manifest" -j 4 --no-run --quiet || exit 1
+  build=$(( $(date +%s) - t ))
+  cargo test --manifest-path "$manifest" -j 4 --quiet || exit 1
+fi
+elapsed=$(( $(date +%s) - start - build ))
+
+if [ "$elapsed" -gt "$BUDGET" ]; then
+  echo "pre-push: tests took ${elapsed}s, over the ${BUDGET}s budget (rust: $rust). Make them faster; see .githooks/pre-push." >&2
+  exit 1
+fi
+echo "pre-push: tests ${elapsed}s of ${BUDGET}s (rust: $rust, cargo build ${build}s not counted)"

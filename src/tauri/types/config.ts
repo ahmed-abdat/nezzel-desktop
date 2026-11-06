@@ -9,6 +9,7 @@ import {
 import { Locale } from 'vue-i18n';
 import { DEFAULT_SUBTITLE_FORMAT_ORDER } from '../../helpers/subtitles/sanitize.ts';
 import { NotificationKind } from './app';
+import { COOKIE_BROWSER_AUTOMATIC, DEFAULT_CAPTURE_SHORTCUT, PRIVACY_DEFAULTS } from '../../generated/contract';
 
 export type Theme = 'light' | 'dark' | 'system';
 export type LocaleOption = Locale | 'system';
@@ -135,6 +136,8 @@ export interface SponsorBlockSettings {
 export interface PrivacySettings {
   /** Crash and error reports to our Sentry; on by default. */
   sendReports: boolean;
+  /** Daily anonymous usage counts ("Help improve Nezzel"); on by default. */
+  sendUsage: boolean;
 }
 
 export interface UpdateSettings {
@@ -189,7 +192,7 @@ export const defaultAppearanceSettings: AppearanceSettings = {
 
 export const defaultAuthSettings: AuthSettings = {
   cookieFile: null,
-  cookieBrowser: 'automatic',
+  cookieBrowser: COOKIE_BROWSER_AUTOMATIC,
   alwaysUseBrowserLogins: false,
   siteBrowsers: {},
 };
@@ -204,7 +207,7 @@ export const defaultNetworkSettings: NetworkSettings = {
 export const defaultInputSettings: InputSettings = {
   autoFillClipboard: true,
   watchClipboard: true,
-  captureShortcut: 'CommandOrControl+Alt+N',
+  captureShortcut: DEFAULT_CAPTURE_SHORTCUT,
   preferVideoInMixedLinks: false,
   globalShortcuts: true,
 };
@@ -281,9 +284,8 @@ export const defaultSponsorBlockSettings: SponsorBlockSettings = {
   markParts: [],
 };
 
-export const defaultPrivacySettings: PrivacySettings = {
-  sendReports: true,
-};
+/** Rust's defaults, until the config has loaded. */
+export const defaultPrivacySettings: PrivacySettings = { ...PRIVACY_DEFAULTS };
 
 export const defaultUpdateSettings: UpdateSettings = {
   updateBinaries: true,

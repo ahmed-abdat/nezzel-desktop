@@ -26,7 +26,7 @@
 
     <h3 class="pt-4 text-[12px] font-medium text-muted-foreground">{{ t('prefs.adv.keys.inside') }}</h3>
     <settings-row :label="t('prefs.adv.keys.paste')" :help="t('prefs.adv.keys.pasteHint')">
-      <shortcut-recorder model-value="CommandOrControl+V" :mac="isMac" :label="t('prefs.adv.keys.paste')" readonly />
+      <shortcut-recorder :model-value="BUILT_IN_KEYS.paste" :mac="isMac" :label="t('prefs.adv.keys.paste')" readonly />
     </settings-row>
     <settings-row :label="t('prefs.adv.keys.downloadAll')" :help="t('prefs.adv.keys.defaultIs', { keys: shortcutLabel(IN_APP_SHORTCUT_DEFAULTS.downloadAll, isMac) })">
       <shortcut-recorder
@@ -65,8 +65,8 @@ import ShortcutRecorder from './ShortcutRecorder.vue';
 import { Settings } from '../../tauri/types/config.ts';
 import { usePlatform } from '../../composables/usePlatform.ts';
 import { useCaptureShortcut } from '../../composables/useCaptureShortcut';
-import { IN_APP_SHORTCUT_DEFAULTS, useUiPrefs } from '../../composables/useUiPrefs';
-import { CAPTURE_COMMAND, DEFAULT_CAPTURE_SHORTCUT, isReservedShortcut, sameShortcut, shortcutLabel } from '../../helpers/shortcut';
+import { useUiPrefs } from '../../composables/useUiPrefs';
+import { BUILT_IN_KEYS, CAPTURE_COMMAND, DEFAULT_CAPTURE_SHORTCUT, IN_APP_SHORTCUT_DEFAULTS, isReservedShortcut, sameShortcut, shortcutLabel } from '../../helpers/shortcut';
 
 const { t } = useI18n();
 const { isMac } = usePlatform();
@@ -75,7 +75,7 @@ const settings = defineModel<Settings>({ required: true });
 
 // Nezzel's own keys that a new shortcut must not take.
 type Action = 'quick' | 'downloadAll' | 'addAndDownload';
-const BUILT_IN = ['CommandOrControl+V', 'CommandOrControl+B', 'CommandOrControl+\\', 'CommandOrControl+,'];
+const BUILT_IN = Object.values(BUILT_IN_KEYS);
 
 function current(action: Action): string {
   if (action === 'quick') return settings.value.input.captureShortcut;

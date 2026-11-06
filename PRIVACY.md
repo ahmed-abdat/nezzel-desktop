@@ -1,6 +1,6 @@
 # Privacy
 
-Nezzel Desktop has no ads, no account, no analytics and no Nezzel server. Everything you save is processed on your computer. Crash and error reports are on by default (see below).
+Nezzel Desktop has no ads and no account. Everything you save is processed on your computer. Crash and error reports and anonymous usage counts are on by default (see below).
 
 ## What goes over the network
 
@@ -12,7 +12,7 @@ Nezzel Desktop has no ads, no account, no analytics and no Nezzel server. Everyt
 
 ## Crash and error reports
 
-Nezzel sends crash and error reports to our own [Sentry](https://sentry.io) project so we can find and fix bugs in the next release. This is **on by default**. Turn it off under **Settings → Advanced → Send crash and error reports**, or on the welcome screen. There are no analytics.
+Nezzel sends crash and error reports to our own [Sentry](https://sentry.io) project so we can find and fix bugs in the next release. This is **on by default**. Turn it off under **Settings → Advanced → Send crash and error reports**, or on the welcome screen.
 
 **When a report is sent**
 
@@ -36,6 +36,15 @@ Nezzel sends crash and error reports to our own [Sentry](https://sentry.io) proj
 Cookies, passwords and tokens, file names, folders and other local paths, your account or computer name, and email or IP addresses found in errors and logs. Nezzel removes them before a report leaves your computer, and links to local or private network addresses are never included. Like any server, Sentry sees the IP address of the connection; our project (hosted in the EU) is set not to store it.
 
 Reports only work in builds made with our Sentry key. Builds without one send nothing. If you used Nezzel before reports existed, it tells you once that they are on, and a crash from that first start is offered to you instead of being sent.
+
+## Usage counts
+
+While **Settings → Advanced → Help improve Nezzel** is on (the default):
+
+- Once a day, Nezzel sends anonymous totals to our own server (`nezzel.hululsoft.mr`): features used, how far links got (received, options shown, downloaded, failed), rough quality, speed and wait-time buckets, your settings, and the sites you saved from (domain only). Each send also names the app version, your system (macOS, Windows or Linux) and processor type, the app language and a rough install age. No ID, links, titles, file names, folders or account names. The server adds your country and keeps daily totals only.
+- Your IP address is never stored. No third-party analytics.
+
+Turn it off and nothing is sent; anything not yet sent is deleted. Builds made without our server address count and send nothing.
 
 ## Browser logins (cookies)
 

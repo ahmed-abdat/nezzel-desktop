@@ -1,84 +1,35 @@
 //! Fetch stages return evidence; only this coordinator terminates a row.
 use super::{
+  deadline::{stage_budget, within_deadline, Interrupted, FETCH_TIMEOUT},
   outcome::*,
+  page_scan::page_scan,
   policy::{self, Claim, Decision, Phase, PolicyContext},
   precedence::final_code,
+  registry,
+  terminal::{emit_attempts, emit_terminal, publish_terminal},
 };
+use crate::resolve::vimeo::drm_may_be_login;
 use crate::{
   models::{
     error::{DiagnosticEvent, DiagnosticLevel},
-    MediaDiagnosticPayload, MediaFatalPayload, ParsedMedia,
+    ParsedMedia,
   },
+  parsers::ytdlp_error::stage_hint,
   runners::{login::LoginSession, ytdlp_info::YtdlpInfoFetchError},
   scheduling::{fetch_pipeline::FetchEntry, group_state::is_group_running},
 };
-use serde::Serialize;
 use std::{
   future::Future,
   time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::{sync::watch, time::Instant as Deadline};
-
-// Shared by nested readers and subprocesses; retries cannot reset the stage/row clock.
-tokio::task_local! {
-  static ACTIVE_DEADLINE: Deadline;
-}
-pub(crate) const FETCH_TIMEOUT: &str = "fetchTimeout";
-
-pub(crate) fn remaining_budget(cap: Duration) -> Duration {
-  ACTIVE_DEADLINE
-    .try_with(|deadline| deadline.saturating_duration_since(Deadline::now()).min(cap))
-    .unwrap_or(cap)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Interrupted {
-  Cancelled,
-  Timeout,
-}
-
-pub(crate) async fn wait_until<T>(
-  future: impl Future<Output = T>,
-  deadline: Deadline,
-  cancel: &mut watch::Receiver<bool>,
-) -> Result<T, Interrupted> {
-  tokio::pin!(future);
-  loop {
-    if !*cancel.borrow() {
-      return Err(Interrupted::Cancelled);
-    }
-    tokio::select! {
-      biased;
-      changed = cancel.changed() => {
-        if changed.is_err() || !*cancel.borrow() {
-          return Err(Interrupted::Cancelled);
-        }
-      }
-      // Poll nested deadlines first so a stage can return the evidence it retained on expiry.
-      result = &mut future => return Ok(result),
-      _ = tokio::time::sleep_until(deadline) => return Err(Interrupted::Timeout),
-    }
-  }
-}
-
-fn stage_budget(stage: StageId, ytdlp: Duration) -> Duration {
-  match stage {
-    StageId::Files => ytdlp + Duration::from_secs(20),
-    StageId::Gallery => Duration::from_secs(45),
-    StageId::Reader(_) => Duration::from_secs(20),
-    // Readers and PageScan may hand a candidate to a separately bounded yt-dlp process.
-    StageId::Ytdlp | StageId::PageScan => ytdlp + Duration::from_secs(20),
-    StageId::Embed => Duration::from_secs(10),
-    StageId::Sniff => Duration::from_secs(15),
-  }
-}
 
 fn classify_stage(stage: StageId, code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
   let diagnostic = classify(code, message, scope);
   if stage == StageId::Ytdlp
     && diagnostic.outcome == Outcome::Unknown
-    && message.to_ascii_lowercase().contains("no media found")
+    && stage_hint::no_media_found(message)
   {
     return classify("noMediaFound", "", scope);
   }
@@ -90,15 +41,11 @@ fn classify_stage(stage: StageId, code: &str, message: &str, scope: NetworkScope
   {
     return diagnostic;
   }
-  let message = message.to_ascii_lowercase();
-  if ["no video formats", "no formats", "no available formats"]
-    .iter()
-    .any(|hint| message.contains(hint))
-  {
+  if stage_hint::no_formats(message) {
     // No video representation is inconclusive for photo-capable engines, regardless of the host.
     classify("photosOnly", "", scope)
   } else if diagnostic.outcome == Outcome::Unknown
-    && message.contains("requested format is not available")
+    && stage_hint::requested_format_unavailable(message)
   {
     // A requested selection can fail even when alternatives exist: retain the format diagnostic.
     classify("requestedFormatUnavailable", "", scope)
@@ -239,19 +186,11 @@ enum ChainStep {
   },
 }
 
-pub(crate) fn stages_for(url: &str) -> Vec<StageId> {
-  super::registry::stages_for(url)
-}
-
 fn gallery_claim(original: &str, resolved: Option<&str>) -> Confidence {
-  crate::runners::gallery::claim(resolved.unwrap_or(original))
+  registry::claim(StageId::Gallery, resolved.unwrap_or(original))
 }
 
-pub(crate) fn youtube_exclusive(url: &str) -> bool {
-  super::registry::exclusive(url)
-}
-
-fn stops(attempts: &[Attempt], exclusive: bool) -> bool {
+pub(super) fn stops(attempts: &[Attempt], exclusive: bool) -> bool {
   attempts.iter().any(|attempt| {
     matches!(
       policy::next(
@@ -313,16 +252,12 @@ async fn coordinate_budgeted<T, F: Future<Output = StageResult<T>>>(
 fn known_login_host(url: &str) -> bool {
   reqwest::Url::parse(url)
     .ok()
-    .and_then(|url| url.host_str().map(LoginSession::known_host))
+    .and_then(|url| {
+      url
+        .host_str()
+        .map(crate::runners::browser_cookies::known_login_host)
+    })
     .unwrap_or(false)
-}
-
-fn vimeo(url: &str) -> bool {
-  reqwest::Url::parse(url).ok().is_some_and(|url| {
-    url
-      .host_str()
-      .is_some_and(|host| host == "vimeo.com" || host.ends_with(".vimeo.com"))
-  })
 }
 
 fn login_cause(attempts: &[Attempt], url: &str) -> Option<Attempt> {
@@ -336,12 +271,14 @@ fn login_cause(attempts: &[Attempt], url: &str) -> Option<Attempt> {
         attempt.outcome,
         Outcome::Login | Outcome::AgeRestricted | Outcome::Paid
       ) || (attempt.outcome == Outcome::Private && known_login_host(url))
-        || (attempt.stage == StageId::Ytdlp && attempt.outcome == Outcome::Drm && vimeo(url)))
+        || (attempt.stage == StageId::Ytdlp
+          && attempt.outcome == Outcome::Drm
+          && drm_may_be_login(url)))
   })
 }
 
 fn login_capable(stage: StageId, attempts: &[Attempt]) -> bool {
-  if matches!(stage, StageId::Files | StageId::Embed | StageId::Sniff) {
+  if stage == StageId::Files {
     return false;
   }
   let evidence: Vec<_> = attempts
@@ -374,7 +311,7 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
   };
   let mut row_deadline = Deadline::now() + row_budget;
   let mut exclusive =
-    youtube_exclusive(original) || resolved_url.as_deref().is_some_and(youtube_exclusive);
+    registry::exclusive(original) || resolved_url.as_deref().is_some_and(registry::exclusive);
   let mut media = None;
   let mut error = None;
   let mut login_started = phase == Phase::Login;
@@ -383,7 +320,7 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
     let phase_start = attempts.len();
     let mut stopped = false;
     let mut gallery_tried = false;
-    let candidates = stages_for(
+    let candidates = registry::stages_for(
       resolved_url
         .as_deref()
         .filter(|_| exclusive)
@@ -443,16 +380,12 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
       let deadline = row_deadline.min(Deadline::now() + stage_budget(stage, ytdlp_budget));
       let start = Instant::now();
       // Keep the session if an outer timer drops the stage future.
-      let result = ACTIVE_DEADLINE
-        .scope(
-          deadline,
-          wait_until(
-            run(ChainStep::Stage(stage), login.clone(), resolved_url.clone()),
-            deadline,
-            &mut cancel,
-          ),
-        )
-        .await;
+      let result = within_deadline(
+        run(ChainStep::Stage(stage), login.clone(), resolved_url.clone()),
+        deadline,
+        &mut cancel,
+      )
+      .await;
       let result = match result {
         Ok(result) => result,
         Err(Interrupted::Cancelled) => StageResult::new(stage, Confidence::Medium).finish(
@@ -470,7 +403,7 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
       media = result.media;
       error = result.error.or(error);
       if let Some(url) = result.resolved_url {
-        exclusive |= youtube_exclusive(&url);
+        exclusive |= registry::exclusive(&url);
         resolved_url = Some(url);
       }
       let evidence: Vec<_> = result
@@ -478,11 +411,12 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
         .iter()
         .copied()
         .filter(|a| {
-          // Vimeo's anonymous web client can mislabel an account gate as DRM. Real page DRM still stops.
+          // Some sites mislabel an account gate as DRM (resolve::vimeo). Real page DRM still stops.
           !(phase == Phase::Anonymous
             && stage == StageId::Ytdlp
             && a.outcome == Outcome::Drm
-            && (vimeo(original) || resolved_url.as_deref().is_some_and(vimeo)))
+            && (drm_may_be_login(original)
+              || resolved_url.as_deref().is_some_and(drm_may_be_login)))
         })
         .collect();
       stopped = stops(&evidence, exclusive) || Deadline::now() >= row_deadline;
@@ -545,23 +479,19 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
     }
     let deadline = Deadline::now() + Duration::from_secs(90);
     let start = Instant::now();
-    let result = ACTIVE_DEADLINE
-      .scope(
-        deadline,
-        wait_until(
-          run(
-            ChainStep::Login {
-              stage: cause.stage,
-              reason,
-            },
-            login.clone(),
-            resolved_url.clone(),
-          ),
-          deadline,
-          &mut cancel,
-        ),
-      )
-      .await;
+    let result = within_deadline(
+      run(
+        ChainStep::Login {
+          stage: cause.stage,
+          reason,
+        },
+        login.clone(),
+        resolved_url.clone(),
+      ),
+      deadline,
+      &mut cancel,
+    )
+    .await;
     let result = match result {
       Ok(result) => result,
       Err(Interrupted::Cancelled) => {
@@ -656,66 +586,6 @@ pub(crate) async fn failed_login_for_test(url: &str, login: LoginSession) -> Opt
   final_code(&result.attempts)
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AttemptPayload {
-  stage: &'static str,
-  login: bool,
-  outcome: &'static str,
-  code: Option<&'static str>,
-  ms: u32,
-}
-impl From<&Attempt> for AttemptPayload {
-  fn from(a: &Attempt) -> Self {
-    Self {
-      stage: match a.stage {
-        StageId::Files => "files",
-        StageId::Ytdlp => "ytdlp",
-        StageId::Gallery => "gallery",
-        StageId::Reader(_) => "reader",
-        StageId::PageScan => "pageScan",
-        StageId::Embed => "embed",
-        StageId::Sniff => "sniff",
-      },
-      login: a.auth != AuthUsed::Anonymous,
-      outcome: match a.outcome {
-        Outcome::Verified => "verified",
-        Outcome::NoMatch => "noMatch",
-        Outcome::Unknown => "unknown",
-        Outcome::Unsupported => "unsupported",
-        Outcome::ExtractFailed => "extractFailed",
-        Outcome::Login => "login",
-        Outcome::AgeRestricted => "ageRestricted",
-        Outcome::Paid => "paid",
-        Outcome::Private => "private",
-        Outcome::Removed => "removed",
-        Outcome::Geo => "geo",
-        Outcome::Drm => "drm",
-        Outcome::LiveNotStarted => "liveNotStarted",
-        Outcome::RateLimited => "rateLimited",
-        Outcome::Blocked => "blocked",
-        Outcome::Forbidden => "forbidden",
-        Outcome::Network(_) => "network",
-        Outcome::KindMismatch => "kindMismatch",
-        Outcome::NoMedia => "noMedia",
-        Outcome::Cancelled => "cancelled",
-        Outcome::LoginPending => "loginPending",
-      },
-      code: a.code.map(DiagnosticCode::as_str),
-      ms: a.ms,
-    }
-  }
-}
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AttemptsPayload<'a> {
-  id: &'a str,
-  group_id: &'a str,
-  attempts: Vec<AttemptPayload>,
-  winner: Option<usize>,
-  final_code: Option<&'static str>,
-}
-
 pub(crate) fn record_fetch_engine(media: &mut ParsedMedia, attempts: &[Attempt]) {
   use crate::models::parsed::FetchEngine;
   let ParsedMedia::Single(item) = media else {
@@ -727,7 +597,7 @@ pub(crate) fn record_fetch_engine(media: &mut ParsedMedia, attempts: &[Attempt])
       StageId::Gallery => FetchEngine::Gallery,
       StageId::Files => FetchEngine::Files,
       StageId::Reader(_) => FetchEngine::Reader,
-      StageId::Ytdlp | StageId::PageScan | StageId::Embed | StageId::Sniff => FetchEngine::Ytdlp,
+      StageId::Ytdlp | StageId::PageScan => FetchEngine::Ytdlp,
     });
   }
 }
@@ -864,20 +734,7 @@ pub async fn run(
       login.fetch_exhausted(app, entry);
     }
   }
-  let code = final_code(&report.attempts);
-  let _ = app.emit(
-    "media_attempts",
-    AttemptsPayload {
-      id: &entry.id,
-      group_id: &entry.group_id,
-      attempts: report.attempts.iter().map(AttemptPayload::from).collect(),
-      winner: report
-        .attempts
-        .iter()
-        .position(|a| a.outcome == Outcome::Verified),
-      final_code: code,
-    },
-  );
+  emit_attempts(app, &entry.id, &entry.group_id, &report.attempts);
   if publish_terminal(
     &report.attempts,
     &entry.group_id,
@@ -907,152 +764,13 @@ pub async fn run(
   Ok(report.media)
 }
 
-/// None leaves identity-bound pages with their reader; true probes a newly resolved file target.
-fn page_scan_plan(original: &str, resolved: &str) -> Option<bool> {
-  if crate::resolve::reader_bound(original) || crate::resolve::reader_bound(resolved) {
-    None
-  } else {
-    Some(original != resolved)
-  }
-}
-
-async fn page_scan(
-  app: &AppHandle,
-  entry: &FetchEntry,
-  login: Option<LoginSession>,
-  resolved_url: &str,
-  probe: &super::probe::PageProbe,
-) -> StageResult {
-  let start = Instant::now();
-  let mut stage = StageResult::new(StageId::PageScan, Confidence::Low);
-  let Some(probe_file) = page_scan_plan(&entry.url, resolved_url) else {
-    stage.login = login;
-    return stage.finish(Outcome::NoMatch, false, start);
-  };
-  if probe_file {
-    let mut target = entry.clone();
-    target.url = resolved_url.into();
-    stage = crate::files::runner::after_unsupported(app, &target).await;
-    if stage.media.is_some() || stops(&stage.attempts, false) {
-      stage.login = login;
-      return stage;
-    }
-  }
-  match scan_page(probe, resolved_url, &crate::resolve::http::PublicHttp).await {
-    Err(code) => {
-      stage.record_code(code, "", false, start);
-      stage.login = login;
-      stage
-    }
-    Ok(Some(resolution)) => {
-      // A candidate is evidence to try yt-dlp, not a verified media result itself.
-      stage.attempts.extend(
-        StageResult::<ParsedMedia>::new(StageId::PageScan, Confidence::Low)
-          .finish(Outcome::Unknown, false, start)
-          .attempts,
-      );
-      let mut result =
-        crate::runners::ytdlp_info::run_ytdlp_info_resolved(app, entry, login, resolution).await;
-      stage.attempts.append(&mut result.attempts);
-      result.attempts = stage.attempts;
-      result
-    }
-    Ok(None) => {
-      stage.attempts.extend(
-        StageResult::<ParsedMedia>::new(StageId::PageScan, Confidence::Low)
-          .finish(Outcome::NoMatch, false, start)
-          .attempts,
-      );
-      stage.login = login;
-      stage
-    }
-  }
-}
-
-/// Shared PageScan decision boundary; verified media outranks even a strong wall title.
-pub(super) async fn scan_page<T: crate::resolve::http::Transport>(
-  probe: &super::probe::PageProbe,
-  url: &str,
-  transport: &T,
-) -> Result<Option<crate::resolve::Resolution>, &'static str> {
-  // PublicHttp is anonymous; U10 can supply a scoped transport and distinct auth context.
-  let Ok(signals) = probe
-    .page_signals(url, super::probe::ProbeAuth::Anonymous, transport)
-    .await
-  else {
-    return Ok(None);
-  };
-  if signals.drm_protected {
-    return Err("drmProtected");
-  }
-  let resolution = signals.resolution();
-  if resolution.is_none() && signals.login_wall {
-    return Err("signInRequired");
-  }
-  Ok(resolution)
-}
-
-fn publish_terminal(
-  attempts: &[Attempt],
-  group: &str,
-  id: &str,
-  message: impl FnOnce(&str) -> String,
-  mut emit: impl FnMut(MediaDiagnosticPayload, MediaFatalPayload),
-) -> bool {
-  let Some(code) = final_code(attempts) else {
-    return false;
-  };
-  let message = message(code);
-  // Stage trail for bug reports: enums, codes and timings only (no URLs, names or engine stderr).
-  let trail = attempts
-    .iter()
-    .map(|a| {
-      format!(
-        "{:?} {} {:?} {} {}ms",
-        a.stage,
-        if a.auth == AuthUsed::Anonymous {
-          "anonymous"
-        } else {
-          "login"
-        },
-        a.outcome,
-        a.code.map_or("-", |c| c.as_str()),
-        a.ms
-      )
-    })
-    .collect::<Vec<_>>()
-    .join("\n");
-  let mut fatal = MediaFatalPayload::with_exit(group.into(), id.into(), 1, message.clone());
-  fatal.details = Some(trail.clone());
-  emit(
-    MediaDiagnosticPayload {
-      id: id.into(),
-      group_id: group.into(),
-      level: DiagnosticLevel::Error,
-      code: code.into(),
-      component: Some("extract".into()),
-      message,
-      raw: trail,
-      timestamp: std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis()),
-    },
-    fatal,
-  );
-  true
-}
-
-// Download paths retain their existing behavior until the download coordinator lands.
-pub(crate) fn emit_terminal(
-  app: &AppHandle,
-  diagnostic: MediaDiagnosticPayload,
-  fatal: MediaFatalPayload,
-) {
-  let _ = app.emit("media_diagnostic", diagnostic);
-  let _ = app.emit("media_fatal", fatal);
-}
 #[cfg(test)]
 mod tests {
+  use super::super::{
+    page_scan::page_scan_plan,
+    registry::stages_for,
+    terminal::{publish_terminal, AttemptPayload},
+  };
   use super::*;
   use std::collections::VecDeque;
 
@@ -1801,7 +1519,7 @@ mod tests {
         None,
       ),
     ] {
-      if crate::files::hosts::plan(url, crate::files::hosts::Export::Pdf).is_some() {
+      if crate::files::hosts::is_share(url) {
         assert_eq!(
           stages_for(url),
           vec![StageId::Files],
@@ -1850,10 +1568,7 @@ mod tests {
           code.starts_with("ERROR:").then_some(code)
         };
         if let Some(stderr) = stderr {
-          let matcher = crate::parsers::ytdlp_error::DiagnosticMatcher::from_json(include_str!(
-            "../diagnostic_rules.json"
-          ))
-          .unwrap();
+          let matcher = crate::parsers::ytdlp_error::DiagnosticMatcher::shared().unwrap();
           let parser = crate::parsers::ytdlp_error::YtdlpErrorParser::new("row", "group", matcher)
             .with_source_url(url);
           result.record_diagnostics(

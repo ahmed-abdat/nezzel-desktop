@@ -1,13 +1,12 @@
 import { DownloadOptions, MediaCodec, MediaFormat, TrackType, type SourceMediaKind } from '../tauri/types/media';
 import type { EntryItem } from '../tauri/types/media';
 import { sortFormats } from './formats';
+import { SMALL_MAX_HEIGHT } from '@/generated/contract';
 
 /** The three plain choices of the download sheet. `custom` = picked in Advanced. */
 export type QuickChoice = 'best' | 'audio' | 'small';
 
-export const SMALL_MAX_HEIGHT = 720;
-
-const BEST_AUDIO: DownloadOptions = Object.freeze({
+export const BEST_AUDIO: DownloadOptions = Object.freeze({
   trackType: TrackType.audio,
   id: 'best',
   audioCodecs: [],
@@ -30,7 +29,7 @@ export function hasAudio(media: Pick<ChoiceSubject, 'formats' | 'audioCodecs' | 
     || !!media.audioCodecs?.some(c => codecId(c) !== 'none');
 }
 
-function videoFormats(formats: MediaFormat[]): MediaFormat[] {
+export function videoFormats(formats: MediaFormat[]): MediaFormat[] {
   return sortFormats(formats.filter(f => f.height));
 }
 

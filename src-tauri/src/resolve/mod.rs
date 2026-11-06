@@ -9,10 +9,11 @@ pub(crate) mod reddit;
 mod snapchat;
 mod telegram;
 mod threads;
-mod vimeo;
+pub(crate) mod vimeo;
+use crate::routing::{ReaderId, StageId};
 use std::time::Duration;
 
-pub(crate) const READER_MATCHERS: &[crate::extract::registry::Matcher] = &[
+pub(crate) const READER_MATCHERS: &[crate::routing::Matcher] = &[
   vimeo::MATCHER,
   reddit::MATCHER,
   snapchat::MATCHER,
@@ -23,6 +24,23 @@ pub(crate) const READER_MATCHERS: &[crate::extract::registry::Matcher] = &[
   facebook::SHARE_MATCHER,
   facebook::PHOTO_MATCHER,
 ];
+
+/// Readers whose identity grammar claims this URL, highest priority first. Cross-stage
+/// exclusivity (file shares, YouTube) is the registry's: `extract::registry::readers`.
+pub(crate) fn readers(raw: &str) -> Vec<ReaderId> {
+  let Ok(url) = reqwest::Url::parse(raw) else {
+    return Vec::new();
+  };
+  let mut matched = crate::routing::best_per_stage(READER_MATCHERS, &url);
+  matched.sort_by_key(|matcher| std::cmp::Reverse(matcher.priority));
+  matched
+    .into_iter()
+    .filter_map(|matcher| match matcher.stage {
+      StageId::Reader(reader) => Some(reader),
+      _ => None,
+    })
+    .collect()
+}
 
 pub(crate) async fn admit_post_attachments(
   items: &[crate::models::parsed::MediaAttachment],
@@ -59,13 +77,13 @@ impl Reason {
   }
 }
 
-enum Outcome {
+enum Verdict {
   NoMatch,
   Verified(Resolution),
   Unknown,
 }
 
-impl Outcome {
+impl Verdict {
   fn resolution(self, original: &str) -> Resolution {
     match self {
       Self::Verified(result) => result,
@@ -91,17 +109,16 @@ impl std::fmt::Debug for Resolution {
 pub async fn resolve(url: &str) -> Resolution {
   tokio::time::timeout(Duration::from_secs(20), read_site(url, &http::PublicHttp))
     .await
-    .unwrap_or(Outcome::Unknown)
+    .unwrap_or(Verdict::Unknown)
     .resolution(url)
 }
 
-async fn read_site<T: http::Transport>(url: &str, transport: &T) -> Outcome {
+async fn read_site<T: http::Transport>(url: &str, transport: &T) -> Verdict {
   if let Some(player) = vimeo::player_url(url) {
-    return Outcome::Verified(Resolution::Passthrough(player));
+    return Verdict::Verified(Resolution::Passthrough(player));
   }
   let mut unknown = false;
-  for reader in crate::extract::registry::readers(url) {
-    use crate::extract::outcome::ReaderId;
+  for reader in readers(url) {
     let result = match reader {
       ReaderId::Reddit => reddit::read(url, transport).await,
       ReaderId::Snapchat => snapchat::read(url, transport).await,
@@ -111,39 +128,39 @@ async fn read_site<T: http::Transport>(url: &str, transport: &T) -> Outcome {
       ReaderId::Facebook => read_facebook(url, transport).await,
     };
     match result {
-      Outcome::Verified(_) => return result,
-      Outcome::NoMatch => {}
-      Outcome::Unknown => unknown = true,
+      Verdict::Verified(_) => return result,
+      Verdict::NoMatch => {}
+      Verdict::Unknown => unknown = true,
     }
   }
   if unknown {
-    Outcome::Unknown
+    Verdict::Unknown
   } else {
-    Outcome::NoMatch
+    Verdict::NoMatch
   }
 }
 
-async fn read_facebook<T: http::Transport>(url: &str, transport: &T) -> Outcome {
+async fn read_facebook<T: http::Transport>(url: &str, transport: &T) -> Verdict {
   let Some(requested) = facebook::Identity::parse(url) else {
-    return Outcome::NoMatch;
+    return Verdict::NoMatch;
   };
   if let Some(id) = &requested.video_id {
-    return Outcome::Verified(Resolution::Passthrough(facebook::watch(id)));
+    return Verdict::Verified(Resolution::Passthrough(facebook::watch(id)));
   }
   let page = match http::fetch(transport, requested.url.clone(), true).await {
     Ok(page) => page,
-    Err(_) => return Outcome::Unknown,
+    Err(_) => return Verdict::Unknown,
   };
   let Some(identity) = facebook::Identity::parse(page.url.as_str()) else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   if requested.short {
     if let Some(id) = &identity.video_id {
-      return Outcome::Verified(Resolution::Passthrough(facebook::watch(id)));
+      return Verdict::Verified(Resolution::Passthrough(facebook::watch(id)));
     }
   }
   let Ok(html) = std::str::from_utf8(&page.body) else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   facebook::read(html, &identity, &requested)
 }
@@ -156,18 +173,30 @@ pub fn unsupported_url(stderr: &str) -> bool {
 }
 
 /// These hosts keep their reader's identity and admission rules even after an inconclusive read.
+/// Derived from READER_MATCHERS, so a registered reader cannot be left out.
 pub(crate) fn reader_bound(url: &str) -> bool {
-  http::https_url(url)
+  let Some(host) = http::https_url(url)
     .ok()
     .and_then(|u| u.host_str().map(str::to_owned))
-    .is_some_and(|host| {
-      facebook::is_host(&host)
-        || reddit::is_host(&host)
-        || host == "fb.watch"
-        || threads::is_host(&host)
-        || linkedin::is_host(&host)
-        || telegram::is_host(&host)
-    })
+  else {
+    return false;
+  };
+  READER_MATCHERS.iter().any(|matcher| match matcher.stage {
+    StageId::Reader(reader) => reader_host(reader, &host),
+    _ => false,
+  })
+}
+
+/// Every reader names the hosts it owns; a new ReaderId does not compile without them.
+fn reader_host(reader: ReaderId, host: &str) -> bool {
+  match reader {
+    ReaderId::Reddit => reddit::is_host(host),
+    ReaderId::Facebook => facebook::is_host(host) || host == "fb.watch",
+    ReaderId::Threads => threads::is_host(host),
+    ReaderId::Linkedin => linkedin::is_host(host),
+    ReaderId::Telegram => telegram::is_host(host),
+    ReaderId::Snapchat => snapchat::is_host(host),
+  }
 }
 
 /// Download fallback retains explicit unsupported gating and the shared reader boundary.
@@ -187,17 +216,17 @@ pub(crate) async fn generic_scan(resolved_url: &str) -> Option<Resolution> {
   )
   .await
   {
-    Ok(Outcome::Verified(result)) => Some(result),
+    Ok(Verdict::Verified(result)) => Some(result),
     _ => None,
   }
 }
 
-async fn read_generic<T: http::Transport>(url: &str, transport: &T) -> Outcome {
+async fn read_generic<T: http::Transport>(url: &str, transport: &T) -> Verdict {
   let Ok(parsed) = http::https_url(url) else {
-    return Outcome::NoMatch;
+    return Verdict::NoMatch;
   };
   let Ok(page) = http::fetch(transport, parsed, false).await else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   let result = if page.media {
     Some(Resolution::Passthrough(page.url.to_string()))
@@ -207,18 +236,37 @@ async fn read_generic<T: http::Transport>(url: &str, transport: &T) -> Outcome {
       .and_then(|text| html::generic(text, page.url.as_str()))
   };
   match result {
-    Some(Resolution::Passthrough(target)) => {
-      // yt-dlp will fetch this extracted URL itself: apply the same public-address boundary.
-      let admitted = http::https_url(&target).ok();
-      if let Some(url) = admitted {
-        if http::addresses(&url).await.is_ok() {
-          return Outcome::Verified(Resolution::Passthrough(target));
-        }
-      }
-      Outcome::Unknown
+    // Whatever yt-dlp or the gallery runner will fetch next gets the same public-address gate.
+    Some(result) if admit_resolution(transport, &result).await => Verdict::Verified(result),
+    _ => Verdict::Unknown,
+  }
+}
+
+/// Every URL a resolution hands to a downloader must resolve to public addresses.
+/// A failing candidate rejects the whole resolution (same as `Passthrough`).
+async fn admit_resolution<T: http::Transport>(transport: &T, resolution: &Resolution) -> bool {
+  async fn admit<T: http::Transport>(transport: &T, raw: &str) -> bool {
+    match http::https_url(raw) {
+      Ok(url) => transport.admit_media(&url).await.is_ok(),
+      Err(_) => false,
     }
-    Some(result) => Outcome::Verified(result),
-    None => Outcome::Unknown,
+  }
+  match resolution {
+    Resolution::Passthrough(target) => admit(transport, target).await,
+    Resolution::PostMedia { url, thumbnail, .. } => {
+      admit(transport, url).await
+        && match thumbnail {
+          Some(thumbnail) => admit(transport, thumbnail).await,
+          None => true,
+        }
+    }
+    Resolution::Attachments { metadata } => {
+      match serde_json::from_str::<crate::models::parsed::ParsedSingleVideo>(metadata) {
+        Ok(media) => post::admit_attachments(transport, &media.attachments).await,
+        Err(_) => false,
+      }
+    }
+    Resolution::Unsupported { .. } => true,
   }
 }
 

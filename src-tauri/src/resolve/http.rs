@@ -1,7 +1,9 @@
+use crate::media_types::{base_mime, is_manifest_mime};
+use crate::net;
 use reqwest::Url;
 use std::collections::HashSet;
 use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 pub(crate) const FACEBOOK_CAP: usize = 10 * 1024 * 1024;
@@ -80,25 +82,7 @@ impl PublicHttp {
   ) -> Result<Response, FetchError> {
     https_url(url.as_str())?;
     let addresses = addresses(url).await?;
-    let client = reqwest::Client::builder()
-      .https_only(true)
-      .no_proxy()
-      .redirect(reqwest::redirect::Policy::none())
-      .referer(false)
-      .retry(reqwest::retry::never())
-      .no_gzip()
-      .no_brotli()
-      .no_deflate()
-      .no_zstd()
-      .http1_only()
-      .min_tls_version(reqwest::tls::Version::TLS_1_2)
-      .connect_timeout(Duration::from_secs(5))
-      .read_timeout(Duration::from_secs(5))
-      .timeout(Duration::from_secs(10))
-      // Pin precisely the checked DNS answer: reqwest must never resolve this host again.
-      .resolve_to_addrs(url.host_str().ok_or(FetchError::InvalidUrl)?, &addresses)
-      .build()
-      .map_err(|_| FetchError::Network)?;
+    let client = pinned_client(url, &addresses)?;
     let method = if kind == RequestKind::Head {
       reqwest::Method::HEAD
     } else {
@@ -109,13 +93,21 @@ impl PublicHttp {
       request = request.header("Range", format!("bytes=0-{}", cap.saturating_sub(1)));
     }
     let mut response = request
-      .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
-      .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-      .header("Accept-Encoding", "identity").header("Accept-Language", "en-US,en;q=0.9")
-      .header("Sec-Fetch-Mode", "navigate").header("Sec-Fetch-Site", "none")
-      .header("Sec-Fetch-Dest", "document").header("Sec-Fetch-User", "?1")
+      .header("User-Agent", net::CHROME_UA)
+      .header(
+        "Accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      )
+      .header("Accept-Encoding", "identity")
+      .header("Accept-Language", "en-US,en;q=0.9")
+      .header("Sec-Fetch-Mode", "navigate")
+      .header("Sec-Fetch-Site", "none")
+      .header("Sec-Fetch-Dest", "document")
+      .header("Sec-Fetch-User", "?1")
       .header("Upgrade-Insecure-Requests", "1")
-      .send().await.map_err(|_| FetchError::Network)?;
+      .send()
+      .await
+      .map_err(|_| FetchError::Network)?;
     let status = response.status().as_u16();
     let location = response
       .headers()
@@ -187,32 +179,26 @@ pub(crate) fn append(body: &mut Vec<u8>, chunk: &[u8], cap: usize) -> Result<(),
   Ok(())
 }
 
+/// Page reads go to port 443 only and only to public addresses.
 pub(crate) async fn addresses(url: &Url) -> Result<Vec<SocketAddr>, FetchError> {
-  let host = url
-    .host_str()
-    .ok_or(FetchError::InvalidUrl)?
-    .trim_matches(['[', ']']);
-  let addresses = if let Ok(ip) = host.parse::<IpAddr>() {
-    vec![SocketAddr::new(ip, 443)]
-  } else {
-    tokio::time::timeout(Duration::from_secs(5), tokio::net::lookup_host((host, 443)))
-      .await
-      .map_err(|_| FetchError::Network)?
-      .map_err(|_| FetchError::Network)?
-      .collect()
-  };
-  admit_addresses(addresses)
+  let host = net::host(url).ok_or(FetchError::InvalidUrl)?;
+  net::admit(host, 443, net::public_address)
+    .await
+    .map_err(|refusal| match refusal {
+      net::Refusal::Address => FetchError::Address,
+      net::Refusal::Timeout | net::Refusal::Lookup(_) => FetchError::Network,
+    })
 }
 
-pub(crate) fn admit_addresses(addresses: Vec<SocketAddr>) -> Result<Vec<SocketAddr>, FetchError> {
-  if addresses.is_empty()
-    || addresses
-      .iter()
-      .any(|a| a.port() != 443 || !public_address(a.ip()))
-  {
-    return Err(FetchError::Address);
-  }
-  Ok(addresses)
+/// Browser-navigation timeouts on top of the shared pinned builder; HTTPS only.
+fn pinned_client(url: &Url, addresses: &[SocketAddr]) -> Result<reqwest::Client, FetchError> {
+  net::pinned_builder(url.host_str().ok_or(FetchError::InvalidUrl)?, addresses)
+    .https_only(true)
+    .connect_timeout(Duration::from_secs(5))
+    .read_timeout(Duration::from_secs(5))
+    .timeout(Duration::from_secs(10))
+    .build()
+    .map_err(|_| FetchError::Network)
 }
 
 pub(crate) fn is_media(mime: Option<&str>) -> bool {
@@ -222,33 +208,16 @@ pub(crate) fn is_media(mime: Option<&str>) -> bool {
       || m.starts_with("audio/")
       || m.starts_with("image/")
       || m.split(';').next().is_some_and(|m| {
-        matches!(
-          m.trim(),
-          "application/vnd.apple.mpegurl"
-            | "application/x-mpegurl"
-            | "application/dash+xml"
-            | "application/pdf"
-            | "application/octet-stream"
-        )
+        let m = m.trim();
+        is_manifest_mime(m) || matches!(m, "application/pdf" | "application/octet-stream")
       })
   })
 }
 
 pub(crate) fn is_manifest(mime: Option<&str>) -> bool {
   mime.is_some_and(|m| {
-    matches!(
-      m.split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase()
-        .as_str(),
-      "application/vnd.apple.mpegurl"
-        | "application/x-mpegurl"
-        | "application/dash+xml"
-        | "audio/mpegurl"
-        | "audio/x-mpegurl"
-    )
+    let m = base_mime(m);
+    is_manifest_mime(&m) || matches!(m.as_str(), "audio/mpegurl" | "audio/x-mpegurl")
   })
 }
 
@@ -439,44 +408,76 @@ pub(crate) fn https_url(input: &str) -> Result<Url, FetchError> {
   Ok(url)
 }
 
-/// Conservative port of Android MediaHttpPolicy, including mapped IPv4 and well-known NAT64.
-pub(crate) fn public_address(ip: IpAddr) -> bool {
-  match ip {
-    IpAddr::V4(v4) => {
-      let value = u32::from(v4);
-      ![
-        (0x00000000, 8),
-        (0x0a000000, 8),
-        (0x64400000, 10),
-        (0x7f000000, 8),
-        (0xa9fe0000, 16),
-        (0xac100000, 12),
-        (0xc0000000, 24),
-        (0xc0000200, 24),
-        (0xc0586300, 24),
-        (0xc0a80000, 16),
-        (0xc6120000, 15),
-        (0xc6336400, 24),
-        (0xcb007100, 24),
-        (0xe0000000, 4),
-        (0xf0000000, 4),
-      ]
-      .iter()
-      .any(|(prefix, bits)| value & (u32::MAX << (32 - bits)) == *prefix)
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // Loopback, private v4/v6, link-local and v4-mapped v6 are refused before any connect.
+  #[tokio::test]
+  async fn page_reads_refuse_non_public_literals_and_dns_answers() {
+    for url in [
+      "https://127.0.0.1/",
+      "https://[::1]/",
+      "https://localhost/",
+      "https://10.0.0.1/",
+      "https://192.168.1.1/",
+      "https://[fc00::1]/",
+      "https://169.254.169.254/",
+      "https://[fe80::1]/",
+      "https://[::ffff:127.0.0.1]/",
+      "https://[::ffff:10.0.0.1]/",
+    ] {
+      let url = Url::parse(url).unwrap();
+      assert_eq!(addresses(&url).await, Err(FetchError::Address), "{url}");
+      assert_eq!(
+        PublicHttp.admit_media(&url).await,
+        Err(FetchError::Address),
+        "{url}"
+      );
+      assert!(
+        matches!(PublicHttp.get(&url, 1024).await, Err(FetchError::Address)),
+        "{url}"
+      );
     }
-    IpAddr::V6(v6) => {
-      if let Some(v4) = v6.to_ipv4_mapped() {
-        return public_address(v4.into());
-      }
-      let b = v6.octets();
-      if b[..12] == [0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0] {
-        return public_address(Ipv4Addr::new(b[12], b[13], b[14], b[15]).into());
-      }
-      b[0] & 0xe0 == 0x20
-        && !(b[0] == 0x20 && b[1] == 1 && b[2] & 0xfe == 0)
-        && b[..4] != [0x20, 1, 0x0d, 0xb8]
-        && b[..2] != [0x20, 2]
-        && !(b[0] == 0x3f && b[1] == 0xff && b[2] & 0xf0 == 0)
+    for url in [
+      "https://8.8.8.8/",
+      "https://[2606:4700:4700::1111]/",
+      "https://[::ffff:8.8.8.8]/",
+    ] {
+      let url = Url::parse(url).unwrap();
+      let ports: Vec<_> = addresses(&url)
+        .await
+        .unwrap()
+        .iter()
+        .map(|a| a.port())
+        .collect();
+      assert_eq!(ports, [443], "{url}");
     }
+  }
+
+  // DNS rebinding: the client connects to the admitted answer and never looks the host up again
+  // (`.invalid` never resolves, so only the pinned address can reach the listener).
+  #[tokio::test]
+  async fn page_client_connects_only_to_the_admitted_answer() {
+    use tokio::io::AsyncReadExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let pinned = listener.local_addr().unwrap();
+    let url = Url::parse(&format!("https://rebind.invalid:{}/", pinned.port())).unwrap();
+    let client = pinned_client(&url, &[pinned]).unwrap();
+    let request = client.get(url.clone()).send();
+    tokio::pin!(request);
+    let mut socket = tokio::select! {
+      accepted = listener.accept() => accepted.unwrap().0,
+      result = &mut request => panic!("the pinned address was never reached: {result:?}"),
+    };
+    // Read the first byte, then hang up so the request ends.
+    let first = async move {
+      let mut first = [0];
+      socket.read_exact(&mut first).await.unwrap();
+      first[0]
+    };
+    let (first, result) = tokio::join!(first, &mut request);
+    assert_eq!(first, 0x16, "a TLS handshake reached the pinned address");
+    assert!(result.is_err());
   }
 }

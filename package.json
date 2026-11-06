@@ -20,6 +20,7 @@
     "rust:lint": "pnpm run rust:fmt && pnpm run rust:clippy",
     "rust:test": "cargo test --manifest-path=src-tauri/Cargo.toml --all-features --all-targets",
     "test:unit": "vitest run",
+    "test:tools": "python3 -B -m unittest discover -s scripts -p \"test_*.py\"",
     "test:push": "pnpm run lint --cache --cache-strategy content --cache-location node_modules/.cache/eslint && pnpm exec vue-tsc --noEmit && pnpm run test:unit",
     "test:e2e": "playwright test",
     "test": "pnpm run test:unit && pnpm run test:e2e",
@@ -30,15 +31,13 @@
     "licenses:npm": "license-checker-rseidelsohn --production --json --out licenses/licenses-npm.json",
     "licenses:rust": "cargo about generate --manifest-path=src-tauri/Cargo.toml --output-file licenses/licenses-rust.txt src-tauri/about.hbs",
     "licenses:gen": "node scripts/licenses.ts",
-    "licenses": "pnpm run licenses:npm && pnpm run licenses:rust && pnpm run licenses:gen"
+    "licenses": "pnpm run licenses:npm && pnpm run licenses:rust && pnpm run licenses:gen",
+    "prepare": "node -e \"const{execSync:x}=require('child_process'),{realpathSync:r}=require('fs');try{if(r(x('git rev-parse --show-toplevel',{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim())===r(process.cwd()))x('git config core.hooksPath .githooks',{stdio:'ignore'})}catch{}\""
   },
   "dependencies": {
     "@heroicons/vue": "^2.2.0",
     "@internationalized/date": "3.12.4",
     "@lucide/vue": "1.66.0",
-    "@sentry/browser": "^10.78.0",
-    "@sentry/core": "^10.78.0",
-    "@sentry/vue": "^10.62.0",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-autostart": "^2.7.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.5.0",

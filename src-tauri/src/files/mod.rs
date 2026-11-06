@@ -9,7 +9,7 @@ pub mod names;
 mod plan;
 pub mod probe;
 pub(crate) mod runner;
-mod sanitize;
+pub(crate) mod sanitize;
 mod state;
 use std::fmt;
 #[derive(Debug)]

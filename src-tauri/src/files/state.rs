@@ -2,8 +2,8 @@
 //! Design: Zajil Download Manager, GPL-3.0-or-later (see Zajil-LICENSE).
 use super::{
   auth::StateKey,
-  names::{reserved_name, sanitize_file_name},
   plan::{Segment, Validator},
+  sanitize::{reserved_name, sanitize_file_name},
   Error, Result,
 };
 use serde::{Deserialize, Serialize};

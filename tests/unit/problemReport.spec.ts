@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { downloadReportContext } from '../../src/helpers/reportContext';
-import { stripOrigins } from '../../src/tauri/errorLog';
+import { logFrontendError, stripOrigins } from '../../src/tauri/errorLog';
+import { reportFailedDownload } from '../../src/stores/report';
+import { countUsage } from '../../src/tauri/usage';
+import { installTauriMock } from '../utils/tauriMock';
 import type { MediaAttempts } from '../../src/stores/media/diagnostics';
 
 const attempts = (finalCode: string | null, stages: string[]): MediaAttempts => ({
@@ -34,5 +37,24 @@ describe('stripOrigins', () => {
     expect(stripOrigins('at f (tauri://localhost/assets/index-abc.js:12:3)\nat g (http://tauri.localhost/assets/x.js:1:2)'))
       .toBe('at f (assets/index-abc.js:12:3)\nat g (assets/x.js:1:2)');
     expect(stripOrigins('fetch https://example.com/a failed')).toBe('fetch https://example.com/a failed');
+  });
+});
+
+describe('best-effort IPC', () => {
+  it('never throws or leaves a rejection when the backend fails', async () => {
+    installTauriMock({
+      diagnostics_log: () => {
+        throw new Error('backend gone');
+      },
+      usage_count: () => Promise.reject(new Error('io')),
+      diagnostics_download_failed: () => Promise.reject(new Error('io')),
+    });
+    expect(() => {
+      logFrontendError('window', new Error('boom'));
+      countUsage('paste');
+      reportFailedDownload({ context: { errorCode: 'http403', exitCode: 1, attempts: [] }, url: null, extractor: null });
+    }).not.toThrow();
+    // An unhandled rejection would fail the run.
+    await new Promise(resolve => setTimeout(resolve, 0));
   });
 });

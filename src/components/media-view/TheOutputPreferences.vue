@@ -30,7 +30,7 @@
       />
     </settings-section>
 
-    <prefs-advanced>
+    <base-disclosure class="mt-8" :label="t('perDownload.advanced')">
       <settings-row for-id="override-save-thumbnail" :label="t('prefs.adv.files.saveCover')" :help="t('prefs.adv.files.saveCoverHint')">
         <Switch id="override-save-thumbnail" v-model="outputState.saveThumbnail" />
       </settings-row>
@@ -73,7 +73,7 @@
       <settings-row v-if="showAudioPostprocessArgs" stacked for-id="override-audio-args" :label="t('prefs.adv.files.ffmpegArgs')" :help="t('prefs.adv.files.ffmpegArgsHint')">
         <Textarea id="override-audio-args" v-model="outputState.audio.postprocessArgs" dir="ltr" rows="2" class="py-1.5 font-mono text-[12px]" />
       </settings-row>
-    </prefs-advanced>
+    </base-disclosure>
   </div>
 </template>
 
@@ -89,7 +89,7 @@ import { SelectField } from '../ui/select';
 import Switch from '../ui/switch/Switch.vue';
 import SettingsRow from '../settings/SettingsRow.vue';
 import SettingsSection from '../settings/SettingsSection.vue';
-import PrefsAdvanced from './PrefsAdvanced.vue';
+import BaseDisclosure from '../base/BaseDisclosure.vue';
 import { useOutputSettingsEditor } from '../../composables/useOutputSettingsEditor.ts';
 import { useDialog } from '../../composables/useDialog.ts';
 import { shortFolderPath } from '../../helpers/folderPath.ts';

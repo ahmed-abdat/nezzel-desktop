@@ -59,13 +59,6 @@ pub(crate) fn network_error(error: reqwest::Error) -> Error {
   tracing::warn!(error_kind = kind, io_kind = ?io_kind, cause_class = cause, "File HTTP request failed");
   Error::Network
 }
-fn user_agent(url: &Url) -> &'static str {
-  if url.host_str().is_some_and(super::hosts::dropbox_host) {
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
-  } else {
-    concat!("Nezzel/", env!("CARGO_PKG_VERSION"))
-  }
-}
 #[derive(Clone, Copy, Default)]
 enum AddressPolicy {
   #[default]
@@ -79,7 +72,7 @@ impl AddressPolicy {
     if matches!(self, Self::Loopback) {
       return ip.is_loopback();
     }
-    crate::resolve::http::public_address(ip)
+    crate::net::public_address(ip)
   }
 }
 
@@ -113,6 +106,8 @@ pub(crate) type Script =
   Arc<dyn Fn(&str, Option<(u64, Option<u64>, &str)>) -> Result<reqwest::Response> + Send + Sync>;
 #[cfg(test)]
 type HopScript = Arc<dyn Fn(&reqwest::Request) -> Result<reqwest::Response> + Send + Sync>;
+#[cfg(test)]
+type Resolver = Arc<dyn Fn(&str) -> Vec<IpAddr> + Send + Sync>;
 #[derive(Clone)]
 pub(crate) struct Client {
   policy: AddressPolicy,
@@ -120,6 +115,8 @@ pub(crate) struct Client {
   pub script: Option<Script>,
   #[cfg(test)]
   hop_script: Option<HopScript>,
+  #[cfg(test)]
+  resolver: Option<Resolver>,
 }
 impl Client {
   pub fn new() -> Result<Self> {
@@ -129,6 +126,8 @@ impl Client {
       script: None,
       #[cfg(test)]
       hop_script: None,
+      #[cfg(test)]
+      resolver: None,
     })
   }
   #[cfg(test)]
@@ -138,59 +137,49 @@ impl Client {
       script: None,
       #[cfg(test)]
       hop_script: None,
+      resolver: None,
     }
   }
+  /// Downloads may use any port; every answer must still pass this client's address policy.
   async fn addresses(&self, url: &Url) -> Result<Vec<SocketAddr>> {
-    let host = url
-      .host_str()
-      .ok_or(Error::Address)?
-      .trim_matches(['[', ']']);
+    let host = crate::net::host(url).ok_or(Error::Address)?;
     let port = url
       .port_or_known_default()
       .filter(|p| *p != 0)
       .ok_or(Error::Address)?;
-    let addresses = if let Ok(ip) = host.parse::<IpAddr>() {
-      vec![SocketAddr::new(ip, port)]
-    } else {
-      tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio::net::lookup_host((host, port)),
-      )
-      .await
-      .map_err(|_| {
+    let policy = self.policy;
+    let allows = move |ip| policy.allows(ip);
+    #[cfg(test)]
+    let injected = self.resolver.as_ref().map(|resolve| {
+      let answer = resolve(host)
+        .into_iter()
+        .map(|ip| SocketAddr::new(ip, port))
+        .collect();
+      crate::net::admit_answer(answer, port, allows)
+    });
+    #[cfg(not(test))]
+    let injected = None;
+    let admitted = match injected {
+      Some(admitted) => admitted,
+      None => crate::net::admit(host, port, allows).await,
+    };
+    admitted.map_err(|refusal| match refusal {
+      crate::net::Refusal::Address => Error::Address,
+      crate::net::Refusal::Timeout => {
         tracing::warn!(error_kind = "dns_timeout", "File DNS lookup failed");
         Error::Network
-      })?
-      .map_err(|error| {
-        tracing::warn!(error_kind="dns",io_kind=?error.kind(),"File DNS lookup failed");
+      }
+      crate::net::Refusal::Lookup(kind) => {
+        tracing::warn!(error_kind="dns",io_kind=?kind,"File DNS lookup failed");
         Error::Network
-      })?
-      .collect::<Vec<_>>()
-    };
-    if addresses.is_empty()
-      || addresses
-        .iter()
-        .any(|a| a.port() != port || !self.policy.allows(a.ip()))
-    {
-      return Err(Error::Address);
-    }
-    Ok(addresses)
+      }
+    })
   }
+  /// Download timeouts on top of the shared pinned builder; plain HTTP stays allowed.
   fn pinned_client(&self, url: &Url, addresses: &[SocketAddr]) -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-      .no_proxy()
-      .redirect(reqwest::redirect::Policy::none())
-      .referer(false)
-      .retry(reqwest::retry::never())
-      .no_gzip()
-      .no_brotli()
-      .no_deflate()
-      .no_zstd()
-      .http1_only()
-      .min_tls_version(reqwest::tls::Version::TLS_1_2)
+    crate::net::pinned_builder(url.host_str().ok_or(Error::Address)?, addresses)
       .connect_timeout(Duration::from_secs(15))
       .read_timeout(Duration::from_secs(30))
-      .resolve_to_addrs(url.host_str().ok_or(Error::Address)?, addresses)
       .build()
       .map_err(network_error)
   }
@@ -202,9 +191,8 @@ impl Client {
     {
       return Err(Error::Address);
     }
-    if url
-      .host_str()
-      .and_then(|h| h.trim_matches(['[', ']']).parse::<IpAddr>().ok())
+    if crate::net::host(url)
+      .and_then(|h| h.parse::<IpAddr>().ok())
       .is_some_and(|ip| !self.policy.allows(ip))
     {
       return Err(Error::Address);
@@ -249,7 +237,7 @@ impl Client {
       })
       .await?;
       #[cfg(test)]
-      let scripted_hop = self.hop_script.is_some();
+      let scripted_hop = self.hop_script.is_some() && self.resolver.is_none();
       #[cfg(not(test))]
       let scripted_hop = false;
       let addresses = if scripted_hop {
@@ -262,7 +250,7 @@ impl Client {
         .get(url.clone())
         .header("Accept", "*/*")
         .header("Accept-Encoding", "identity")
-        .header("User-Agent", user_agent(&url));
+        .header("User-Agent", super::hosts::user_agent(&url));
       if let Some((start, end, validator)) = range {
         request = request
           .header(
@@ -295,9 +283,7 @@ impl Client {
           .and_then(|h| h.to_str().ok())
           .ok_or(Error::Address)?;
         let next = url.join(location).map_err(|_| Error::Address)?;
-        if next.host_str() == Some("accounts.google.com")
-          && super::hosts::plan(url.as_str(), super::hosts::Export::Pdf).is_some()
-        {
+        if super::hosts::sign_in_redirect(&url, &next) {
           return Err(Error::NotPublic);
         }
         if hop == 10 || (url.scheme() == "https" && next.scheme() != "https") {
@@ -395,6 +381,58 @@ mod tests {
       assert!(!log.contains(secret));
     }
   }
+  fn resolving(map: fn(&str) -> Vec<IpAddr>) -> Client {
+    let mut client = Client::new().unwrap();
+    client.resolver = Some(Arc::new(map));
+    client
+  }
+  #[tokio::test]
+  async fn connect_time_dns_answers_must_all_be_public() {
+    let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+    let url = Url::parse("https://files.example/a").unwrap();
+    for bad in ["127.0.0.1", "10.1.2.3", "169.254.169.254", "::1", "fc00::1"] {
+      let mut client = Client::new().unwrap();
+      let answer = ip(bad);
+      client.resolver = Some(Arc::new(move |_| vec![answer]));
+      assert!(
+        matches!(client.addresses(&url).await, Err(Error::Address)),
+        "{bad}"
+      );
+    }
+    let mut client = Client::new().unwrap();
+    client.resolver = Some(Arc::new(|_| vec!["93.184.216.34".parse().unwrap()]));
+    assert_eq!(client.addresses(&url).await.unwrap()[0].port(), 443);
+    client.resolver = Some(Arc::new(|_| {
+      vec![
+        "93.184.216.34".parse().unwrap(),
+        "10.0.0.5".parse().unwrap(),
+      ]
+    }));
+    assert!(matches!(client.addresses(&url).await, Err(Error::Address)));
+  }
+  #[tokio::test]
+  async fn redirect_to_a_host_resolving_private_is_refused() {
+    use reqwest::ResponseBuilderExt;
+    let mut client = resolving(|host| match host {
+      "files.example" => vec!["93.184.216.34".parse().unwrap()],
+      _ => vec!["192.168.1.10".parse().unwrap()],
+    });
+    client.hop_script = Some(Arc::new(|request| {
+      assert_eq!(request.url().host_str(), Some("files.example"));
+      Ok(
+        http::Response::builder()
+          .url(request.url().clone())
+          .status(302)
+          .header("location", "https://rebind.example/secret")
+          .body(Vec::<u8>::new())
+          .unwrap()
+          .into(),
+      )
+    }));
+    let (_tx, rx) = watch::channel(true);
+    let result = client.get("https://files.example/a", None, rx).await;
+    assert!(matches!(result, Err(Error::Address)));
+  }
   #[tokio::test]
   async fn admitted_dns_answers_keep_the_requested_port() {
     let client = Client::local();
@@ -442,6 +480,82 @@ mod tests {
     }
     server.await.unwrap();
   }
+  // Loopback, private v4/v6, link-local and v4-mapped v6 are refused on any port, before any
+  // connect, whether the host is an IP literal or a name whose DNS answer is private.
+  #[tokio::test]
+  async fn downloads_refuse_non_public_literals_and_dns_answers() {
+    let client = Client::new().unwrap();
+    for url in [
+      "http://127.0.0.1:8080/f",
+      "https://[::1]/f",
+      "http://localhost:8123/f",
+      "https://10.0.0.1/f",
+      "http://192.168.1.1/f",
+      "https://[fc00::1]/f",
+      "http://169.254.169.254/latest",
+      "https://[fe80::1]/f",
+      "https://[::ffff:127.0.0.1]/f",
+      "http://[::ffff:192.168.0.1]:8080/f",
+    ] {
+      let url = Url::parse(url).unwrap();
+      assert!(
+        matches!(client.addresses(&url).await, Err(Error::Address)),
+        "{url}"
+      );
+      let (_tx, rx) = watch::channel(true);
+      assert!(
+        matches!(
+          client.get(url.as_str(), None, rx).await,
+          Err(Error::Address)
+        ),
+        "{url}"
+      );
+    }
+    for (url, port) in [
+      ("http://8.8.8.8:8080/f", 8080),
+      ("https://[::ffff:8.8.8.8]/f", 443),
+    ] {
+      let addresses = client.addresses(&Url::parse(url).unwrap()).await.unwrap();
+      let ports: Vec<_> = addresses.iter().map(|a| a.port()).collect();
+      assert_eq!(ports, [port], "{url}");
+    }
+  }
+  // DNS rebinding: the client connects to the admitted answer and never looks the host up again
+  // (`.invalid` never resolves, so only the pinned address can reach the listener).
+  #[tokio::test]
+  async fn download_client_connects_only_to_the_admitted_answer() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let pinned = listener.local_addr().unwrap();
+    let url = Url::parse(&format!("http://rebind.invalid:{}/f", pinned.port())).unwrap();
+    let client = Client::new()
+      .unwrap()
+      .pinned_client(&url, &[pinned])
+      .unwrap();
+    let response = client.get(url.clone()).send();
+    tokio::pin!(response);
+    let mut socket = tokio::select! {
+      accepted = listener.accept() => accepted.unwrap().0,
+      result = &mut response => panic!("the pinned address was never reached: {result:?}"),
+    };
+    let server = async {
+      let mut request = Vec::new();
+      while !request.ends_with(b"\r\n\r\n") {
+        let mut byte = [0];
+        socket.read_exact(&mut byte).await.unwrap();
+        request.push(byte[0]);
+      }
+      socket
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        .await
+        .unwrap();
+      String::from_utf8_lossy(&request).to_ascii_lowercase()
+    };
+    let (request, response) = tokio::join!(server, &mut response);
+    let body = response.unwrap().bytes().await.unwrap();
+    assert!(request.contains("host: rebind.invalid"), "{request}");
+    assert_eq!(body.as_ref(), b"ok");
+  }
 }
 
 #[cfg(test)]
@@ -459,7 +573,7 @@ mod share_tests {
       let ua = request.headers()["user-agent"].to_str().unwrap();
       let response = http::Response::builder().url(url.clone());
       if url.host_str() == Some("www.dropbox.com") {
-        assert!(ua.contains("Chrome/140.0.0.0"));
+        assert_eq!(ua, crate::net::CHROME_UA);
         Ok(
           response
             .status(302)
@@ -470,7 +584,7 @@ mod share_tests {
             .into(),
         )
       } else if url.host_str() == Some("uc1.dl.dropboxusercontent.com") {
-        assert!(ua.contains("Chrome/140.0.0.0"));
+        assert_eq!(ua, crate::net::CHROME_UA);
         Ok(
           response
             .status(302)

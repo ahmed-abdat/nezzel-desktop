@@ -1,19 +1,9 @@
 import { computed, onMounted, onBeforeUnmount, watchEffect, ref } from 'vue';
 import { useSettingsStore } from '../stores/settings';
 import { Theme } from '../tauri/types/config';
+import { applyTheme, removeTheme } from '../appearance';
 
-export function applyTheme(t: 'light' | 'dark') {
-  if (typeof document === 'undefined') return;
-  document.body.setAttribute('data-theme', t);
-  const meta = document.querySelector('meta[name="color-scheme"]');
-  if (meta) meta.setAttribute('content', t);
-}
-
-function removeTheme() {
-  document.body.removeAttribute('data-theme');
-  const meta = document.querySelector('meta[name="color-scheme"]');
-  if (meta) meta.removeAttribute('content');
-}
+export { applyTheme };
 
 export function useTheme() {
   const store = useSettingsStore();

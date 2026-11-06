@@ -18,7 +18,10 @@
 
       <div class="grid min-h-0 flex-1 grid-cols-[minmax(300px,440px)_minmax(380px,1fr)]">
         <div class="wl-copy-col flex min-w-0 flex-col overflow-y-auto px-10 pt-9">
-          <img :src="nezzelMark" alt="Nezzel" class="block size-11">
+          <div class="flex items-center gap-2.5">
+            <img :src="nezzelMark" alt="" class="block size-11">
+            <span class="text-[22px] font-semibold tracking-tight" dir="ltr">{{ t('shell.brand') }}</span>
+          </div>
           <h1 id="welcome-title" class="wl-title">{{ t('welcome.title') }}</h1>
           <p class="wl-lead">{{ capturePlatform.backgroundClipboard ? t('welcome.lead') : t('welcome.leadFocus') }}</p>
 
@@ -106,10 +109,11 @@ import { useSettingsStore } from '../../stores/settings';
 import { useOnboardingStore } from '../../stores/onboarding';
 import { useToastStore } from '../../stores/toast';
 import { useCapturePlatform } from '../../composables/useCapturePlatform';
+import { TRY_LINK } from '@/generated/contract';
+import { MAIN_PANE_ID } from '../../helpers/domIds';
 
-/** Same link as the backend's TRY_LINK ("Me at the zoo"); only the browser fallback writes it from here. */
-const SAMPLE_URL = 'https://www.youtube.com/watch?v=jNQXAC9IVRw';
-const SAMPLE_LABEL = 'youtube.com/watch?v=jNQXAC9IVRw';
+/** The backend's TRY_LINK ("Me at the zoo"); only the browser fallback writes it from here. */
+const SAMPLE_LABEL = TRY_LINK.replace(/^https:\/\/www\./, '');
 const STEPS = [
   { k: 1, key: 'copy', icon: Copy },
   { k: 2, key: 'card', icon: PictureInPicture2 },
@@ -157,9 +161,9 @@ function trapTab(event: KeyboardEvent) {
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Crash and error reports: on by default, saved at once like the card switch. */
-const reports = computed(() => settings.settings.privacy?.sendReports ?? true);
+const reports = computed(() => settings.settings.privacy.sendReports);
 function setReports(on: boolean) {
-  void settings.patch({ privacy: { sendReports: on } }).catch(() => {});
+  void settings.setPrivacy('sendReports', on);
 }
 
 function setCard(on: boolean) {
@@ -172,12 +176,8 @@ async function tryIt() {
   try {
     await invoke('capture_try_link');
   } catch {
-    try {
-      await navigator.clipboard.writeText(SAMPLE_URL);
-    } catch {
-      useToastStore().showToast(t('welcome.try.failed'), { style: 'error' });
-      return;
-    }
+    useToastStore().showToast(t('welcome.try.failed'), { style: 'error' });
+    return;
   }
   copied.value = true;
   clearTimeout(copiedTimer);
@@ -193,7 +193,7 @@ function onLinkCopy() {
 function getStarted() {
   void onboarding.complete({ card: card.value, start: start.value });
   // The sheet and its focused button go away now: keyboard and screen-reader focus lands on the main content.
-  void nextTick(() => document.getElementById('nz-main')?.focus({ preventScroll: true }));
+  void nextTick(() => document.getElementById(MAIN_PANE_ID)?.focus({ preventScroll: true }));
 }
 
 onMounted(() => {

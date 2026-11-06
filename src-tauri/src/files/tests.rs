@@ -244,7 +244,7 @@ fn sidecars_reject_corruption_links_and_out_of_bounds_segments() {
 
 #[test]
 fn filename_limits_keep_arabic_extension_and_safe_joiners() {
-  use super::names::sanitize_file_name;
+  use super::sanitize::sanitize_file_name;
   let name = sanitize_file_name(&format!("{}.pdf", "ت".repeat(180)));
   assert!(name.len() <= 200 && name.ends_with(".pdf"));
   assert_eq!(
@@ -256,8 +256,40 @@ fn filename_limits_keep_arabic_extension_and_safe_joiners() {
 }
 
 #[test]
+fn file_names_reserve_every_windows_device_name_and_keep_state_names_out() {
+  use super::sanitize::sanitize_file_name;
+  for (raw, expected) in [
+    ("CON", "_CON"),
+    ("nul.txt", "_nul.txt"),
+    ("CONIN$", "_CONIN$"),
+    ("COM0.txt", "_COM0.txt"),
+    ("COM\u{b9}", "_COM\u{b9}"),
+    ("lpt9", "_lpt9"),
+    ("LPT10", "LPT10"),
+    ("CONSOLE", "CONSOLE"),
+    ("a<b>c:d\"e|f?g*h", "a_b_c_d_e_f_g_h"),
+    ("../../etc/passwd", "passwd"),
+    ("C:\\Users\\me\\clip.mp4", "clip.mp4"),
+    ("   ", "download"),
+    ("..", "download"),
+    ("clip.mp4.nezzel-part", "clip.mp4.nezzel-part.download"),
+    ("a\u{202e}gpj.exe", "agpj.exe"),
+    ("CONOUT$.mp4", "_CONOUT$.mp4"),
+    ("LPT\u{b3}.txt", "_LPT\u{b3}.txt"),
+    ("com1 .txt", "_com1 .txt"),
+    ("nul.", "_nul"),
+    ("nul. .", "_nul"),
+    ("COM1.tar.gz", "_COM1.tar.gz"),
+    ("COM11", "COM11"),
+    ("xCON", "xCON"),
+  ] {
+    assert_eq!(sanitize_file_name(raw), expected, "{raw:?}");
+  }
+}
+
+#[test]
 fn collision_suffixes_still_fit_the_sidecar_checkpoint_name_budget() {
-  let name = super::names::sanitize_file_name(&format!("{}.pdf", "ت".repeat(180)));
+  let name = super::sanitize::sanitize_file_name(&format!("{}.pdf", "ت".repeat(180)));
   let numbered = super::state::alternative(&name, 1000);
   assert!(numbered.len() <= 200);
   assert!(numbered.ends_with(" (1000).pdf"));

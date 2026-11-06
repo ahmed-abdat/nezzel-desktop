@@ -1,9 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
 import type { App } from 'vue';
-
-/** A render loop must not flood the log: cap what one session sends. */
-const MAX_PER_SESSION = 50;
-let sent = 0;
+import { fireAndForget } from './fireAndForget';
 
 /** Keep `assets/x.js:12:3` from stack frames; drop the webview origin (Rust scrubs the rest). */
 export function stripOrigins(text: string): string {
@@ -20,11 +16,10 @@ function describe(error: unknown): string {
   }
 }
 
+/** Rust caps how many one run takes (`diagnostics::MAX_FRONTEND_ERRORS`), scrubs and logs them. */
 export function logFrontendError(kind: string, error: unknown): void {
-  if (sent >= MAX_PER_SESSION) return;
-  sent++;
   const message = `${kind}: ${stripOrigins(describe(error))}`;
-  void invoke('diagnostics_log', { level: 'error', message }).catch(() => {});
+  fireAndForget('diagnostics_log', { level: 'error', message });
 }
 
 /** Vue errorHandler, window.onerror and unhandledrejection go to the app log, redacted in Rust. */

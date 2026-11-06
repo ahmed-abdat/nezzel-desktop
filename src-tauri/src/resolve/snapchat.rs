@@ -1,18 +1,21 @@
-use super::{html, http, Outcome, Resolution};
+use super::{html, http, Resolution, Verdict};
 use reqwest::Url;
 use std::collections::BTreeSet;
 
-pub(super) const MATCHER: crate::extract::registry::Matcher =
-  crate::extract::registry::Matcher::reader(
-    crate::extract::outcome::ReaderId::Snapchat,
-    "snapchat-spotlight",
-    20,
-    |raw| spotlight(raw).is_some_and(|(_, _, canonical)| !canonical),
-  );
+pub(super) const MATCHER: crate::routing::Matcher = crate::routing::Matcher::reader(
+  crate::routing::ReaderId::Snapchat,
+  "snapchat-spotlight",
+  20,
+  |raw| spotlight(raw).is_some_and(|(_, _, canonical)| !canonical),
+);
+
+pub(super) fn is_host(host: &str) -> bool {
+  matches!(host, "snapchat.com" | "www.snapchat.com")
+}
 
 fn spotlight(input: &str) -> Option<(Url, String, bool)> {
   let url = http::https_url(input).ok()?;
-  if !matches!(url.host_str()?, "snapchat.com" | "www.snapchat.com") {
+  if !is_host(url.host_str()?) {
     return None;
   }
   let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
@@ -42,24 +45,24 @@ fn spotlight(input: &str) -> Option<(Url, String, bool)> {
   Some((url.clone(), id.into(), canonical))
 }
 
-pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Outcome {
+pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Verdict {
   let Some((url, id, false)) = spotlight(input) else {
-    return Outcome::NoMatch;
+    return Verdict::NoMatch;
   };
   let Ok(page) = http::fetch(transport, url, false).await else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   let Some((_, page_id, canonical)) = spotlight(page.url.as_str()) else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   if page_id != id {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   }
   if canonical {
-    return Outcome::Verified(Resolution::Passthrough(page.url.into()));
+    return Verdict::Verified(Resolution::Passthrough(page.url.into()));
   }
   let Some(tags) = std::str::from_utf8(&page.body).ok().and_then(html::tags) else {
-    return Outcome::Unknown;
+    return Verdict::Unknown;
   };
   // The bare page is a new app shell. Its og:url names the older user-scoped page
   // that yt-dlp can extract. Bind it to the requested ID, never a recommendation.
@@ -70,8 +73,8 @@ pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Outc
     .map(|(url, _, _)| url.to_string())
     .collect();
   if urls.len() == 1 {
-    Outcome::Verified(Resolution::Passthrough(urls.into_iter().next().unwrap()))
+    Verdict::Verified(Resolution::Passthrough(urls.into_iter().next().unwrap()))
   } else {
-    Outcome::Unknown
+    Verdict::Unknown
   }
 }

@@ -29,9 +29,9 @@
       <!-- Search: title or site, case/accent/harakat-insensitive. Esc clears. -->
       <div class="flex items-center gap-1.5 border-b border-hairline px-4 py-1.5" role="search">
         <search-icon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <label for="list-search" class="sr-only">{{ t('downloads.list.searchLabel') }}</label>
+        <label :for="LIST_SEARCH_ID" class="sr-only">{{ t('downloads.list.searchLabel') }}</label>
         <Input variant="bare"
-          id="list-search"
+          :id="LIST_SEARCH_ID"
           ref="searchInput"
           v-model="query"
           type="search"
@@ -147,6 +147,7 @@ import Kbd from '@/components/ui/kbd/Kbd.vue';
 import { usePlatform } from '../../composables/usePlatform';
 import { useSettingsStore } from '../../stores/settings';
 import { shortcutKeys } from '../../helpers/shortcut';
+import { LIST_SEARCH_ID } from '../../helpers/domIds';
 import { useCaptureShortcut } from '../../composables/useCaptureShortcut';
 import SelectionBar from '../../components/downloads/SelectionBar.vue';
 import { useDownloadSelection } from '../../composables/useDownloadSelection';
@@ -155,7 +156,8 @@ import { useDownloadBuckets } from '../../composables/useDownloadBuckets';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import { useDownloadList } from '../../composables/useDownloadList';
 import { parseListView, viewQuery, type StatusFilter } from '../../helpers/listFilter';
-import { useListHiddenStore } from '../../stores/listHidden';
+import { useListVisibilityStore } from '../../stores/listVisibility';
+import { useListRemoval } from '../../composables/useListRemoval';
 import { useMediaStore } from '../../stores/media/media';
 import { useMediaOptionsStore } from '../../stores/media/options';
 import { optionsForChoice } from '../../helpers/quickChoice';
@@ -166,8 +168,9 @@ const route = useRoute();
 const router = useRouter();
 const { count } = useLocaleNumber();
 const { active, finished, ready } = useDownloadBuckets();
-const { rows, shown, query, clearFinished, counts } = useDownloadList();
-const hidden = useListHiddenStore();
+const { rows, shown, query, counts } = useDownloadList();
+const { clearFinished } = useListRemoval();
+const hidden = useListVisibilityStore();
 const mediaStore = useMediaStore();
 const optionsStore = useMediaOptionsStore();
 const { defaultChoice, compactRows, showThumbnails } = useUiPrefs();

@@ -1,43 +1,12 @@
 //! Stable, privacy-safe vocabulary shared by extraction stages.
 
-/// Confidence gates destructive verdicts so a generic miss cannot declare content deleted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Confidence {
-  None,
-  Low,
-  Medium,
-  High,
-}
-
-/// Stage identity avoids retaining a URL or engine stderr in an attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StageId {
-  Files,
-  Reader(ReaderId),
-  Ytdlp,
-  Gallery,
-  PageScan,
-  Embed,
-  Sniff,
-}
-
-/// Reader identities remain a closed vocabulary rather than exposing site input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReaderId {
-  Reddit,
-  Facebook,
-  Threads,
-  Linkedin,
-  Telegram,
-  Snapchat,
-}
+pub use crate::routing::{Confidence, ReaderId, StageId};
 
 /// Auth provenance records retries without retaining browser or profile identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthUsed {
   Anonymous,
   Browser,
-  CookieFile,
 }
 
 /// Network scope is supplied by the caller that knows which endpoint failed.
@@ -180,6 +149,41 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
   }
 }
 
+/// Codes a login can fix: the queue row offers to sign in and the capture card says `login`.
+pub const LOGIN_CODES: [&str; 4] = [
+  "signInRequired",
+  "signInRequiredForBotDetection",
+  "membersOnly",
+  "videoPasswordRequired",
+];
+
+/// Codes whose failure the site decides, so retrying the same link fails the same way (the webview's
+/// `isPermanentError`, rendered by `crate::contract`): the codes `classify` puts under Unsupported, Removed,
+/// Private, Geo, Drm, Paid, KindMismatch or NoMedia, except `imageSourceUnavailable`, whose message tells the
+/// user to try again.
+#[cfg_attr(not(test), allow(dead_code))]
+pub const PERMANENT_CODES: [&str; 15] = [
+  // Unsupported
+  "urlNotSupported",
+  "urlUnsupported",
+  "unknownUrlType",
+  "fileNotFile",
+  // Removed / Private
+  "notFound404",
+  "copyrightClaimed",
+  "channelUnavailable",
+  "videoNotFoundOrPrivate",
+  "playlistPrivateOrMissing",
+  // Geo, Drm, Paid
+  "geoBlocked",
+  "drmProtected",
+  "membersOnly",
+  // KindMismatch, NoMedia
+  "photosOnly",
+  "noMediaFound",
+  "fileEmpty",
+];
+
 /// An attempt contains only enum values, a validated code and elapsed milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Attempt {
@@ -214,6 +218,36 @@ impl Attempt {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn permanent_codes_are_exactly_the_site_decided_outcomes() {
+    let permanent = |code: &str| {
+      matches!(
+        classify(code, "", NetworkScope::PageHost).outcome,
+        Outcome::Unsupported
+          | Outcome::Removed
+          | Outcome::Private
+          | Outcome::Geo
+          | Outcome::Drm
+          | Outcome::Paid
+          | Outcome::KindMismatch
+          | Outcome::NoMedia
+      ) && code != "imageSourceUnavailable"
+    };
+    let rules: serde_json::Value =
+      serde_json::from_str(include_str!("../diagnostic_rules.json")).unwrap();
+    let mut known: Vec<&str> = rules["rules"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .filter_map(|rule| rule["code"].as_str())
+      .collect();
+    known.extend(PERMANENT_CODES);
+    known.extend(LOGIN_CODES);
+    for code in known {
+      assert_eq!(permanent(code), PERMANENT_CODES.contains(&code), "{code}");
+    }
+  }
 
   #[test]
   fn age_gate_wording_is_classified_before_generic_login() {

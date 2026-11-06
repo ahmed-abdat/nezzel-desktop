@@ -1,5 +1,5 @@
 use super::*;
-use crate::commands::resolve_trash_target;
+use crate::download_records::resolve_trash_target;
 use std::fs;
 
 struct Sandbox(PathBuf);

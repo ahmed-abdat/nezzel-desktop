@@ -54,7 +54,7 @@ impl http::Transport for Fake {
     if host == "localhost"
       || host
         .parse::<std::net::IpAddr>()
-        .is_ok_and(|ip| !http::public_address(ip))
+        .is_ok_and(|ip| !crate::net::public_address(ip))
     {
       Err(http::FetchError::Address)
     } else {
@@ -451,7 +451,7 @@ async fn public_media_wins_over_login_chrome_and_strong_wall_titles() {
     ));
     assert_eq!(signals.resolution(), expected);
     assert_eq!(
-      crate::extract::chain::scan_page(&probe, PAGE, &fake).await,
+      crate::extract::page_scan::scan_page(&probe, PAGE, &fake).await,
       Ok(expected)
     );
   }
@@ -462,7 +462,7 @@ async fn public_media_wins_over_login_chrome_and_strong_wall_titles() {
   assert!(!signals.login_wall);
   let fake = Fake::new(&fixture("login.html"));
   assert_eq!(
-    crate::extract::chain::scan_page(&PageProbe::default(), PAGE, &fake).await,
+    crate::extract::page_scan::scan_page(&PageProbe::default(), PAGE, &fake).await,
     Err("signInRequired")
   );
 }
@@ -583,7 +583,7 @@ async fn page_scan_retains_legacy_generic_fixture_results() {
       fake = fake.with("HEAD", target, response(mime, "media"));
     }
     assert_eq!(
-      crate::extract::chain::scan_page(&PageProbe::default(), &page, &fake).await,
+      crate::extract::page_scan::scan_page(&PageProbe::default(), &page, &fake).await,
       Ok(candidate.map(Resolution::Passthrough)),
       "{page}: {html}"
     );

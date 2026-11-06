@@ -212,6 +212,8 @@
 import LoginProfile from './LoginProfile.vue';
 import FileTypeIcon from './FileTypeIcon.vue';
 import { revealsInFolder } from '../../helpers/fileCategory';
+import { ROW_SELECTOR } from '../../helpers/domIds';
+import { hostOf } from '../../helpers/siteName';
 import { isPermanentError } from '../../helpers/errorOutcome';
 import { computed, nextTick, ref, toRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -337,7 +339,7 @@ function onKey(event: KeyboardEvent) {
   if (event.target !== row) return;
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault();
-    const rows = Array.from(document.querySelectorAll<HTMLElement>('li.row'));
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(ROW_SELECTOR));
     rows[rows.indexOf(row) + (event.key === 'ArrowDown' ? 1 : -1)]?.focus();
   } else if (event.key === 'Enter') {
     if (canOpen.value) openFromRow();
@@ -345,7 +347,7 @@ function onKey(event: KeyboardEvent) {
   } else if (event.key === 'Delete' || event.key === 'Backspace') {
     event.preventDefault();
     // Keep the keyboard in the list: focus moves to the next row (or the previous one at the end).
-    const rows = Array.from(document.querySelectorAll<HTMLElement>('li.row'));
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(ROW_SELECTOR));
     const index = rows.indexOf(row);
     const next = rows[index + 1] ?? rows[index - 1];
     void remove();
@@ -389,14 +391,6 @@ function onDblClick(event: MouseEvent) {
   // Buttons and menus inside the row keep their own double-click.
   if ((event.target as HTMLElement).closest('button, a, input, [role="menu"]')) return;
   openFromRow();
-}
-
-function hostOf(url?: string): string {
-  try {
-    return new URL(url ?? '').hostname;
-  } catch {
-    return '';
-  }
 }
 
 const { clipped: titleClipped, measure: measureTitle } = useOverflowTip();

@@ -1,5 +1,6 @@
 import { expect, Page } from '@playwright/test';
 import { test } from './utils/fixtures';
+import { ROW_SELECTOR } from '../../src/helpers/domIds';
 
 async function openPlaylistSelection(page: Page) {
   await page.goto('/');
@@ -17,7 +18,7 @@ test('it applies a simple playlist range selection', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Download selected items' }).click();
 
-  const cards = page.locator('li.row');
+  const cards = page.locator(ROW_SELECTOR);
   await expect(cards).toHaveCount(1);
   await expect(page.getByText('Item 1')).toBeVisible();
 });

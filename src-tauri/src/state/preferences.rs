@@ -61,4 +61,28 @@ mod tests {
       (true, true)
     );
   }
+
+  #[test]
+  fn lenient_resets_a_wrong_typed_leaf_and_keeps_siblings() {
+    let raw = json!({ "onboarding": { "welcomeDone": "yes", "closeNoteDone": true } });
+    assert!(Preferences::materialize(&raw).is_err());
+    let p = Preferences::materialize_lenient(&raw);
+    assert!(!p.onboarding.welcome_done);
+    assert!(p.onboarding.close_note_done);
+  }
+
+  #[test]
+  fn lenient_resets_null_on_a_required_field() {
+    let raw = json!({ "onboarding": { "welcomeDone": null, "closeNoteDone": true } });
+    assert!(Preferences::materialize(&raw).is_err());
+    let p = Preferences::materialize_lenient(&raw);
+    assert!(!p.onboarding.welcome_done && p.onboarding.close_note_done);
+  }
+
+  #[test]
+  fn lenient_ignores_unknown_keys_and_keeps_valid_ones() {
+    let raw = json!({ "futureThing": 1, "onboarding": { "welcomeDone": true }, "window": "bad" });
+    let p = Preferences::materialize_lenient(&raw);
+    assert!(p.onboarding.welcome_done);
+  }
 }

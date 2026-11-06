@@ -1,7 +1,8 @@
 use crate::state::config_models::{DEFAULT_CAPTURE_SHORTCUT, FALLBACK_CAPTURE_SHORTCUT};
 use crate::SharedConfig;
+use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 pub fn register_shortcuts(app_handle: &AppHandle) {
@@ -24,7 +25,7 @@ pub fn register_shortcuts_for(
 }
 
 pub fn unregister_shortcuts(app_handle: &AppHandle) {
-  crate::capture::set_shortcut(app_handle, None, false);
+  set_shortcut(app_handle, None, false);
   if let Err(e) = app_handle.global_shortcut().unregister_all() {
     tracing::warn!(error = %e, "Failed to unregister global shortcuts");
   }
@@ -32,6 +33,7 @@ pub fn unregister_shortcuts(app_handle: &AppHandle) {
 
 fn on_quick_bar(app: &AppHandle, _: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent) {
   if event.state() == ShortcutState::Pressed {
+    crate::usage::count(app, crate::usage::keys::SHORTCUT_USED);
     crate::capture::open_quick_bar(app, true);
   }
 }
@@ -46,7 +48,7 @@ pub fn shortcuts_pause(app: AppHandle, window: WebviewWindow, paused: bool) {
     return;
   }
   PAUSED.store(paused, Ordering::Relaxed);
-  let Some(current) = crate::capture::current_shortcut(&app) else {
+  let Some(current) = current_shortcut(&app) else {
     return;
   };
   if paused {
@@ -68,7 +70,7 @@ pub fn shortcuts_pause(app: AppHandle, window: WebviewWindow, paused: bool) {
   }
   // The combo is gone (taken while paused, or no longer a candidate): register through the candidates, so the
   // default's fallback and OS refusals apply, and report what is really active.
-  if let Some(previous) = crate::capture::take_shortcut(&app) {
+  if let Some(previous) = take_shortcut(&app) {
     let _ = app.global_shortcut().unregister(previous.as_str());
   }
   register_capture_shortcut(&app, &requested);
@@ -185,24 +187,23 @@ fn shortcut_kind(accelerator: &str) -> &'static str {
 
 /// Rebind the Quick download shortcut.
 pub fn register_capture_shortcut(app: &AppHandle, requested: &str) {
-  if let Some(reason) =
-    crate::capture::clipboard::global_shortcut_reason(crate::capture::clipboard::current_session())
+  if let Some(reason) = crate::platform::global_shortcut_reason(crate::platform::current_session())
   {
     // The plugin's X11 grab "succeeds" under Wayland but never fires: say so instead of claiming the combo.
-    if let Some(previous) = crate::capture::take_shortcut(app) {
+    if let Some(previous) = take_shortcut(app) {
       let _ = app.global_shortcut().unregister(previous.as_str());
     }
     tracing::info!(
       reason,
       "Quick download shortcut unavailable in this session"
     );
-    crate::capture::set_shortcut_unsupported(app, reason);
+    set_shortcut_unsupported(app, reason);
     return;
   }
   let candidates = capture_candidates(requested, default_types_char());
-  if let Some(previous) = crate::capture::take_shortcut(app) {
+  if let Some(previous) = take_shortcut(app) {
     if candidates.contains(&previous.as_str()) {
-      crate::capture::set_shortcut(app, Some(previous), false);
+      set_shortcut(app, Some(previous), false);
       return;
     }
     let _ = app.global_shortcut().unregister(previous.as_str());
@@ -214,7 +215,7 @@ pub fn register_capture_shortcut(app: &AppHandle, requested: &str) {
   if let Some(active) = active {
     // Kinds only: a recorded combo is the user's own setting.
     tracing::info!(
-      session = ?crate::capture::clipboard::current_session(),
+      session = ?crate::platform::current_session(),
       combo = shortcut_kind(active),
       "Quick download shortcut registered"
     );
@@ -222,7 +223,73 @@ pub fn register_capture_shortcut(app: &AppHandle, requested: &str) {
       let _ = app.global_shortcut().unregister(active);
     }
   }
-  crate::capture::set_shortcut(app, active.map(String::from), active.is_none());
+  set_shortcut(app, active.map(String::from), active.is_none());
+}
+
+/// Quick download shortcut as the OS took it: `active` is what the user presses (the fallback when the default
+/// was taken), `failed` means nothing could be registered.
+#[derive(Clone, Serialize)]
+pub struct ShortcutStatus {
+  pub failed: bool,
+  pub active: Option<String>,
+  /// Why it cannot work in this session ("wayland"); absent for an ordinary refusal.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub reason: Option<&'static str>,
+}
+
+#[tauri::command]
+pub fn capture_shortcut_status(app: AppHandle) -> ShortcutStatus {
+  let state = app.state::<crate::capture::CaptureState>();
+  let active = state.shortcut.lock().unwrap().clone();
+  let reason = *state.shortcut_reason.lock().unwrap();
+  ShortcutStatus {
+    failed: state.shortcut_failed.load(Ordering::Relaxed),
+    active,
+    reason,
+  }
+}
+
+pub fn current_shortcut(app: &AppHandle) -> Option<String> {
+  app
+    .state::<crate::capture::CaptureState>()
+    .shortcut
+    .lock()
+    .unwrap()
+    .clone()
+}
+pub fn take_shortcut(app: &AppHandle) -> Option<String> {
+  app
+    .state::<crate::capture::CaptureState>()
+    .shortcut
+    .lock()
+    .unwrap()
+    .take()
+}
+pub fn set_shortcut(app: &AppHandle, shortcut: Option<String>, failed: bool) {
+  set_shortcut_status(app, shortcut, failed, None);
+}
+
+/// Nothing registered because the session cannot deliver global presses (see `crate::platform::global_shortcut_reason`).
+pub fn set_shortcut_unsupported(app: &AppHandle, reason: &'static str) {
+  set_shortcut_status(app, None, true, Some(reason));
+}
+
+fn set_shortcut_status(
+  app: &AppHandle,
+  shortcut: Option<String>,
+  failed: bool,
+  reason: Option<&'static str>,
+) {
+  let state = app.state::<crate::capture::CaptureState>();
+  *state.shortcut.lock().unwrap() = shortcut.clone();
+  state.shortcut_failed.store(failed, Ordering::Relaxed);
+  *state.shortcut_reason.lock().unwrap() = reason;
+  let status = ShortcutStatus {
+    failed,
+    active: shortcut,
+    reason,
+  };
+  let _ = app.emit_to("main", "capture_shortcut_status", status);
 }
 
 #[cfg(test)]

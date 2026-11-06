@@ -1,28 +1,9 @@
 //! Content-Disposition naming, following Zajil's precedence and quoted-string design.
 //! Zajil Download Manager (motalim-ai contributors), GPL-3.0-or-later; see Zajil-LICENSE.
-pub(crate) fn reserved_name(name: &str) -> bool {
-  let name = name.to_ascii_lowercase();
-  name.ends_with(".nezzel-state")
-    || name.ends_with(".nezzel-part")
-    || ((name.contains(".nezzel-state.") || name.contains(".nezzel-part."))
-      && name.ends_with(".tmp"))
-}
-pub fn sanitize_file_name(raw: &str) -> String {
-  let mut name = super::sanitize::sanitize_file_name(raw);
-  if reserved_name(&name) {
-    let mut end = name
-      .len()
-      .min(super::sanitize::MAX_NAME_BYTES - ".download".len());
-    while !name.is_char_boundary(end) {
-      end -= 1;
-    }
-    name.truncate(end);
-    name.push_str(".download");
-  }
-  name
-}
 use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::Url;
+
+use super::sanitize::sanitize_file_name;
 
 pub(crate) fn percent_bytes(raw: &str) -> Vec<u8> {
   let mut out = Vec::new();

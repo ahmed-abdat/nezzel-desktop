@@ -1,73 +1,146 @@
-//! Problem report text: pure builders, no I/O. Everything free-form passes through
-//! [`super::redact::scrub`] before it gets here; identifiers are reduced to safe tokens.
+//! Problem report text: pure builders, no I/O. A report is built only from [`ScrubbedText`] (free text),
+//! tokens ([`Token`], [`CodeToken`], [`ExtractorToken`], [`SiteToken`]) and the reduced [`LinkText`], so raw text
+//! can't reach one.
 
+use super::link::{LinkText, SiteToken};
+use super::redact::ScrubbedText;
 use crate::state::config_models::Config;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::fmt;
 
 pub const LOG_LINES: usize = 50;
 /// The user's own words in "Report a problem".
 pub const MAX_NOTE_CHARS: usize = 2_000;
 
+/// A value reduced by [`token`] (`[A-Za-z0-9_.:-]`, ≤ 64): built through `new` or deserialised (the webview's
+/// values pass `token` on the way in), never from raw text.
+macro_rules! token_type {
+  ($($(#[$doc:meta])* $name:ident),* $(,)?) => {$(
+    $(#[$doc])*
+    #[derive(Clone, PartialEq, Eq, Hash, Serialize)]
+    #[serde(transparent)]
+    pub struct $name(String);
+
+    impl $name {
+      pub fn new(raw: &str) -> Self {
+        Self(token(raw))
+      }
+
+      // Not every type reads its text back outside Display.
+      #[allow(dead_code)]
+      pub fn as_str(&self) -> &str {
+        &self.0
+      }
+    }
+
+    /// A missing value renders as `?`, as `token("")` does.
+    impl Default for $name {
+      fn default() -> Self {
+        Self::new("")
+      }
+    }
+
+    impl<'de> Deserialize<'de> for $name {
+      fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|raw| Self::new(&raw))
+      }
+    }
+
+    impl fmt::Display for $name {
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+      }
+    }
+
+    impl fmt::Debug for $name {
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+      }
+    }
+  )*};
+}
+
+token_type!(
+  /// A plain token: versions, locales, settings values, attempt stages.
+  Token,
+  /// An error code (`http403`, `signInRequired`).
+  CodeToken,
+  /// A yt-dlp extractor name (`youtube:tab`).
+  ExtractorToken,
+);
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OsInfo {
-  pub name: String,
-  pub version: String,
-  pub arch: String,
+  pub name: &'static str,
+  pub version: Token,
+  pub arch: &'static str,
   /// Linux only: distro, desktop and session type.
-  pub distro: Option<String>,
-  pub desktop: Option<String>,
-  pub session: Option<String>,
+  pub distro: Option<ScrubbedText>,
+  pub desktop: Option<Token>,
+  pub session: Option<Token>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Attempt {
-  pub stage: String,
+  pub stage: Token,
   pub login: bool,
-  pub outcome: String,
-  pub code: Option<String>,
+  pub outcome: Token,
+  pub code: Option<CodeToken>,
   pub ms: u64,
 }
 
 /// A failed row: its error code and the stage trail. Never the URL or title.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DownloadContext {
-  pub error_code: Option<String>,
+  pub error_code: Option<CodeToken>,
   /// Set in Rust from `link::link_for_report`, never by the webview.
   #[serde(skip_deserializing)]
-  pub site: Option<String>,
+  pub site: Option<SiteToken>,
   #[serde(skip_deserializing)]
-  pub link: Option<String>,
+  pub link: Option<LinkText>,
   #[serde(skip_deserializing)]
-  pub extractor: Option<String>,
+  pub extractor: Option<ExtractorToken>,
   pub exit_code: Option<i32>,
   pub attempts: Vec<Attempt>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ReportInput {
-  /// Already-scrubbed note the user typed.
-  pub note: Option<String>,
+  /// The note the user typed.
+  pub note: Option<ScrubbedText>,
+  /// From the app bundle, not the user.
   pub app_version: String,
   pub os: OsInfo,
-  /// (tool, version or "missing").
+  /// (tool, version or "missing"), from the bundled manifests (versions like `9.0.2 / N-128280-g…`).
   pub tools: Vec<(String, String)>,
   /// (app language setting, system locale).
-  pub locale: (String, String),
-  pub settings: Vec<(&'static str, String)>,
+  pub locale: (Token, Token),
+  pub settings: Vec<(&'static str, Token)>,
   pub download: Option<DownloadContext>,
-  /// Already-scrubbed crash text from the previous run.
-  pub crash: Option<String>,
-  /// Already-scrubbed recent log lines, oldest first.
-  pub log_lines: Vec<String>,
+  /// Crash text from the previous run.
+  pub crash: Option<ScrubbedText>,
+  /// Recent log lines, oldest first.
+  pub log_lines: Vec<ScrubbedText>,
 }
 
+/// Built only by [`build`] from a [`ReportInput`] (private fields), so it holds nothing raw.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Report {
-  pub title: String,
-  pub body: String,
+  title: String,
+  body: String,
+}
+
+impl Report {
+  pub fn title(&self) -> &str {
+    &self.title
+  }
+
+  pub fn body(&self) -> &str {
+    &self.body
+  }
 }
 
 /// Keep only characters that can't carry a URL, path or name: `[A-Za-z0-9_.:-]`, ≤ 64.
@@ -87,12 +160,8 @@ pub fn token(value: &str) -> String {
 pub fn title(input: &ReportInput) -> String {
   if input.crash.is_some() {
     format!("Crash report (Nezzel {})", input.app_version)
-  } else if let Some(code) = input
-    .download
-    .as_ref()
-    .and_then(|d| d.error_code.as_deref())
-  {
-    format!("Download failed: {}", token(code))
+  } else if let Some(code) = input.download.as_ref().and_then(|d| d.error_code.as_ref()) {
+    format!("Download failed: {code}")
   } else {
     "Problem report".into()
   }
@@ -100,7 +169,12 @@ pub fn title(input: &ReportInput) -> String {
 
 pub fn render(input: &ReportInput) -> String {
   let mut out = String::new();
-  if let Some(note) = input.note.as_deref().filter(|note| !note.trim().is_empty()) {
+  if let Some(note) = input
+    .note
+    .as_ref()
+    .map(ScrubbedText::as_str)
+    .filter(|note| !note.trim().is_empty())
+  {
     out.push_str("### Note\n\n");
     out.push_str(note.trim());
     out.push_str("\n\n");
@@ -112,12 +186,12 @@ pub fn render(input: &ReportInput) -> String {
     input.os.name, input.os.version, input.os.arch
   ));
   if input.os.distro.is_some() || input.os.desktop.is_some() || input.os.session.is_some() {
-    let part = |value: &Option<String>| value.clone().unwrap_or_else(|| "unknown".into());
+    let part = |value: Option<String>| value.unwrap_or_else(|| "unknown".into());
     out.push_str(&format!(
       "- Linux: {} · desktop {} · session {}\n",
-      part(&input.os.distro),
-      part(&input.os.desktop),
-      part(&input.os.session)
+      part(input.os.distro.as_ref().map(ToString::to_string)),
+      part(input.os.desktop.as_ref().map(ToString::to_string)),
+      part(input.os.session.as_ref().map(ToString::to_string))
     ));
   }
   out.push_str(&format!(
@@ -147,9 +221,8 @@ pub fn render(input: &ReportInput) -> String {
       "- Error: {}",
       download
         .error_code
-        .as_deref()
-        .map(token)
-        .unwrap_or_else(|| "unknown".into())
+        .as_ref()
+        .map_or("unknown", CodeToken::as_str)
     ));
     if let Some(exit) = download.exit_code {
       out.push_str(&format!(" (exit {exit})"));
@@ -161,7 +234,7 @@ pub fn render(input: &ReportInput) -> String {
     if let Some(site) = &download.site {
       out.push_str(&format!("- Site: {site}"));
       if let Some(extractor) = &download.extractor {
-        out.push_str(&format!(" (extractor {})", token(extractor)));
+        out.push_str(&format!(" (extractor {extractor})"));
       }
       out.push('\n');
     }
@@ -169,14 +242,10 @@ pub fn render(input: &ReportInput) -> String {
       out.push_str(&format!(
         "- Attempt {}: {} · login {} · {} · {} · {} ms\n",
         index + 1,
-        token(&attempt.stage),
+        attempt.stage,
         if attempt.login { "yes" } else { "no" },
-        token(&attempt.outcome),
-        attempt
-          .code
-          .as_deref()
-          .map(token)
-          .unwrap_or_else(|| "-".into()),
+        attempt.outcome,
+        attempt.code.as_ref().map_or("-", CodeToken::as_str),
         attempt.ms
       ));
     }
@@ -184,14 +253,14 @@ pub fn render(input: &ReportInput) -> String {
 
   if let Some(crash) = &input.crash {
     out.push_str("\n### Crash\n\n```\n");
-    out.push_str(crash.trim_end());
+    out.push_str(crash.as_str().trim_end());
     out.push_str("\n```\n");
   }
 
   if !input.log_lines.is_empty() {
     out.push_str("\n### Recent log (private data removed)\n\n```\n");
     for line in &input.log_lines {
-      out.push_str(line.trim_end());
+      out.push_str(line.as_str().trim_end());
       out.push('\n');
     }
     out.push_str("```\n");
@@ -249,16 +318,17 @@ pub fn parse_macos_plist(text: &str) -> Option<String> {
   (!version.is_empty()).then(|| token(version))
 }
 
-/// Booleans and enums only: never paths, templates, proxies, cookie files or site names.
-pub fn settings_summary(config: &Config) -> Vec<(&'static str, String)> {
+/// Booleans and enums only: never paths, templates, proxies, cookie files or site names. The one mapping of
+/// settings to what may leave the app: reports list it, usage counts (`usage::snapshot`) pick from it.
+pub fn settings_summary(config: &Config) -> Vec<(&'static str, Token)> {
   let defaults = Config::default();
-  let flag = |value: bool| if value { "on" } else { "off" }.to_string();
+  let flag = |value: bool| Token::new(if value { "on" } else { "off" });
   let name = |value: serde_json::Value| match value {
-    serde_json::Value::String(text) => token(&text),
-    other => token(&other.to_string()),
+    serde_json::Value::String(text) => Token::new(&text),
+    other => Token::new(&other.to_string()),
   };
   let enum_name = |value: Result<serde_json::Value, serde_json::Error>| {
-    value.map(name).unwrap_or_else(|_| "?".into())
+    value.map(name).unwrap_or_else(|_| Token::new("?"))
   };
   let auth = &config.auth;
   let cookies = if auth
@@ -266,10 +336,10 @@ pub fn settings_summary(config: &Config) -> Vec<(&'static str, String)> {
     .as_deref()
     .is_some_and(|file| !file.is_empty())
   {
-    "file".to_string()
+    Token::new("file")
   } else {
     // A browser choice may carry a profile ("chrome:Profile 1"): keep the browser only.
-    token(
+    Token::new(
       auth
         .cookie_browser
         .split([':', '+', '/'])
@@ -278,8 +348,8 @@ pub fn settings_summary(config: &Config) -> Vec<(&'static str, String)> {
     )
   };
   vec![
-    ("theme", token(&config.appearance.theme)),
-    ("language", token(&config.appearance.language)),
+    ("theme", Token::new(&config.appearance.theme)),
+    ("language", Token::new(&config.appearance.language)),
     ("cookies", cookies),
     (
       "alwaysUseBrowserLogins",
@@ -287,7 +357,7 @@ pub fn settings_summary(config: &Config) -> Vec<(&'static str, String)> {
     ),
     (
       "rememberedSites",
-      config.auth.site_browsers.len().to_string(),
+      Token::new(&config.auth.site_browsers.len().to_string()),
     ),
     (
       "proxy",
@@ -346,11 +416,11 @@ pub fn settings_summary(config: &Config) -> Vec<(&'static str, String)> {
     ("subtitles", flag(config.subtitles.enabled)),
     (
       "maxConcurrency",
-      config.performance.max_concurrency.to_string(),
+      Token::new(&config.performance.max_concurrency.to_string()),
     ),
     (
       "fragments",
-      config.performance.concurrent_fragments.to_string(),
+      Token::new(&config.performance.concurrent_fragments.to_string()),
     ),
     ("aria2", flag(config.performance.aria2_enabled)),
     (
@@ -363,6 +433,8 @@ pub fn settings_summary(config: &Config) -> Vec<(&'static str, String)> {
     ("updateTools", flag(config.update.update_binaries)),
     ("updateApp", flag(config.update.update_app)),
     ("tray", flag(config.system.tray_enabled)),
+    ("autostart", flag(config.system.auto_start_enabled)),
+    ("sendReports", flag(config.privacy.send_reports)),
     (
       "closeBehavior",
       enum_name(serde_json::to_value(config.system.close_behavior)),
@@ -372,6 +444,7 @@ pub fn settings_summary(config: &Config) -> Vec<(&'static str, String)> {
 
 #[cfg(test)]
 mod tests {
+  use super::super::redact::scrub;
   use super::*;
 
   fn input() -> ReportInput {
@@ -379,22 +452,22 @@ mod tests {
       note: None,
       app_version: "1.2.0".into(),
       os: OsInfo {
-        name: "Linux".into(),
-        version: "6.8.0".into(),
-        arch: "x86_64".into(),
-        distro: Some("Ubuntu 24.04".into()),
-        desktop: Some("GNOME".into()),
-        session: Some("wayland".into()),
+        name: "Linux",
+        version: Token::new("6.8.0"),
+        arch: "x86_64",
+        distro: Some(scrub("Ubuntu 24.04", &[])),
+        desktop: Some(Token::new("GNOME")),
+        session: Some(Token::new("wayland")),
       },
       tools: vec![
         ("yt-dlp".into(), "2026.10.26".into()),
         ("aria2".into(), "missing".into()),
       ],
-      locale: ("ar".into(), "ar-SA".into()),
-      settings: vec![("theme", "dark".into()), ("aria2", "off".into())],
+      locale: (Token::new("ar"), Token::new("ar-SA")),
+      settings: vec![("theme", Token::new("dark")), ("aria2", Token::new("off"))],
       download: None,
       crash: None,
-      log_lines: vec!["line one".into(), "line two".into()],
+      log_lines: vec![scrub("line one", &[]), scrub("line two", &[])],
     }
   }
 
@@ -419,30 +492,25 @@ mod tests {
   #[test]
   fn failed_row_shows_code_and_trail_as_tokens_only() {
     let mut input = input();
-    input.download = Some(DownloadContext {
-      error_code: Some("http403".into()),
-      site: Some("instagram.com".into()),
-      link: Some("instagram.com/reel/{id}".into()),
-      extractor: Some("Instagram".into()),
-      exit_code: Some(1),
-      attempts: vec![
-        Attempt {
-          stage: "download".into(),
-          login: false,
-          outcome: "failed".into(),
-          code: Some("http403".into()),
-          ms: 1200,
-        },
-        // Hostile values from the webview must not smuggle text in.
-        Attempt {
-          stage: "https://x.com/a b".into(),
-          login: true,
-          outcome: "/Users/me".into(),
-          code: None,
-          ms: 5,
-        },
+    let link = super::super::link::link_for_report("https://www.instagram.com/reel/Cx1/", false)
+      .expect("a public link");
+    // Hostile values from the webview are reduced to tokens as they arrive.
+    let mut download: DownloadContext = serde_json::from_value(serde_json::json!({
+      "errorCode": "http403",
+      "exitCode": 1,
+      "attempts": [
+        { "stage": "download", "login": false, "outcome": "failed", "code": "http403", "ms": 1200 },
+        { "stage": "https://x.com/a b", "login": true, "outcome": "/Users/me", "ms": 5 },
       ],
-    });
+      // Set in Rust only: a webview value is ignored.
+      "site": "evil.example/Users/me",
+    }))
+    .expect("a row from the webview");
+    assert_eq!(download.site, None);
+    download.site = Some(link.site);
+    download.link = Some(link.link);
+    download.extractor = Some(ExtractorToken::new("Instagram"));
+    input.download = Some(download);
     let body = render(&input);
     assert!(body.contains("- Error: http403 (exit 1)"), "{body}");
     assert!(body.contains("- Link: instagram.com/reel/{id}"), "{body}");
@@ -464,21 +532,21 @@ mod tests {
   #[test]
   fn build_keeps_the_newest_log_lines_and_the_note() {
     let mut input = input();
-    input.note = Some("التنزيل توقف عند 50%".into());
+    input.note = Some(scrub("التنزيل توقف عند 50%", &[]));
     input.log_lines = (0..400)
-      .map(|n| format!("log line {n} العربية ok"))
+      .map(|n| scrub(&format!("log line {n} العربية ok"), &[]))
       .collect();
     let report = build(&input);
     assert!(
       report
-        .body
+        .body()
         .starts_with("### Note\n\nالتنزيل توقف عند 50%\n"),
       "{}",
-      report.body
+      report.body()
     );
-    assert!(report.body.contains("log line 399"));
-    assert!(!report.body.contains("log line 349 "));
-    assert!(report.body.contains("log line 350 "));
+    assert!(report.body().contains("log line 399"));
+    assert!(!report.body().contains("log line 349 "));
+    assert!(report.body().contains("log line 350 "));
   }
 
   #[test]

@@ -12,8 +12,10 @@ import { useMediaDestinationStore } from '../../src/stores/media/destination';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
 import { useToastStore } from '../../src/stores/toast';
-import { useListHiddenStore } from '../../src/stores/listHidden';
-import { MAX_CLEARED, useListClearedStore } from '../../src/stores/listCleared';
+import { useListVisibilityStore } from '../../src/stores/listVisibility';
+import { resetPlatformForTests } from '../../src/composables/usePlatform';
+import { Platform } from '../../src/tauri/types/app';
+import { MAX_CLEARED } from '../../src/stores/listVisibility';
 import { installTauriMock } from '../utils/tauriMock';
 import type { Group } from '../../src/tauri/types/group';
 
@@ -63,7 +65,7 @@ describe('trashFile', () => {
       if (cmd === 'plugin:dialog|message') return i18n.global.t('downloads.row.deleteConfirm.ok.trash');
       if (cmd === 'media_trash_file') return Promise.reject('notOurs');
     });
-    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Macintosh');
+    resetPlatformForTests(Platform.MacOS);
     vi.spyOn(useMediaDestinationStore(), 'getPrimaryDestination').mockReturnValue({ path: '/d/old.mp4' } as never);
     const showToast = vi.spyOn(useToastStore(), 'showToast');
     const { actions } = actionsFor({ id: 'legacy' } as Group);
@@ -75,7 +77,7 @@ describe('trashFile', () => {
     const [, options] = showToast.mock.calls.at(-1)!;
     expect(options?.action?.label).toBe('Remove from list (keeps the file)');
     options!.action!.run();
-    expect(useListHiddenStore().isHidden('legacy')).toBe(true);
+    expect(useListVisibilityStore().isHidden('legacy')).toBe(true);
   });
 });
 
@@ -152,12 +154,12 @@ describe('download row recovery', () => {
     const groups = useMediaGroupStore();
     const { actions } = actionsFor(groups.findGroupById(id));
     actions.remove();
-    expect(useListHiddenStore().isHidden(id)).toBe(true);
+    expect(useListVisibilityStore().isHidden(id)).toBe(true);
     expect(cancelled).toEqual([]);
     expect(groups.findGroupById(id)).toBeDefined();
     useToastStore().toasts.at(-1)!.action!.run();
     await vi.advanceTimersByTimeAsync(5000);
-    expect(useListHiddenStore().isHidden(id)).toBe(false);
+    expect(useListVisibilityStore().isHidden(id)).toBe(false);
     expect(groups.findGroupById(id)).toBeDefined();
     expect(cancelled).toEqual([]);
     actions.remove();
@@ -182,12 +184,12 @@ describe('download row recovery', () => {
     actions.remove();
     await vi.advanceTimersByTimeAsync(6000);
     expect(useMediaGroupStore().findGroupById(id)).toBeDefined();
-    expect(useListClearedStore().isCleared(['/Downloads/a.mp4'])).toBe(true);
+    expect(useListVisibilityStore().isCleared(['/Downloads/a.mp4'])).toBe(true);
     expect(engine).toEqual([]);
     // A new session (fresh store) still knows the row was removed from the list.
     setActivePinia(createPinia());
-    expect(useListClearedStore().isCleared(['/Downloads/a.mp4'])).toBe(true);
-    useListClearedStore().restore(['/Downloads/a.mp4']);
+    expect(useListVisibilityStore().isCleared(['/Downloads/a.mp4'])).toBe(true);
+    useListVisibilityStore().restore(['/Downloads/a.mp4']);
   });
 
   it('forgets the removed-from-list mark once the file is trashed, so a new download to that path shows', async () => {
@@ -197,15 +199,15 @@ describe('download row recovery', () => {
     const id = await media.dispatchMediaInfoFetch('https://example.com/a');
     useMediaDestinationStore().addDestination(id, { path: '/Downloads/a.mp4', confidence: 100 });
     useMediaStateStore().setGroupState(id, MediaState.done);
-    useListClearedStore().clear(['/Downloads/a.mp4']);
+    useListVisibilityStore().clear(['/Downloads/a.mp4']);
     const { actions } = actionsFor(useMediaGroupStore().findGroupById(id));
     expect(await actions.trashFile()).toBe('ok');
-    expect(useListClearedStore().isCleared(['/Downloads/a.mp4'])).toBe(false);
+    expect(useListVisibilityStore().isCleared(['/Downloads/a.mp4'])).toBe(false);
   });
 
   it('keeps only the newest removed-from-list marks, on load and on insert', () => {
     localStorage.setItem('nezzel.listCleared', JSON.stringify(Array.from({ length: MAX_CLEARED + 10 }, (_, i) => `/d/${i}`)));
-    const store = useListClearedStore();
+    const store = useListVisibilityStore();
     expect(store.keys.size).toBe(MAX_CLEARED);
     expect(store.isCleared(['/d/9'])).toBe(false);
     store.clear(['/d/new']);
@@ -230,6 +232,6 @@ describe('download row recovery', () => {
     const toast = useToastStore().toasts.at(-1)!;
     expect(toast).toMatchObject({ message: 'File not found', style: 'error', action: { label: 'Remove from list' } });
     toast.action!.run();
-    expect(useListHiddenStore().isHidden(id)).toBe(true);
+    expect(useListVisibilityStore().isHidden(id)).toBe(true);
   });
 });

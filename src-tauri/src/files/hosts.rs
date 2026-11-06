@@ -155,6 +155,35 @@ pub(crate) fn dropbox_host(host: &str) -> bool {
     "www.dropbox.com" | "dropbox.com" | "dl.dropboxusercontent.com"
   ) || host.ends_with(".dl.dropboxusercontent.com")
 }
+/// True when the link is an anonymous share link (Drive, Docs, Dropbox). The export format
+/// is irrelevant here, so callers that only ask "is this a share link" use this.
+pub(crate) fn is_share(input: &str) -> bool {
+  plan(input, Export::Pdf).is_some()
+}
+/// Share hosts answer 429/509 with a quota page the caller must see, so those are not retried.
+pub(crate) fn relax_rate_limit(url: &str) -> bool {
+  is_share(url)
+    || Url::parse(url)
+      .ok()
+      .and_then(|u| u.host_str().map(dropbox_host))
+      .unwrap_or(false)
+}
+/// Drive and Docs bounce non-public files to the Google sign-in page.
+pub(crate) fn sign_in_page(url: &Url) -> bool {
+  url.host_str() == Some("accounts.google.com")
+}
+/// A share link redirected to the sign-in page means the file is not public.
+pub(crate) fn sign_in_redirect(from: &Url, to: &Url) -> bool {
+  sign_in_page(to) && is_share(from.as_str())
+}
+/// Dropbox needs a browser UA; everything else identifies as Nezzel.
+pub(crate) fn user_agent(url: &Url) -> &'static str {
+  if url.host_str().is_some_and(dropbox_host) {
+    crate::net::CHROME_UA
+  } else {
+    concat!("Nezzel/", env!("CARGO_PKG_VERSION"))
+  }
+}
 fn drive_download(url: &Url) -> bool {
   secure(url)
     && matches!(
@@ -294,5 +323,31 @@ impl Plan {
     } else {
       Err(Error::NotFile)
     }
+  }
+}
+#[cfg(test)]
+mod rules_tests {
+  use super::*;
+  #[test]
+  fn share_host_rules() {
+    let u = |s: &str| Url::parse(s).unwrap();
+    assert!(is_share("https://drive.google.com/file/d/abc/view"));
+    assert!(!is_share("https://example.com/file/d/abc/view"));
+    assert!(relax_rate_limit("https://www.dropbox.com/s/abc/f.txt"));
+    assert!(relax_rate_limit("https://uc1.dl.dropboxusercontent.com/f"));
+    assert!(!relax_rate_limit("https://example.com/f"));
+    assert!(sign_in_redirect(
+      &u("https://drive.google.com/uc?id=abc"),
+      &u("https://accounts.google.com/ServiceLogin")
+    ));
+    assert!(!sign_in_redirect(
+      &u("https://example.com/f"),
+      &u("https://accounts.google.com/ServiceLogin")
+    ));
+    assert_eq!(
+      user_agent(&u("https://www.dropbox.com/s/a/b")),
+      crate::net::CHROME_UA
+    );
+    assert!(user_agent(&u("https://example.com/")).starts_with("Nezzel/"));
   }
 }

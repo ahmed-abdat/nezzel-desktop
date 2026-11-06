@@ -1,4 +1,10 @@
 {
+  "usage": {
+    "setting": {
+      "label": "Aider à améliorer Nezzel",
+      "help": "Envoie des totaux quotidiens anonymes : fonctions utilisées et sites (nom de domaine seulement). Jamais de liens, de noms de fichiers ni de comptes"
+    }
+  },
   "common": {
     "download": "Télécharger",
     "save": "Enregistrer",
@@ -1217,6 +1223,7 @@
     "version": "Version : {version}",
     "links": {
       "github": "GitHub",
+      "website": "Site web",
       "wiki": "Wiki",
       "reportABug": "Signaler un bug"
     },
@@ -1787,7 +1794,28 @@
     "downloadBest": "Meilleure qualité",
     "options": "Options",
     "loading": "Lecture du lien…",
-    "formats": "Formats disponibles",
+    "formats": {
+      "choose": "Choisir un format",
+      "list": "Formats",
+      "video": "Vidéo",
+      "audio": "Audio",
+      "best": "Meilleure",
+      "bestEach": "La meilleure pour chaque vidéo",
+      "orLower": "ou moins",
+      "sizeUnknown": "Taille inconnue",
+      "fps": "{n} i/s",
+      "kbps": "{n} kb/s",
+      "high": "Haute qualité",
+      "medium": "Qualité moyenne",
+      "low": "Fichier léger",
+      "anyAudio": "Son seul",
+      "downloadRow": "Télécharger {format}",
+      "height": "{n}p",
+      "res4k": "4K",
+      "res8k": "8K",
+      "sep": " · ",
+      "noSize": "—"
+    },
     "automationHint": "Pour lire l’onglet du navigateur, macOS peut demander d’autoriser Nezzel à contrôler votre navigateur. En cas de refus, Nezzel utilise le presse-papiers",
     "readingBrowser": "Lecture de l’onglet actif…",
     "failed": "Impossible de lire ce lien. Ouvrez les options pour réessayer",

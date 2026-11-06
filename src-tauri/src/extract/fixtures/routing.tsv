@@ -82,7 +82,7 @@ soundcloud	https://soundcloud.com/nasa/searching-for-impact-flashes	files,ytdlp,
 soundcloud	https://soundcloud.com/nasa/houston-we-have-a-podcast-reflections-after-artemis-ii	files,ytdlp,gallery,pageScan	ytdlp,gallery,pageScan
 dailymotion	https://www.dailymotion.com/video/xbrre2i	files,ytdlp,gallery,pageScan	ytdlp,gallery,pageScan
 dailymotion	https://www.dailymotion.com/video/xbrmlfu	files,ytdlp,gallery,pageScan	ytdlp,gallery,pageScan
-snapchat	https://www.snapchat.com/spotlight/W7_EDlXWTBiXAEEniNoMPwAAYcmZkcnJyb3JuAZcyiH2bAZcyiFoaAAAAAQ	files,ytdlp,gallery,pageScan	reader:snapchat,ytdlp,gallery,pageScan
+snapchat	https://www.snapchat.com/spotlight/W7_EDlXWTBiXAEEniNoMPwAAYcmZkcnJyb3JuAZcyiH2bAZcyiFoaAAAAAQ	files,ytdlp,gallery	reader:snapchat,ytdlp,gallery
 twitch	https://clips.twitch.tv/ArbitraryCooperativeBottlePJSalt	files,ytdlp,gallery,pageScan	ytdlp,gallery,pageScan
 twitch	https://clips.twitch.tv/BashfulHelpfulSalamanderPrimeMe	files,ytdlp,gallery,pageScan	ytdlp,gallery,pageScan
 threads	https://www.threads.com/@screenrant/post/DXZefiQkWzn	files,ytdlp,gallery	reader:threads,ytdlp,gallery

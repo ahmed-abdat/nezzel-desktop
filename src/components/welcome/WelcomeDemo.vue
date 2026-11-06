@@ -102,6 +102,7 @@ import { useI18n } from 'vue-i18n';
 import { Battery, Check, ChevronDown, ChevronUp, Download, LayoutGrid, Lock, Play, Power, RotateCcw, Volume1, Wifi, X } from '@lucide/vue';
 import nezzelMark from '../../assets/brand/nezzel-mark.svg';
 import type { DesktopOs, LinuxDesktop } from './desktopOs';
+import { TRY_LINK } from '@/generated/contract';
 
 const props = withDefaults(defineProps<{ os: DesktopOs; desktop?: LinuxDesktop; folder: string }>(), { desktop: 'gnome' });
 /** Windows taskbar and non-GNOME Linux panels sit at the bottom; the tray card opens above them. */
@@ -110,7 +111,7 @@ const emit = defineEmits<{ step: [step: number] }>();
 const { t, locale } = useI18n();
 const rtl = computed(() => localeDirection(locale.value) === 'rtl');
 
-const SAMPLE_LABEL = 'youtube.com/watch?v=jNQXAC9IVRw';
+const SAMPLE_LABEL = TRY_LINK.replace(/^https:\/\/www\./, '');
 const GLYPH = 'M29.53591,32.96685 L45.94475,32.96685 L63.54696,54.74586 L63.54696,32.96685 L78.46409,32.96685 L78.46409,62.20442 L83.53591,62.20442 L68.91713,77.71823 L43.85635,49.37569 L43.85635,75.03315 L29.53591,75.03315 Z';
 const APPLE = 'M788 341c-6 4-108 62-108 190 0 148 130 200 134 201-1 3-21 72-69 142-43 62-88 124-157 124s-87-40-166-40c-77 0-104 41-167 41s-107-58-157-128C40 789 0 663 0 543 0 352 125 250 248 250c65 0 120 43 161 43 39 0 100-45 175-45 28 0 130 3 204 93zM551 159c31-37 53-88 53-139 0-7-1-14-2-20-50 2-110 34-146 76-28 32-55 83-55 135 0 8 1 16 2 18 3 1 9 2 14 2 45 0 101-30 134-72z';
 

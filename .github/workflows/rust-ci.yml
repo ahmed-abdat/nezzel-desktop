@@ -12,6 +12,8 @@ on:
       - 'src-tauri/**'
       - 'scripts/*gallery*'
       - 'scripts/*tools*'
+      - 'scripts/*aria2*'
+      - 'scripts/*updater*json*'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - '.nvmrc'
@@ -23,6 +25,8 @@ on:
       - 'src-tauri/**'
       - 'scripts/*gallery*'
       - 'scripts/*tools*'
+      - 'scripts/*aria2*'
+      - 'scripts/*updater*json*'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - '.nvmrc'
@@ -82,8 +86,8 @@ jobs:
           toolchain: 1.99.1
           components: clippy,rustfmt
 
-      - name: Prepare pinned installer tools
-        run: python3 scripts/test_fetch_tools.py && python3 scripts/fetch-aria2.py && python3 scripts/fetch-gallery-dl.py && python3 scripts/fetch-tools.py
+      - name: Test tool scripts, prepare pinned installer tools
+        run: pnpm run test:tools && python3 scripts/fetch-aria2.py && python3 scripts/fetch-gallery-dl.py && python3 scripts/fetch-tools.py
 
       - name: Run clippy
         run: cargo clippy --manifest-path=src-tauri/Cargo.toml --all-features --all-targets -- -D warnings
@@ -147,7 +151,7 @@ jobs:
         run: cargo install cargo-llvm-cov --locked
 
       - name: Prepare pinned installer tools
-        run: python3 scripts/test_fetch_tools.py && python3 scripts/fetch-aria2.py && python3 scripts/fetch-gallery-dl.py && python3 scripts/fetch-tools.py
+        run: python3 scripts/fetch-aria2.py && python3 scripts/fetch-gallery-dl.py && python3 scripts/fetch-tools.py
 
       - name: Generate Rust coverage
         run: |

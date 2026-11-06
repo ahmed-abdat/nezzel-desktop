@@ -1,6 +1,7 @@
 //! A bounded list on a single-post URL is one selectable post, not a channel/playlist range.
 use crate::models::parsed::{AttachmentKind, MediaAttachment, MediaKind};
 use crate::models::{ParsedMedia, ParsedSingleVideo};
+use crate::sites::{site_by_domain, SiteId};
 use reqwest::Url;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -25,10 +26,10 @@ pub(crate) fn single_post_url(raw: &str) -> bool {
   let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
   match host {
     "youtube.com" | "youtu.be" | "soundcloud.com" => false,
-    "x.com" | "twitter.com" | "mobile.twitter.com" => {
+    host if site_by_domain(host) == Some(SiteId::X) => {
       matches!(parts.as_slice(), [_, "status", id, ..] if !id.is_empty())
     }
-    "threads.com" | "threads.net" => {
+    host if site_by_domain(host) == Some(SiteId::Threads) => {
       matches!(parts.as_slice(), [user, "post", id, ..] if user.starts_with('@') && !id.is_empty())
     }
     "bsky.app" => matches!(parts.as_slice(), ["profile", _, "post", id] if !id.is_empty()),

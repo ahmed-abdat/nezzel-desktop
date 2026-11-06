@@ -2,46 +2,41 @@ use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
+use crate::sites::{site_by_domain, site_of, SiteId};
+
 // Deliberately conservative: the generic extractor must never turn arbitrary copied text
-// into a network request. Subdomains require a dot boundary, not a substring match.
-const DOMAINS: &[&str] = &[
-  "dropbox.com",
-  "drive.google.com",
-  "docs.google.com",
-  "youtube.com",
-  "youtu.be",
-  "vimeo.com",
-  "tiktok.com",
-  "instagram.com",
-  "facebook.com",
-  "fb.watch",
-  "twitter.com",
-  "x.com",
-  "twitch.tv",
-  "soundcloud.com",
-  "dailymotion.com",
-  "dai.ly",
-  "reddit.com",
-  "redd.it",
-  "bilibili.com",
-  "b23.tv",
-  "pinterest.com",
-  "ted.com",
-  "bandcamp.com",
-  "archive.org",
-  "rumble.com",
-  "odysee.com",
-  // Photo and post readers (resolve/, gallery-dl).
-  "linkedin.com",
-  "lnkd.in",
-  "threads.net",
-  "threads.com",
-  "bsky.app",
-  "t.me",
-  "telegram.me",
-  "snapchat.com",
-  "pin.it",
-];
+// into a network request. A site's hosts and their subdomains (dot boundary) only.
+const SITES: &[SiteId] = {
+  use SiteId::*;
+  &[
+    Dropbox,
+    GoogleDrive,
+    GoogleDocs,
+    YouTube,
+    Vimeo,
+    TikTok,
+    Instagram,
+    Facebook,
+    X,
+    Twitch,
+    SoundCloud,
+    Dailymotion,
+    Reddit,
+    Bilibili,
+    Pinterest,
+    Ted,
+    Bandcamp,
+    InternetArchive,
+    Rumble,
+    Odysee,
+    // Photo and post readers (resolve/, gallery-dl).
+    LinkedIn,
+    Threads,
+    Bluesky,
+    Telegram,
+    Snapchat,
+  ]
+};
 
 pub fn supported_url(text: &str) -> Option<(String, String)> {
   let text = text.trim();
@@ -53,9 +48,7 @@ pub fn supported_url(text: &str) -> Option<(String, String)> {
     return None;
   }
   let normalized;
-  let text = if !text.contains("://")
-    && crate::files::hosts::plan(text, crate::files::hosts::Export::Pdf).is_some()
-  {
+  let text = if !text.contains("://") && crate::files::hosts::is_share(text) {
     normalized = format!("https://{text}");
     normalized.as_str()
   } else {
@@ -74,12 +67,7 @@ pub fn supported_url(text: &str) -> Option<(String, String)> {
     .filter(|_| scheme == "https")
     .or_else(|| authority.strip_suffix(":80").filter(|_| scheme == "http"))
     .unwrap_or(&authority);
-  if !DOMAINS
-    .iter()
-    .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
-  {
-    return None;
-  }
+  let site = site_of(host).filter(|site| SITES.contains(site))?;
   if !host
     .bytes()
     .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
@@ -95,22 +83,21 @@ pub fn supported_url(text: &str) -> Option<(String, String)> {
   }
   let suffix = rest[end..].split('#').next().unwrap_or("");
   let path = suffix.split('?').next().unwrap_or("");
-  let is = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
-  if ["drive.google.com", "docs.google.com", "dropbox.com"]
-    .iter()
-    .any(|domain| is(domain))
-    && crate::files::hosts::plan(text, crate::files::hosts::Export::Pdf).is_none()
+  if matches!(
+    site,
+    SiteId::GoogleDrive | SiteId::GoogleDocs | SiteId::Dropbox
+  ) && !crate::files::hosts::is_share(text)
   {
     return None;
   }
   // Private Telegram invites and private channels never become a background request.
-  if (is("t.me") || is("telegram.me"))
+  if site == SiteId::Telegram
     && (path.starts_with("/+") || path.starts_with("/joinchat") || path.starts_with("/c/"))
   {
     return None;
   }
   // lnkd.in also shortens arbitrary external links; only LinkedIn's own post links (/p/).
-  if is("lnkd.in") && !path.starts_with("/p/") {
+  if crate::sites::host_is(host, "lnkd.in") && !path.starts_with("/p/") {
     return None;
   }
   Some((format!("{scheme}://{host}{suffix}"), host.into()))
@@ -126,28 +113,22 @@ pub fn is_feed_page(url: &str) -> bool {
   let host = &rest[..end];
   let path = rest[end..].split(['?', '#']).next().unwrap_or("");
   let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-  let is = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
   let first = segments.first().copied().unwrap_or("");
-  if is("linkedin.com") {
-    first == "feed" && !path.contains("urn:li:")
-  } else if is("facebook.com") {
-    segments.is_empty() || (segments.len() == 1 && first == "home")
-  } else if is("instagram.com") {
-    segments.is_empty()
-  } else if is("x.com") || is("twitter.com") {
-    segments.len() == 1 && first == "home"
-  } else if is("tiktok.com") {
-    segments.is_empty() || (segments.len() == 1 && first == "foryou")
-  } else if is("reddit.com") {
-    segments.is_empty()
-      // `/r/<sub>/comments/…` is a post; `/r/<sub>/s/<token>` is Reddit's Share → Copy link form.
-      || (first == "r"
-        && segments.len() >= 2
-        && segments.get(2).is_none_or(|s| !matches!(*s, "comments" | "s")))
-  } else if is("youtube.com") {
-    segments.is_empty() || first == "feed"
-  } else {
-    false
+  match site_by_domain(host) {
+    Some(SiteId::LinkedIn) => first == "feed" && !path.contains("urn:li:"),
+    Some(SiteId::Facebook) => segments.is_empty() || (segments.len() == 1 && first == "home"),
+    Some(SiteId::Instagram) => segments.is_empty(),
+    Some(SiteId::X) => segments.len() == 1 && first == "home",
+    Some(SiteId::TikTok) => segments.is_empty() || (segments.len() == 1 && first == "foryou"),
+    Some(SiteId::Reddit) => {
+      segments.is_empty()
+        // `/r/<sub>/comments/…` is a post; `/r/<sub>/s/<token>` is Reddit's Share → Copy link form.
+        || (first == "r"
+          && segments.len() >= 2
+          && segments.get(2).is_none_or(|s| !matches!(*s, "comments" | "s")))
+    }
+    Some(SiteId::YouTube) => segments.is_empty() || first == "feed",
+    _ => false,
   }
 }
 
@@ -261,6 +242,8 @@ mod tests {
       "https://docs.google.com/document/d/abc/edit",
       "https://www.snapchat.com/spotlight/abc",
       "https://x.com/a/status/1/photo/1",
+      // Every host of a site counts (sites.rs), embeds included.
+      "https://www.youtube-nocookie.com/embed/abc",
     ] {
       assert!(supported_url(text).is_some(), "rejected share link: {text}");
     }

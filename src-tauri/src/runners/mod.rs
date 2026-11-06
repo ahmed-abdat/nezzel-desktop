@@ -1,5 +1,6 @@
 pub(crate) mod browser_cookies;
 pub mod browser_logins;
+pub mod browsers;
 pub mod gallery;
 pub mod gallery_files;
 pub mod gallery_process;
@@ -9,6 +10,7 @@ pub mod override_resolver;
 mod quicktime;
 pub mod retry_policy;
 pub mod template_context;
+pub(crate) mod tool_process;
 pub mod transport;
 pub mod ytdlp_args;
 pub mod ytdlp_download;

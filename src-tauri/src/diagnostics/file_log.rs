@@ -2,7 +2,7 @@
 //! `nezzel.1.log` at 2 MB (≤ 4 MB total). The newest lines also stay in memory for reports.
 //! A tracing `fmt` writer, so every `tracing::` event lands here without a log-crate bridge.
 
-use super::redact::{local_names, scrub};
+use super::redact::{local_names, scrub, ScrubbedText};
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
@@ -16,7 +16,7 @@ pub const FILE_NAME: &str = "nezzel.log";
 pub const OLD_FILE_NAME: &str = "nezzel.1.log";
 
 struct Sink {
-  ring: VecDeque<String>,
+  ring: VecDeque<ScrubbedText>,
   file: Option<File>,
   path: Option<PathBuf>,
   bytes: u64,
@@ -30,7 +30,6 @@ static SINK: LazyLock<Mutex<Sink>> = LazyLock::new(|| {
     bytes: 0,
   })
 });
-static NAMES: LazyLock<Vec<String>> = LazyLock::new(local_names);
 
 /// Start writing to `<dir>/nezzel.log`. Earlier lines stay in memory only.
 pub fn attach_dir(dir: &Path) {
@@ -47,7 +46,7 @@ pub fn attach_dir(dir: &Path) {
 }
 
 /// The newest `count` scrubbed lines, oldest first.
-pub fn recent_lines(count: usize) -> Vec<String> {
+pub fn recent_lines(count: usize) -> Vec<ScrubbedText> {
   let Ok(sink) = SINK.lock() else {
     return Vec::new();
   };
@@ -57,25 +56,28 @@ pub fn recent_lines(count: usize) -> Vec<String> {
 
 /// Scrub and record one formatted event (may span lines).
 pub fn record(raw: &str) {
-  let clean = scrub(raw, &NAMES);
+  let clean = scrub(raw, local_names());
   let Ok(mut sink) = SINK.lock() else { return };
-  for line in clean.lines().filter(|line| !line.trim().is_empty()) {
+  for line in clean
+    .lines()
+    .filter(|line| !line.as_str().trim().is_empty())
+  {
     if sink.ring.len() == RING_LINES {
       sink.ring.pop_front();
     }
-    sink.ring.push_back(line.to_string());
+    sink.ring.push_back(line);
   }
-  sink.append(&clean);
+  sink.append(clean.as_str());
 }
 
 /// Like [`record`] for an already-scrubbed line, but gives up instead of waiting on the lock.
-pub fn try_record(clean: &str) {
+pub fn try_record(clean: ScrubbedText) {
   if let Ok(mut sink) = SINK.try_lock() {
     if sink.ring.len() == RING_LINES {
       sink.ring.pop_front();
     }
-    sink.ring.push_back(clean.to_string());
-    sink.append(clean);
+    sink.append(clean.as_str());
+    sink.ring.push_back(clean);
   }
 }
 
@@ -170,7 +172,7 @@ mod tests {
     assert!(file.contains("WARN failed [redacted URL]"), "{file}");
     assert!(recent_lines(500)
       .iter()
-      .any(|line| line.contains("WARN failed [redacted URL]")));
+      .any(|line| line.as_str().contains("WARN failed [redacted URL]")));
 
     // Rotation keeps one old file and starts fresh.
     {

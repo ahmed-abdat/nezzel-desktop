@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { countView, filterRows, finishedIds, kindFilterOf, matchesSearch, parseListView, statusOf, viewQuery, type ListRow, type ListView } from '../../src/helpers/listFilter';
+import { countView, filterRows, finishedIds, matchesSearch, parseListView, statusOf, viewQuery, type ListRow, type ListView } from '../../src/helpers/listFilter';
+import { kindFilterOf } from '../../src/helpers/groupView';
 import { MediaState } from '../../src/stores/media/state';
 
 const row = (id: string, status: ListRow['status'], kind: ListRow['kind'], title: string, site = ''): ListRow & { id: string } => ({ id, status, kind, title, site });

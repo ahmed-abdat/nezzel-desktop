@@ -2,11 +2,12 @@
   <!-- Compact path picker for a settings row: the path (short, full on hover), Change…, clear, recents. -->
   <div class="flex min-w-0 items-center gap-1.5" v-bind="$attrs">
     <bdi
-      class="min-w-0 max-w-56 truncate text-nz-meta"
-      :class="invalid ? 'text-destructive' : path ? 'text-foreground' : 'text-muted-foreground'"
+      v-if="!nameOnly || path"
+      class="min-w-0 truncate"
+      :class="[nameOnly ? 'block max-w-[10rem] font-mono text-[12px] text-muted-foreground' : 'max-w-56 text-nz-meta', !nameOnly && (invalid ? 'text-destructive' : path ? 'text-foreground' : 'text-muted-foreground')]"
       dir="ltr"
       :title="invalid ? (validatorMessage ?? invalidText) : (path ?? undefined)"
-    >{{ path ? shortFolderPath(path, 34) : (placeholder ?? inputText) }}</bdi>
+    >{{ nameOnly ? basename(path ?? '') : path ? shortFolderPath(path, 34) : (placeholder ?? inputText) }}</bdi>
     <Button
       variant="outline"
       size="xs"
@@ -16,7 +17,7 @@
       @click="select"
     >
       <Loader2 v-if="isSelecting" class="animate-spin" aria-hidden="true" />
-      {{ t('prefs.general.change') }}
+      {{ nameOnly && !path ? t('prefs.general.choose') : t('prefs.general.change') }}
     </Button>
     <tooltip v-if="clearable && path" :content="directory ? t('components.base.folderInput.clear') : t('components.base.fileInput.clear')">
       <Button
@@ -64,6 +65,7 @@ import { useI18n } from 'vue-i18n';
 import { History, Loader2, Trash2, X } from '@lucide/vue';
 import { Button } from '../ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
+import type { DialogFilter } from '@tauri-apps/plugin-dialog';
 import { shortFolderPath } from '../../helpers/folderPath';
 
 const { openPathDialog } = useDialog();
@@ -75,10 +77,11 @@ defineOptions({
 });
 
 const isSelecting = ref(false);
+const nameOnly = computed(() => display === 'name');
 const hasRecents = computed(() => (recentValues?.length ?? 0) > 0);
 const path = defineModel({ type: String as PropType<string | null>, required: false, default: null });
 
-const { label, invalid, clearable, directory, showRecent, validatorMessage, recentValues } = defineProps({
+const { label, invalid, clearable, directory, showRecent, validatorMessage, recentValues, filters, keepOnCancel, display } = defineProps({
   label: {
     type: String,
     required: true,
@@ -113,6 +116,21 @@ const { label, invalid, clearable, directory, showRecent, validatorMessage, rece
     default: () => [],
   },
   recentTitle: {},
+  /** File-dialog filters, e.g. `[{ name: 'cookies.txt', extensions: ['txt'] }]`. */
+  filters: {
+    type: Array as PropType<DialogFilter[]>,
+    required: false,
+  },
+  /** `name`: monospace file name only, nothing when empty, "Choose" until a file is set. Default shows the shortened path. */
+  display: {
+    type: String as PropType<'path' | 'name'>,
+    default: 'path',
+  },
+  /** Cancelling the dialog keeps the current value instead of clearing it. */
+  keepOnCancel: {
+    type: Boolean,
+    default: false,
+  },
   /** Shown when no path is set, e.g. what the empty value falls back to. */
   placeholder: {
     type: String,
@@ -129,8 +147,8 @@ const inputText = computed(() => {
 const select = async () => {
   isSelecting.value = true;
   try {
-    const selected = await openPathDialog(false, directory);
-    if (!clearable && !selected) return;
+    const selected = await openPathDialog(false, directory, filters);
+    if ((!clearable || keepOnCancel) && !selected) return;
     path.value = selected;
     emit('update:modelValue', selected);
   } catch (e) {

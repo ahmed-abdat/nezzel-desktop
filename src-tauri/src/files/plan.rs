@@ -93,6 +93,10 @@ pub(crate) fn content_range(value: &str) -> Result<(u64, u64, u64)> {
   }
   Ok((start, end, total))
 }
+/// HTTP statuses every file request retries (the one retry policy: engine `request` and segments).
+pub(crate) const TRANSIENT_STATUS: [u16; 6] = [408, 429, 500, 502, 503, 504];
+/// Attempts per file request before giving up.
+pub(crate) const ATTEMPTS: u32 = 5;
 pub(crate) fn backoff(failures: u32) -> Duration {
   let ceiling = (500u64.saturating_mul(1u64 << failures.min(6))).min(30_000);
   Duration::from_millis(ceiling / 2 + rand::random::<u64>() % (ceiling / 2 + 1))

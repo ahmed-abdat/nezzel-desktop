@@ -1,49 +1,15 @@
 import { expect, Locator, Page } from '@playwright/test';
 import { test } from './utils/fixtures';
 
-const getAuthDetails = async (page: Page, clickToOpen = true): Promise<Locator> => {
+const getAuthDetails = async (page: Page): Promise<Locator> => {
   await page.goto('/authentication'); // old route: redirects to Settings > Logins
   const authDetails = page.getByTestId('auth-details');
   await expect(authDetails).toBeVisible();
-  if (clickToOpen) {
-    await authDetails.locator('[data-slot=collapsible-trigger]').click();
-  }
-
   return authDetails;
 };
 
-test.describe('when authentication is not initialized', () => {
-  test('it can be initialized', async ({ page }) => {
-    await getAuthDetails(page);
-    const initAlert = page.getByTestId('auth-init-alert');
-    await expect(initAlert.getByRole('button', { name: 'Enable' })).toBeVisible();
-    await initAlert.getByRole('button', { name: 'Enable' }).click();
-    await expect(initAlert).not.toBeVisible();
-  });
-});
-
-test.describe('when it has an initialization failure', () => {
-  const errorText = 'Failed to initialize';
-
-  test.use({
-    mockData: [{
-      stronghold: {
-        status: {
-          unlocked: false,
-          initError: errorText,
-        },
-      },
-    }, { scope: 'test' }],
-  });
-  test('it shows the initialization error with a retry', async ({ page }) => {
-    await getAuthDetails(page);
-    const initAlert = page.getByTestId('auth-init-alert');
-    await expect(initAlert).toBeVisible();
-    await expect(initAlert.getByText(errorText)).toBeVisible();
-    await expect(initAlert.getByRole('button', { name: 'Retry' })).toBeVisible();
-  });
-});
-
+// Enabling the vault, its error and Retry: tests/unit/authSettings.spec.ts. The browser choice autosave:
+// tests/unit/settingsView.spec.ts (Logins change saved as the full snapshot).
 test.describe('when authentication is initialized', () => {
   const headersValue = 'TEST:1';
 
@@ -60,28 +26,10 @@ test.describe('when authentication is initialized', () => {
       },
     }, { scope: 'test' }],
   });
-  test('it opens the advanced section when a value exists', async ({ page }) => {
-    const authDetails = await getAuthDetails(page, false);
-    await expect(authDetails).toHaveAttribute('data-state', 'open');
-  });
-  test('it enables the save button upon changes', async ({ page }) => {
-    const authDetails = await getAuthDetails(page, false);
-    const bearerInput = authDetails.getByRole('textbox', { name: 'Token' });
-    await bearerInput.fill('test2');
-    const saveButton = page.getByRole('button', { name: 'Save', exact: true });
-    await expect(saveButton).toBeEnabled();
-  });
-  test('it keeps the browser choice on the Logins tab, which saves by itself', async ({ page }) => {
-    await getAuthDetails(page, false);
-    await expect(page).toHaveURL(/\/settings\/logins/);
-    await page.getByRole('combobox', { name: 'Use logins from' }).click();
-    await page.getByRole('option', { name: 'Firefox' }).click();
-    await expect(page.getByRole('combobox', { name: 'Use logins from' })).toHaveText('Firefox');
-    // Save belongs to saved accounts only; nothing changed there.
-    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
-  });
   test('it allows authentication secrets to be managed', async ({ page }) => {
-    const authDetails = await getAuthDetails(page, false);
+    const authDetails = await getAuthDetails(page);
+    // A stored value opens the section by itself.
+    await expect(authDetails).toHaveAttribute('data-state', 'open');
     const headerInput = authDetails.getByRole('textbox', { name: 'Headers' });
     await expect(headerInput).toHaveValue(headersValue);
     const bearerInput = authDetails.getByRole('textbox', { name: 'Token' });
@@ -107,7 +55,7 @@ test.describe('when authentication is initialized', () => {
     await expect(saveButton).toBeDisabled();
   });
   test('a cleared value is deleted on save and stays gone after a reload', async ({ page }) => {
-    const authDetails = await getAuthDetails(page, false);
+    const authDetails = await getAuthDetails(page);
     const headerInput = authDetails.getByRole('textbox', { name: 'Headers' });
     await headerInput.fill('');
     const saveButton = page.getByRole('button', { name: 'Save', exact: true });

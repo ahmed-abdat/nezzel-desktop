@@ -85,34 +85,6 @@ pub fn next(outcome: Outcome, ctx: PolicyContext) -> Decision {
   }
 }
 
-/// One row-level consent gate prevents two engines from prompting separately.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoginTransition {
-  Finish,
-  EnterLogin,
-  RequestConsent,
-}
-
-/// Call only after anonymous candidates are exhausted; pending consent suspends elsewhere.
-/// `browser_consented` means remembered consent or consent accepted for this row;
-/// merely detecting an available browser never authorizes its use.
-pub fn after_anonymous(
-  login_wanted: bool,
-  automatic: bool,
-  consent_asked: bool,
-  browser_consented: bool,
-) -> LoginTransition {
-  if !login_wanted || !automatic {
-    LoginTransition::Finish
-  } else if browser_consented {
-    LoginTransition::EnterLogin
-  } else if !consent_asked {
-    LoginTransition::RequestConsent
-  } else {
-    LoginTransition::Finish
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -137,8 +109,6 @@ mod tests {
       StageId::Ytdlp,
       StageId::Gallery,
       StageId::PageScan,
-      StageId::Embed,
-      StageId::Sniff,
     ];
     let cont = Decision::Continue {
       login_wanted: false,
@@ -279,32 +249,6 @@ mod tests {
           }
         }
       }
-    }
-  }
-
-  #[test]
-  fn available_browser_without_consent_requests_consent_instead_of_login() {
-    // Browser detection alone must never be passed as authorization for a login attempt.
-    let browser_consented = false;
-    assert_eq!(
-      after_anonymous(true, true, false, browser_consented),
-      LoginTransition::RequestConsent
-    );
-  }
-
-  #[test]
-  fn consent_is_requested_once_and_only_consented_browsers_enter_login() {
-    for (wanted, automatic, asked, browser_consented, expected) in [
-      (true, true, true, false, LoginTransition::Finish),
-      (true, true, true, true, LoginTransition::EnterLogin),
-      (true, true, false, true, LoginTransition::EnterLogin),
-      (true, false, false, false, LoginTransition::Finish),
-      (false, true, false, true, LoginTransition::Finish),
-    ] {
-      assert_eq!(
-        after_anonymous(wanted, automatic, asked, browser_consented),
-        expected
-      );
     }
   }
 }

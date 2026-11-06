@@ -212,6 +212,15 @@ async fn handle_fetch_entry(
     }
   };
 
+  if format.is_none() {
+    let engine = match &result {
+      Some(ParsedMedia::Single(single)) => Some(single.fetch_engine),
+      Some(ParsedMedia::Playlist(_)) => Some(None),
+      _ => None,
+    };
+    crate::usage::options_shown(&app, &group_id, &id, engine);
+  }
+
   match result {
     Some(ParsedMedia::Single(single)) => {
       if let Some(format) = format {
@@ -261,7 +270,7 @@ async fn handle_fetch_entry(
     Some(ParsedMedia::Livestream(_)) => {
       let payload =
         MediaFatalPayload::internal(group_id.clone(), id, "Livestreams unsupported".into(), None);
-      let _ = app.emit("media_fatal", payload);
+      crate::events::emit(&app, crate::events::MEDIA_FATAL, payload);
       let mut counters = GROUP_COUNTERS.lock().unwrap();
       if let Some(cnt) = counters.get_mut(&group_id) {
         *cnt -= 1;

@@ -22,7 +22,10 @@ pub async fn updater_install(app: AppHandle, store: State<'_, Mutex<UpdateStore>
     (update, bytes)
   };
 
-  update.install(&bytes)?;
+  if let Err(e) = update.install(&bytes) {
+    crate::usage::count(&app, crate::usage::keys::UPDATE_FAILED_INSTALL);
+    return Err(e);
+  }
   let _ = app.emit("updater_finished", ());
   app.request_restart();
   Ok(())
