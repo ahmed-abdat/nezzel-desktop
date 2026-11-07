@@ -218,7 +218,10 @@ jobs:
         with:
           tagName: app-v__VERSION__
           releaseName: 'Nezzel v__VERSION__'
-          releaseBody: 'See the assets to download this version and install. If you have an existing install, it will auto-update on launch.'
+          releaseBody: |
+            See the assets to download this version and install. If you have an existing install, it will auto-update on launch.
+
+            Third-party source: Nezzel-__VERSION__-SOURCES.tar.gz contains bundled tool sources, build information and licences. SHA256SUMS covers the release assets. See the source archive README for provider source limitations.
           releaseDraft: true
           prerelease: false
           # One job writes latest.json after all legs (updater-json below): per-leg merges race.
@@ -540,6 +543,36 @@ jobs:
         run: |
           version=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
           python3 scripts/updater-json.py --repo "$GITHUB_REPOSITORY" --tag "app-v$version" --notes "$NOTES"
+
+  third-party-sources:
+    # Hash the actual draft-release assets after every bundle leg and latest.json upload.
+    needs: [publish-tauri, updater-json]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bundle third-party source and checksum all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          tag="app-v$version"
+          sh scripts/source-bundle.sh "$version" "$RUNNER_TEMP/sources" --repo "$GITHUB_REPOSITORY"
+          gh release upload "$tag" "$RUNNER_TEMP/sources/Nezzel-$version-SOURCES.tar.gz" --repo "$GITHUB_REPOSITORY" --clobber
+          # The release is still a draft: find it by tag_name in the list (as updater-json.py does) and fetch
+          # each asset by id, instead of relying on gh's by-tag lookup for drafts.
+          release_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$tag\") | .id")
+          [ "$(printf '%s\n' "$release_id" | grep -c .)" = 1 ] || { echo "FAIL expected one release tagged $tag, got: $release_id"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/release-assets"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"' |
+            while read -r asset_id asset_name; do
+              gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$RUNNER_TEMP/release-assets/$asset_name"
+            done
+          sh scripts/source-bundle.sh --checksums-only "$RUNNER_TEMP/release-assets"
+          gh release upload "$tag" "$RUNNER_TEMP/release-assets/SHA256SUMS" --repo "$GITHUB_REPOSITORY" --clobber
 
   linux-smoke:
     # Installs and runs the x64 Linux packages in clean distro containers

@@ -65,8 +65,18 @@ pub struct CapturePlatform {
   pub session: crate::platform::Session,
   /// A copy in another app can raise the card while Nezzel is in the background.
   pub background_clipboard: bool,
+  /// System shortcut command: installed package binary, or the persistent AppImage path.
+  pub capture_command: String,
   /// Whose words the tray copy uses (Linux; `other` elsewhere).
   pub desktop: crate::platform::Desktop,
+}
+
+fn system_shortcut_command(appimage: Option<&str>) -> String {
+  match appimage.filter(|path| !path.is_empty()) {
+    // Quote the installed AppImage, never its temporary mounted executable.
+    Some(path) => format!("'{}' --capture", path.replace('\'', "'\"'\"'")),
+    None => "/usr/bin/nezzel --capture".into(),
+  }
 }
 
 #[tauri::command]
@@ -75,6 +85,7 @@ pub async fn capture_platform(app: AppHandle) -> CapturePlatform {
   CapturePlatform {
     session,
     background_clipboard: clipboard::background_clipboard(session, data_control(&app).await),
+    capture_command: system_shortcut_command(std::env::var("APPIMAGE").ok().as_deref()),
     desktop: crate::platform::current_desktop_blocking().await,
   }
 }
@@ -238,4 +249,27 @@ pub fn capture_try_link(app: AppHandle, window: WebviewWindow) -> Result<(), Str
     .clipboard()
     .write_text(TRY_LINK)
     .map_err(|_| String::from("clipboard unavailable"))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::system_shortcut_command;
+
+  #[test]
+  fn system_shortcut_uses_the_package_binary_or_quotes_the_appimage_path() {
+    for (appimage, expected) in [
+      (None, "/usr/bin/nezzel --capture"),
+      (Some(""), "/usr/bin/nezzel --capture"),
+      (
+        Some("/home/me/My Apps/Nezzel.AppImage"),
+        "'/home/me/My Apps/Nezzel.AppImage' --capture",
+      ),
+      (
+        Some("/home/me/Nezzel's.AppImage"),
+        "'/home/me/Nezzel'\"'\"'s.AppImage' --capture",
+      ),
+    ] {
+      assert_eq!(system_shortcut_command(appimage), expected);
+    }
+  }
 }

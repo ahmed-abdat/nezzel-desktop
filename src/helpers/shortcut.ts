@@ -9,7 +9,7 @@ import type { ShortcutAction } from '../tauri/types/shortcuts';
  *  is taken (or types AltGr+N on Windows). Both come from config_models.rs. */
 export { DEFAULT_CAPTURE_SHORTCUT, FALLBACK_CAPTURE_SHORTCUT };
 /** What a Wayland system shortcut runs to open Quick download (handled by the single-instance hand-off). */
-export const CAPTURE_COMMAND = 'nezzel --capture';
+export const CAPTURE_COMMAND = '/usr/bin/nezzel --capture';
 
 type Mod = 'CommandOrControl' | 'Control' | 'Alt' | 'Shift' | 'Super';
 const MOD_ORDER: Mod[] = ['CommandOrControl', 'Control', 'Alt', 'Shift', 'Super'];

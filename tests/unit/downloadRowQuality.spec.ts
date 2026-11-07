@@ -6,6 +6,10 @@ import { useDownloadRow } from '../../src/composables/useDownloadRow';
 import { phaseOf } from '../../src/helpers/groupView';
 import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
 import DownloadRow from '../../src/components/downloads/DownloadRow.vue';
+import DownloadInspector from '../../src/components/downloads/DownloadInspector.vue';
+import { useDownloadSheetStore } from '../../src/stores/downloadSheet';
+import { useSettingsStore } from '../../src/stores/settings';
+import { nextTick } from 'vue';
 import { i18n } from '../../src/i18n';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaOptionsStore } from '../../src/stores/media/options';
@@ -75,5 +79,62 @@ describe('row login hint', () => {
     ['videoPasswordRequired', MediaState.error, true],
   ] as const)('%s while %s -> %s', (code, state, expected) => {
     expect(needsLogin(`login-${code}-${state}`, code, state)).toBe(expected);
+  });
+});
+
+describe('row thumbnail privacy', () => {
+  it('removes remote images when the proxy is enabled and keeps local previews', async () => {
+    const groups = useMediaGroupStore();
+    const id = 'proxy-thumbnail';
+    groups.createGroup({ id, url: 'https://example.com/v', title: 'Clip', thumbnail: 'https://cdn.example.com/thumb.jpg', mediaKind: 'video', total: 1, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: {} });
+    useMediaStateStore().setGroupState(id, MediaState.done);
+    const settings = useSettingsStore().settings.network;
+    const before = { ...settings };
+    settings.enableProxy = false;
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const group = groups.findGroupById(id)!;
+    const row = mount(DownloadRow, { props: { group }, global: { plugins: [router, i18n] } });
+    try {
+      expect(row.find('img').exists()).toBe(true);
+      settings.enableProxy = true;
+      settings.proxy = '';
+      await nextTick();
+      expect(row.find('img').exists()).toBe(false);
+      group.thumbnail = 'data:image/png;base64,AA==';
+      await nextTick();
+      expect(row.get('img').attributes('src')).toBe(group.thumbnail);
+    } finally {
+      row.unmount();
+      Object.assign(settings, before);
+    }
+  });
+});
+
+describe('inspector thumbnail privacy', () => {
+  it('hides the remote thumbnail while the proxy is enabled', async () => {
+    const groups = useMediaGroupStore();
+    const id = 'proxy-thumbnail-inspector';
+    groups.createGroup({ id, url: 'https://example.com/v2', title: 'Clip', thumbnail: 'https://cdn.example.com/thumb.jpg', mediaKind: 'video', total: 1, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: {} });
+    useMediaStateStore().setGroupState(id, MediaState.done);
+    useDownloadSheetStore().show(id);
+    const settings = useSettingsStore().settings.network;
+    const before = { ...settings };
+    settings.enableProxy = false;
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const inspector = mount(DownloadInspector, { global: { plugins: [router, i18n] } });
+    try {
+      await nextTick();
+      expect(inspector.find('figure img').exists()).toBe(true);
+      settings.enableProxy = true;
+      await nextTick();
+      expect(inspector.find('figure img').exists()).toBe(false);
+    } finally {
+      inspector.unmount();
+      Object.assign(settings, before);
+    }
   });
 });

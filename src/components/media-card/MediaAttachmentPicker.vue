@@ -53,6 +53,8 @@
 </template>
 
 <script setup lang="ts">
+import { useSettingsStore } from '../../stores/settings';
+import { remoteImagesAllowed } from '../../helpers/remoteImages';
 import Tooltip from '../ui/tooltip/Tooltip.vue';
 import { computed, reactive, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -65,6 +67,7 @@ type Attachment = NonNullable<Group['attachments']>[number];
 
 const props = defineProps<{ group: Group }>();
 const { t } = useI18n();
+const settingsStore = useSettingsStore();
 const optionsStore = useMediaOptionsStore();
 const baseId = useId();
 const countId = `${baseId}-count`;
@@ -76,7 +79,10 @@ const allSelected = computed(() => selected.value.length === attachments.value.l
   : selected.value.length > 0 ? 'indeterminate' : false);
 
 const isSelected = (id: string) => selected.value.includes(id);
-const preview = (attachment: Attachment) => attachment.thumbnail || (attachment.kind === 'image' ? attachment.url : undefined);
+const preview = (attachment: Attachment) => {
+  const url = attachment.thumbnail || (attachment.kind === 'image' ? attachment.url : undefined);
+  return remoteImagesAllowed(settingsStore.settings.network, url) ? url : undefined;
+};
 const label = (kind: Attachment['kind'], index: number) => t(kind === 'image' ? 'attachments.photo' : 'attachments.video', { number: index + 1 });
 
 function selectAll(checked: boolean) {

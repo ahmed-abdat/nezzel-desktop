@@ -4,6 +4,7 @@ import { defineComponent, nextTick, reactive } from 'vue';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises } from '@vue/test-utils';
 import SettingsView from '../../src/views/app/SettingsView.vue';
+import SettingsShortcuts from '../../src/components/settings/SettingsShortcuts.vue';
 import SettingsGeneralTab from '../../src/views/app/settings/SettingsGeneralTab.vue';
 import SettingsLoginsTab from '../../src/views/app/settings/SettingsLoginsTab.vue';
 import SettingsAdvancedTab from '../../src/views/app/settings/SettingsAdvancedTab.vue';
@@ -43,6 +44,11 @@ vi.mock('../../src/composables/useOpener', () => ({
   useOpener: () => ({
     openInternalPath,
   }),
+}));
+
+const capturePlatform = reactive({ session: 'other', backgroundClipboard: true, desktop: 'gnome' });
+vi.mock('../../src/composables/useCapturePlatform', () => ({
+  useCapturePlatform: () => capturePlatform,
 }));
 
 function createRoot() {
@@ -109,6 +115,30 @@ function createSettingsRouter() {
 describe('SettingsView', () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('explains foreground clipboard pickup only when background reads are unavailable', async () => {
+    capturePlatform.backgroundClipboard = false;
+    const wrapper = mount(SettingsGeneralTab, {
+      props: { modelValue: structuredClone(defaultSettings) }, global: { plugins: [i18n] },
+    });
+    expect(wrapper.text()).toContain('On this desktop, copied links are picked up when Nezzel\'s window is in front.');
+    capturePlatform.backgroundClipboard = true;
+    await nextTick();
+    expect(wrapper.text()).not.toContain('On this desktop, copied links are picked up');
+    wrapper.unmount();
+  });
+
+  it('keeps the Wayland system command available when app-managed shortcuts are off', async () => {
+    capturePlatform.session = 'wayland';
+    const modelValue = structuredClone(defaultSettings);
+    modelValue.input.globalShortcuts = false;
+    const wrapper = mount(SettingsShortcuts, { props: { modelValue }, global: { plugins: [i18n] } });
+    await flushPromises();
+    expect(wrapper.get('[data-testid="shortcut-wayland"]').text()).toContain('/usr/bin/nezzel --capture');
+    expect(wrapper.get('[data-testid="copy-shortcut-command"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+    capturePlatform.session = 'other';
   });
 
   it('shows General, Logins and Advanced and marks the current one', async () => {

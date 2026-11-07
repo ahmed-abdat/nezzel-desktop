@@ -39,7 +39,7 @@
         <div v-else-if="offer.url && !offer.failed && !error" class="flex gap-3" data-testid="capture-preview">
           <div class="relative h-[63px] w-28 shrink-0 overflow-hidden rounded-md bg-muted">
             <FileTypeIcon v-if="fileKind" :category="fileKind" class="size-full p-4 text-muted-foreground" />
-            <img v-else-if="details.thumbnail && !thumbFailed" :src="details.thumbnail" alt="" class="size-full object-cover" referrerpolicy="no-referrer" @error="thumbFailed = true" />
+            <img v-else-if="offer.remoteImages && details.thumbnail && !thumbFailed" :src="details.thumbnail" alt="" class="size-full object-cover" referrerpolicy="no-referrer" @error="thumbFailed = true" />
             <div v-else class="flex size-full items-center justify-center text-muted-foreground/60">
               <ImageIcon v-if="isPhotos" class="size-5" aria-hidden="true" />
               <Film v-else class="size-5" aria-hidden="true" />

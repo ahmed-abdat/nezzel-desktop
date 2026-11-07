@@ -1621,6 +1621,7 @@
       "folderHint": "New downloads go here. Nezzel creates the folder if needed",
       "card": "Pop up a card for copied links",
       "cardHint": "Shows a small card over other apps when you copy a link, even when Nezzel is in the background. Nothing downloads until you choose",
+      "cardFocusHint": "On this desktop, copied links are picked up when Nezzel's window is in front.",
       "choose": "Choose…"
     },
     "logins": {
@@ -1888,7 +1889,10 @@
     "needsModifierMac": "Use ⌘ or ⌥ together with a key",
     "needsModifierPc": "Use Ctrl or Alt together with a key",
     "taken": "Another app is using this shortcut. Try another",
-    "wayland": "Shortcuts from other apps don’t work in Wayland sessions. Sign in with an X11 session, or add a system shortcut that runs {command}",
+    "wayland": "On this desktop, set the shortcut in your system settings",
+    "copyCommand": "Copy command",
+    "commandCopied": "Command copied",
+    "copyFailed": "Couldn't copy the command. Try again.",
     "usingFallback": "{wanted} is taken on this computer, so Quick download uses {active}. Record another to change it",
     "reservedMac": "macOS uses this shortcut. Try another",
     "reservedSystem": "Your system uses this shortcut. Try another",

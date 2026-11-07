@@ -154,7 +154,19 @@ impl CapturePolicy {
 
   #[cfg(test)]
   pub fn observe(&mut self, text: &str, now: Duration) -> Option<(String, String)> {
-    self.decide(text, now).offer()
+    let offer = self.decide(text, now).offer();
+    if offer.is_some() {
+      self.acknowledge(text, now);
+    }
+    offer
+  }
+
+  /// Only a card actually shown to the user consumes a link. Skipped/failed displays may retry.
+  pub fn acknowledge(&mut self, text: &str, now: Duration) {
+    if let Some((url, _)) = supported_url(text) {
+      self.last = Some(fingerprint(text));
+      self.seen.insert(fingerprint(&url), now);
+    }
   }
 
   pub fn decide(&mut self, text: &str, now: Duration) -> Decision {
@@ -180,7 +192,9 @@ impl CapturePolicy {
     if self.seen.contains_key(&key) {
       return Decision::Seen;
     }
-    self.seen.insert(key, now);
+    // The watcher may skip this link while the quick bar is open, or fail to show the card.
+    // Keep it eligible until the native window confirms delivery.
+    self.last = None;
     Decision::Offer(url, site)
   }
 }
@@ -278,6 +292,46 @@ mod tests {
   }
 
   #[test]
+  fn a_skipped_or_failed_card_does_not_consume_the_clipboard_link() {
+    let mut policy = CapturePolicy::default();
+    assert!(matches!(
+      policy.decide(URL, Duration::ZERO),
+      Decision::Offer(..)
+    ));
+    // A quick bar was open, or the native card failed to show: no delivery acknowledgement.
+    assert!(matches!(
+      policy.decide(URL, Duration::from_millis(500)),
+      Decision::Offer(..)
+    ));
+    policy.decide("another copy", Duration::from_secs(1));
+    assert!(matches!(
+      policy.decide(URL, Duration::from_secs(2)),
+      Decision::Offer(..)
+    ));
+  }
+
+  #[test]
+  fn a_shown_card_stays_acknowledged_after_dismiss_or_action_and_refocus() {
+    let mut policy = CapturePolicy::default();
+    assert!(matches!(
+      policy.decide(URL, Duration::ZERO),
+      Decision::Offer(..)
+    ));
+    policy.acknowledge(URL, Duration::ZERO);
+    // Dismiss/download does not reset the clipboard policy; refocus must not resurrect the card.
+    assert_eq!(
+      policy.decide(URL, Duration::from_secs(1)),
+      Decision::Unchanged
+    );
+    policy.decide("another copy", Duration::from_secs(2));
+    assert_eq!(policy.decide(URL, Duration::from_secs(3)), Decision::Seen);
+    assert!(matches!(
+      policy.decide("https://youtu.be/second", Duration::from_secs(4)),
+      Decision::Offer(..)
+    ));
+  }
+
+  #[test]
   fn dedupes_urls_for_ten_minutes_even_after_other_copies() {
     let mut policy = CapturePolicy::default();
     assert!(policy.observe(URL, Duration::ZERO).is_some());
@@ -297,7 +351,13 @@ mod tests {
     let mut fresh = CapturePolicy::default();
     let kinds: Vec<_> = [URL, URL, "hello", URL]
       .iter()
-      .map(|text| fresh.decide(text, Duration::ZERO).kind())
+      .map(|text| {
+        let decision = fresh.decide(text, Duration::ZERO);
+        if matches!(decision, Decision::Offer(..)) {
+          fresh.acknowledge(text, Duration::ZERO);
+        }
+        decision.kind()
+      })
       .collect();
     assert_eq!(
       kinds,

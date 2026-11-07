@@ -166,9 +166,6 @@ pub fn setup_download_dispatcher(
           error = %e,
           "Failed to run media download",
         );
-        if should_report_to_sentry(&e) {
-          sentry::capture_error(&e);
-        }
       }
 
       if let Some(library) = app.try_state::<crate::library::Library>() {
@@ -202,13 +199,4 @@ pub fn finish_download(
 
 pub fn forget_group_counter(group_id: &str) {
   DOWNLOAD_COUNTERS.lock().unwrap().remove(group_id);
-}
-
-fn should_report_to_sentry(err: &YtdlpDownloadError) -> bool {
-  matches!(
-    err,
-    YtdlpDownloadError::SpawnFailed(_)
-      | YtdlpDownloadError::InvalidDiagnosticRules(_)
-      | YtdlpDownloadError::EventStreamEnded
-  )
 }

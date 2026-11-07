@@ -10,14 +10,12 @@
         :mac="isMac"
         :label="t('prefs.adv.keys.quick')"
         :default-value="DEFAULT_CAPTURE_SHORTCUT"
-        :disabled="!settings.input.globalShortcuts || capture.reason === 'wayland'"
+        :disabled="!settings.input.globalShortcuts || wayland"
         :status="captureStatus"
         :validate="validateFor('quick')"
       />
     </settings-row>
-    <i18n-t v-if="capture.reason === 'wayland' && settings.input.globalShortcuts" keypath="shortcut.wayland" tag="p" scope="global" class="pb-3 text-[12px] text-muted-foreground" role="status" data-testid="shortcut-wayland">
-      <template #command><code dir="ltr" class="font-mono text-[11.5px]">{{ CAPTURE_COMMAND }}</code></template>
-    </i18n-t>
+    <SystemShortcutCommand v-if="wayland" class="pb-3" data-testid="shortcut-wayland" />
     <p v-else-if="capture.startupFailed && capture.seq === 0 && settings.input.globalShortcuts" class="pb-3 text-[12px] text-destructive" role="status">{{ t('shortcut.taken') }}</p>
     <i18n-t v-else-if="fallbackActive" keypath="shortcut.usingFallback" tag="p" scope="global" class="pb-3 text-[12px] text-muted-foreground" role="status">
       <template #wanted><bdi dir="ltr">{{ shortcutLabel(settings.input.captureShortcut, isMac) }}</bdi></template>
@@ -62,11 +60,13 @@ import Switch from '@/components/ui/switch/Switch.vue';
 import SettingsRow from './SettingsRow.vue';
 import SettingsSection from './SettingsSection.vue';
 import ShortcutRecorder from './ShortcutRecorder.vue';
+import SystemShortcutCommand from './SystemShortcutCommand.vue';
 import { Settings } from '../../tauri/types/config.ts';
 import { usePlatform } from '../../composables/usePlatform.ts';
 import { useCaptureShortcut } from '../../composables/useCaptureShortcut';
+import { useCapturePlatform } from '../../composables/useCapturePlatform';
 import { useUiPrefs } from '../../composables/useUiPrefs';
-import { BUILT_IN_KEYS, CAPTURE_COMMAND, DEFAULT_CAPTURE_SHORTCUT, IN_APP_SHORTCUT_DEFAULTS, isReservedShortcut, sameShortcut, shortcutLabel } from '../../helpers/shortcut';
+import { BUILT_IN_KEYS, DEFAULT_CAPTURE_SHORTCUT, IN_APP_SHORTCUT_DEFAULTS, isReservedShortcut, sameShortcut, shortcutLabel } from '../../helpers/shortcut';
 
 const { t } = useI18n();
 const { isMac } = usePlatform();
@@ -105,6 +105,8 @@ function resetAll() {
 
 // The OS reports every (re)registration of the Quick download shortcut; the recorder rolls back on failure.
 const capture = useCaptureShortcut();
+const platform = useCapturePlatform();
+const wayland = computed(() => capture.reason === 'wayland' || platform.session === 'wayland');
 const captureStatus = computed(() => ({ seq: capture.seq, failed: capture.failed }));
 // The default was taken, so the backend registered the fallback instead.
 const fallbackActive = computed(() => settings.value.input.globalShortcuts && !capture.failed && !!capture.active

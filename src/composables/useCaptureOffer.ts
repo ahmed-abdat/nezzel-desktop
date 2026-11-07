@@ -26,7 +26,7 @@ export interface CaptureOfferHooks {
 export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   const { t } = useI18n();
   const { size: formatSize } = useLocaleNumber();
-  const offer = ref<CaptureOffer>({ id: 0, url: '', site: '', title: '', details: emptyDetails(), failed: false, reason: null, resolving: false, feed: false });
+  const offer = ref<CaptureOffer>({ remoteImages: false, id: 0, url: '', site: '', title: '', details: emptyDetails(), failed: false, reason: null, resolving: false, feed: false });
   /** 'fetch' = the link could not be read; 'action' = Download/Options could not start. */
   const error = ref<false | 'fetch' | 'action'>(false);
   const acting = ref(false);
@@ -44,6 +44,7 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   const isPhotos = computed(() => ['image', 'carousel', 'mixed'].includes(details.value.mediaKind ?? ''));
   /** The site's own favicon (the same host the link points to; nothing goes to a third party). */
   const favicon = computed(() => {
+    if (!offer.value.remoteImages) return null;
     try {
       const url = new URL(offer.value.url);
       return url.protocol === 'https:' ? `${url.origin}/favicon.ico` : null;

@@ -1625,6 +1625,7 @@
       "folderHint": "Les nouveaux téléchargements vont ici. Nezzel crée le dossier si besoin",
       "card": "Carte pour les liens copiés",
       "cardHint": "Affiche une petite carte par-dessus les autres apps quand vous copiez un lien, même si Nezzel est en arrière-plan. Rien ne se télécharge sans votre choix",
+      "cardFocusHint": "Sur ce bureau, les liens copiés sont détectés lorsque la fenêtre de Nezzel est au premier plan.",
       "choose": "Choisir…"
     },
     "logins": {
@@ -1892,7 +1893,10 @@
     "needsModifierMac": "Utilisez ⌘ ou ⌥ avec une touche",
     "needsModifierPc": "Utilisez Ctrl ou Alt avec une touche",
     "taken": "Une autre app utilise ce raccourci. Essayez-en un autre",
-    "wayland": "Les raccourcis depuis d’autres apps ne marchent pas en session Wayland. Ouvrez une session X11, ou ajoutez un raccourci système qui lance {command}",
+    "wayland": "Sur ce bureau, configurez le raccourci dans les paramètres système",
+    "copyCommand": "Copier la commande",
+    "commandCopied": "Commande copiée",
+    "copyFailed": "Impossible de copier la commande. Réessayez.",
     "usingFallback": "{wanted} est déjà pris sur cet ordinateur, le téléchargement rapide utilise donc {active}. Enregistrez-en un autre pour le changer",
     "reservedMac": "macOS utilise ce raccourci. Essayez-en un autre",
     "reservedSystem": "Votre système utilise ce raccourci. Essayez-en un autre",

@@ -7,6 +7,8 @@ export interface CapturePlatform {
   session: CaptureSession;
   /** A copy in another app raises the card while Nezzel is in the background. False on GNOME Wayland. */
   backgroundClipboard: boolean;
+  /** Persistent launcher path for a system shortcut (AppImage or installed package). */
+  captureCommand?: string;
   /** Whose tray words the copy uses (Linux). */
   desktop: LinuxDesktop;
 }

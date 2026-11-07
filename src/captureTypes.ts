@@ -28,6 +28,7 @@ export interface CardChoice {
 }
 
 export interface CaptureOffer {
+  remoteImages: boolean;
   id: number;
   url: string;
   site: string;

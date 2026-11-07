@@ -58,7 +58,9 @@ Some links only work when you're signed in. Nezzel never reads your browser's co
 
 ## Clipboard
 
-While **Automatically fill in copied links** is on (the default), Nezzel watches the clipboard for links it can save and offers them to you. Other clipboard text is ignored. Nothing from the clipboard is sent anywhere unless you download it.
+While **Automatically fill in copied links** is on (the default), Nezzel watches the clipboard for links it can save and offers them to you. It reads the title and preview from the site through your proxy if one is set. With the proxy switch on, no site images are loaded. Other clipboard text is ignored. Turn off **Automatically fill in copied links** to stop this.
+
+On Linux Wayland desktops without clipboard access for background apps (for example GNOME), copied links are picked up only while Nezzel’s window is focused.
 
 ## What stays on your computer
 

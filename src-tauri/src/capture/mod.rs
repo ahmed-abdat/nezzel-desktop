@@ -59,6 +59,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
           .store(*focused, Ordering::Relaxed);
       }
       if matches!(event, tauri::WindowEvent::Focused(true)) {
+        handle.state::<CaptureState>().clipboard_wake.notify_one();
         handle
           .state::<CaptureState>()
           .main_was_focused

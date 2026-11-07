@@ -5,6 +5,11 @@ asset URLs and SHA-256 values: src-tauri/src/binaries/manifest.json.
 Build recipe: scripts/fetch-tools.py. App-data updates/repairs keep their own
 verified copies; the installed tool directory is never modified at runtime.
 
+Third-party source: each desktop release provides Nezzel-<version>-SOURCES.tar.gz
+and SHA256SUMS alongside the installers. The source archive includes tool sources,
+licences and build information; its README lists any unresolved provider source
+inputs. Nezzel's own source is in the public repository at the app-v<version> tag.
+
 FFmpeg / ffprobe
 All pinned builds use GPLv3 (--enable-gpl --enable-version3), without
 --enable-nonfree. They are GPL builds, not LGPL-only builds.

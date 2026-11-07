@@ -117,6 +117,8 @@
 </template>
 
 <script setup lang="ts">
+import { useSettingsStore } from '../../stores/settings';
+import { remoteImagesAllowed } from '../../helpers/remoteImages';
 import Tooltip from '../../components/ui/tooltip/Tooltip.vue';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/collapsible';
 import { computed, onBeforeUnmount, ref, toRef } from 'vue';
@@ -140,6 +142,7 @@ import type { Group } from '../../tauri/types/group';
 
 const props = defineProps<{ groupId: string }>();
 const { t } = useI18n();
+const settingsStore = useSettingsStore();
 const router = useRouter();
 const { count: n, size: formatSize } = useLocaleNumber();
 const groupStore = useMediaGroupStore();
@@ -166,11 +169,12 @@ function downloadItem() {
 }
 
 const thumbFailed = ref(false);
-const thumbnail = computed(() => (!thumbFailed.value && group.value?.thumbnail) || placeholderUrl);
+const thumbnail = computed(() => (!thumbFailed.value && remoteImagesAllowed(settingsStore.settings.network, group.value?.thumbnail) && group.value?.thumbnail) || placeholderUrl);
 
 /** The site's own favicon (same host the video comes from; nothing is sent to a third party). */
 const faviconFailed = ref(false);
 const favicon = computed(() => {
+  if (!remoteImagesAllowed(settingsStore.settings.network)) return null;
   try {
     const url = new URL(group.value?.url ?? '');
     return url.protocol === 'https:' ? `${url.origin}/favicon.ico` : null;

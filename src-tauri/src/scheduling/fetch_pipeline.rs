@@ -204,9 +204,6 @@ async fn handle_fetch_entry(
         error = %e,
         "run_ytdlp_info_fetch failed"
       );
-      if should_report_to_sentry(&e) {
-        sentry::capture_error(&e);
-      }
 
       None
     }
@@ -304,15 +301,6 @@ pub fn finish_fetch(tx: &UnboundedSender<DispatchRequest<FetchRequest>>, group_i
 
 pub fn forget_group_counter(group_id: &str) {
   GROUP_COUNTERS.lock().unwrap().remove(group_id);
-}
-
-fn should_report_to_sentry(err: &YtdlpInfoFetchError) -> bool {
-  matches!(
-    err,
-    YtdlpInfoFetchError::InvalidDiagnosticRules(_)
-      | YtdlpInfoFetchError::RunnerFailed(_)
-      | YtdlpInfoFetchError::ParseFailed(_)
-  )
 }
 
 #[cfg(test)]

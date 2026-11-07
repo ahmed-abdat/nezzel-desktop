@@ -209,6 +209,8 @@
 </template>
 
 <script setup lang="ts">
+import { useSettingsStore } from '../../stores/settings';
+import { remoteImagesAllowed } from '../../helpers/remoteImages';
 import LoginProfile from './LoginProfile.vue';
 import FileTypeIcon from './FileTypeIcon.vue';
 import { revealsInFolder } from '../../helpers/fileCategory';
@@ -249,6 +251,7 @@ const { compactRows, showThumbnails } = useUiPrefs();
 const group = toRef(props, 'group');
 
 const { t } = useI18n();
+const settingsStore = useSettingsStore();
 const sheet = useDownloadSheetStore();
 const colCls = 'hidden shrink-0 self-center truncate text-[12.5px] text-muted-foreground @min-[1040px]/list:block';
 const { phase, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, fileKind, readingStuck, processing } = useDownloadRow(group);
@@ -399,7 +402,7 @@ const thumbFailed = ref(false);
 watch(() => group.value.thumbnail, () => {
   thumbFailed.value = false;
 });
-const thumbUrl = computed(() => (!thumbFailed.value && group.value.thumbnail) || null);
+const thumbUrl = computed(() => (!thumbFailed.value && remoteImagesAllowed(settingsStore.settings.network, group.value.thumbnail) && group.value.thumbnail) || null);
 const kindIcon = computed(() => {
   const kind = group.value.mediaKind;
   if (kind === 'audio') return Music;

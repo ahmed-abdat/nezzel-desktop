@@ -55,6 +55,7 @@ impl Action {
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Offer {
+  pub remote_images: bool,
   pub id: u64,
   pub url: String,
   pub site: String,
@@ -68,6 +69,15 @@ pub struct Offer {
   pub feed: bool,
   #[serde(skip)]
   pub(super) adopt_on_focus: bool,
+}
+
+impl Offer {
+  pub(super) fn with_network(network: &crate::state::config_models::NetworkSettings) -> Self {
+    Self {
+      remote_images: network.enable_proxy != Some(true),
+      ..Self::default()
+    }
+  }
 }
 
 /// Who has settled an offer.
@@ -352,6 +362,8 @@ pub struct CaptureState {
   pub(super) sequence: AtomicU64,
   pub(super) quick_request: AtomicU64,
   pub(super) ready: AtomicBool,
+  /// Focus wakes the single watcher instead of starting a competing clipboard read.
+  pub(super) clipboard_wake: tokio::sync::Notify,
   pub(super) started: Instant,
   pub(crate) shortcut: Mutex<Option<String>>,
   pub(super) changed: tokio::sync::Notify,
@@ -376,6 +388,7 @@ impl Default for CaptureState {
       sequence: AtomicU64::new(0),
       quick_request: AtomicU64::new(0),
       ready: AtomicBool::new(false),
+      clipboard_wake: tokio::sync::Notify::new(),
       started: Instant::now(),
       shortcut: Mutex::default(),
       changed: tokio::sync::Notify::new(),
@@ -469,6 +482,23 @@ pub(super) fn dismiss_offer(state: &CaptureState, window: CaptureWindow, id: u64
 #[cfg(test)]
 pub(super) mod tests {
   use super::*;
+
+  #[test]
+  fn offer_blocks_remote_images_when_proxy_is_enabled_even_without_an_address() {
+    let network = crate::state::config_models::NetworkSettings {
+      enable_proxy: Some(true),
+      proxy: None,
+      ..Default::default()
+    };
+    let offer = Offer::with_network(&network);
+    assert_eq!(serde_json::to_value(offer).unwrap()["remoteImages"], false);
+  }
+
+  #[test]
+  fn offer_allows_remote_images_when_proxy_is_disabled() {
+    let offer = Offer::with_network(&crate::state::config_models::NetworkSettings::default());
+    assert!(offer.remote_images);
+  }
 
   #[test]
   fn claims_follow_the_action_allowlist() {

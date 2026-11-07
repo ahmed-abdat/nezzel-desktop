@@ -40,6 +40,14 @@ Download the installer for your system from the [latest release](https://github.
 - **Windows:** SmartScreen may warn about an unknown publisher. Click **More info → Run anyway**.
 - **Linux:** on Ubuntu or Debian, install the `.deb` (`sudo apt install ./Nezzel_*.deb`). On Fedora, install the `.rpm` (`sudo dnf install ./Nezzel-*.rpm`). On any other distro, make the AppImage executable (`chmod +x Nezzel*.AppImage`) and run it. The `.deb` and `.rpm` need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later), because the Linux builds are made on Ubuntu 22.04.
 
+On Linux Wayland, bind **Quick download** in your desktop's custom keyboard shortcuts to
+`/usr/bin/nezzel --capture` (`.deb` / `.rpm`). This opens the quick bar in the running instance,
+or starts Nezzel if needed. For AppImage, bind the full path to the executable AppImage instead,
+for example `"/home/you/Applications/Nezzel.AppImage" --capture`; keep it at that path.
+Settings and the welcome screen offer the command for your installation with a copy button.
+On desktops without Wayland data-control (including GNOME), copied links are picked up when
+Nezzel's window is in front.
+
 ## Sites
 
 Tested with real public links: **YouTube, TikTok, X, Facebook, Instagram reels, Bluesky, Pinterest, Telegram channels, Reddit images, LinkedIn, Snapchat Spotlight, Vimeo, Dailymotion, Twitch clips** and **SoundCloud** audio. That includes photos and multi-photo posts from X, Bluesky, Pinterest and Telegram. Many more sites work through [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [gallery-dl](https://github.com/mikf/gallery-dl), which Nezzel keeps up to date.

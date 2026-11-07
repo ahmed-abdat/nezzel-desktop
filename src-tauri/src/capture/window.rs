@@ -118,6 +118,7 @@ pub(super) fn offer(
   // Serialize creation with adoption; never make native window calls while holding this lock.
   let mut offers = state.offers.lock().unwrap();
   let feed = !url.is_empty() && policy::is_feed_page(&url);
+  let config = app.state::<SharedConfig>().load();
   let value = Offer {
     id: state.sequence.fetch_add(1, Ordering::Relaxed) + 1,
     url,
@@ -125,7 +126,7 @@ pub(super) fn offer(
     resolving,
     feed,
     adopt_on_focus: window.adopts_on_focus() && !state.main_is_focused.load(Ordering::Relaxed),
-    ..Offer::default()
+    ..Offer::with_network(&config.network)
   };
   offers.replace(window, value.clone());
   drop(offers);

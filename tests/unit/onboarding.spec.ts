@@ -1,11 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import SystemShortcutCommand from '../../src/components/settings/SystemShortcutCommand.vue';
 import WelcomeShortcut from '../../src/components/welcome/WelcomeShortcut.vue';
 import { i18n } from '../../src/i18n';
 import { linuxHintKey, trayPlaceKey } from '../../src/components/welcome/desktopOs';
 import { shouldShowWelcome, useOnboardingStore } from '../../src/stores/onboarding';
 import { installTauriMock } from '../utils/tauriMock';
 import { defaultSettings } from '../../src/tauri/types/config';
+
+const capturePlatform = { captureCommand: '/usr/bin/nezzel --capture' };
+vi.mock('../../src/composables/useCapturePlatform', () => ({
+  useCapturePlatform: () => capturePlatform,
+}));
 
 /** Welcome sheet: first launch only; existing users and unknown state never see it. */
 describe('onboarding', () => {
@@ -80,11 +86,50 @@ describe('onboarding', () => {
   });
 
   it('Wayland: the shortcut row says so and offers the system-shortcut command instead of a recorder', async () => {
-    installTauriMock({ capture_shortcut_status: () => ({ failed: true, active: null, reason: 'wayland' }) });
+    const writes: unknown[] = [];
+    installTauriMock({
+      capture_shortcut_status: () => ({ failed: true, active: null, reason: 'wayland' }),
+      capture_write_clipboard: (_cmd, args) => { writes.push(args); },
+    });
     const wrapper = mount(WelcomeShortcut, { props: { mac: false }, global: { plugins: [i18n] } });
     await flushPromises();
-    expect(wrapper.find('[data-testid="welcome-shortcut-wayland"]').text()).toContain('nezzel --capture');
+    expect(wrapper.find('[data-testid="welcome-shortcut-wayland"]').text()).toContain('/usr/bin/nezzel --capture');
+    await wrapper.get('[data-testid="copy-shortcut-command"]').trigger('click');
+    await flushPromises();
+    expect(writes).toEqual([{ text: '/usr/bin/nezzel --capture' }]);
     expect(wrapper.find('[data-testid="welcome-shortcut-skip"]').exists()).toBe(false);
+  });
+
+  it('keeps an AppImage command LTR in Arabic and lets a failed copy be retried', async () => {
+    const command = '\'/home/me/My Apps/Nezzel.AppImage\' --capture';
+    const writes: unknown[] = [];
+    installTauriMock({
+      capture_write_clipboard: (_cmd, args) => {
+        writes.push(args);
+        if (writes.length === 1) return Promise.reject(new Error('clipboard busy'));
+      },
+    });
+    capturePlatform.captureCommand = command;
+    i18n.global.locale.value = 'ar';
+    const wrapper = mount(SystemShortcutCommand, { global: { plugins: [i18n] } });
+    try {
+      expect(wrapper.get('code').attributes('dir')).toBe('ltr');
+      expect(wrapper.get('code').text()).toBe(command);
+      const button = wrapper.get('button');
+      await button.trigger('click');
+      await flushPromises();
+      expect(wrapper.text()).toContain(i18n.global.t('shortcut.copyFailed'));
+      expect(button.text()).toBe(i18n.global.t('shortcut.copyCommand'));
+      await button.trigger('click');
+      await flushPromises();
+      expect(writes).toEqual([{ text: command }, { text: command }]);
+      expect(wrapper.text()).not.toContain(i18n.global.t('shortcut.copyFailed'));
+      expect(button.text()).toBe(i18n.global.t('shortcut.commandCopied'));
+    } finally {
+      wrapper.unmount();
+      i18n.global.locale.value = 'en';
+      capturePlatform.captureCommand = '/usr/bin/nezzel --capture';
+    }
   });
 
   it.each([
