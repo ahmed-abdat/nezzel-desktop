@@ -42,6 +42,30 @@ pub(crate) fn matrix_normalize(text: &str) -> Option<String> {
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
   app.manage(CaptureState::default());
+  let keep_open = app
+    .state::<crate::SharedConfig>()
+    .load()
+    .input
+    .card_keep_open;
+  app
+    .state::<CaptureState>()
+    .card_keep_open
+    .store(keep_open, Ordering::Relaxed);
+  // Config listeners receive the new value before the shared snapshot swaps. Publish the flag
+  // directly before waking the timer, rather than waking it to read the previous snapshot.
+  crate::state::config::listen(app, |app, config| {
+    let state = app.state::<CaptureState>();
+    {
+      let mut offers = state.offers.lock().unwrap();
+      if let Some(slot) = offers.slot_mut(window::CaptureWindow::Card).as_mut() {
+        slot.card_timer.set_keep_open(config.input.card_keep_open);
+      }
+      state
+        .card_keep_open
+        .store(config.input.card_keep_open, Ordering::Relaxed);
+    }
+    state.changed.notify_waiters();
+  });
   window::create(app)?;
   // The user may click into the main window while the bar is still open; closing the bar must
   // then leave Nezzel in front instead of hiding it.

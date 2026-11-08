@@ -90,6 +90,9 @@ pub struct LoginNeeded {
   pub group_id: String,
   pub host: String,
   pub reason: String,
+  /// Browser whose site session is app-bound, when discovery identified one.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub blocked_browser: Option<BrowserKind>,
   pub status: LoginStatus,
   pub candidates: Vec<LoginCandidate>,
   pub change_only: bool,

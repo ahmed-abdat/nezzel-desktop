@@ -20,6 +20,12 @@
       <settings-row for-id="pref-card" :label="t('prefs.general.card')" :help="capturePlatform.backgroundClipboard ? t('prefs.general.cardHint') : t('prefs.general.cardFocusHint')">
         <Switch id="pref-card" v-model="settings.input.watchClipboard" />
       </settings-row>
+      <settings-row for-id="pref-card-keep-open" :label="t('prefs.general.cardKeepOpen')">
+        <Switch id="pref-card-keep-open" v-model="settings.input.cardKeepOpen" />
+      </settings-row>
+      <settings-row for-id="pref-card-position" :label="t('prefs.general.cardPosition')">
+        <SelectField id="pref-card-position" v-model="settings.input.cardPosition" :options="cardPositionOptions" />
+      </settings-row>
       <settings-row for-id="pref-tray" :label="t('prefs.general.tray')" :help="t('prefs.general.trayHint')">
         <Switch id="pref-tray" v-model="settings.system.trayEnabled" />
       </settings-row>
@@ -44,7 +50,7 @@ import { SelectField } from '@/components/ui/select';
 import Switch from '@/components/ui/switch/Switch.vue';
 import SettingsRow from '../../../components/settings/SettingsRow.vue';
 import SettingsSection from '../../../components/settings/SettingsSection.vue';
-import { Settings } from '../../../tauri/types/config.ts';
+import { Settings, type CardPosition } from '../../../tauri/types/config.ts';
 import { useCapturePlatform } from '../../../composables/useCapturePlatform';
 import { useUiPrefs } from '../../../composables/useUiPrefs';
 import { useTheme } from '../../../composables/useTheme';
@@ -74,6 +80,9 @@ const choiceOptions = computed(() => [
   { value: 'small', label: t('sheet.small') },
   { value: 'audio', label: t('sheet.audio') },
 ]);
+const cardPositionOptions = computed(() => (['automatic', 'top-start', 'top-end', 'bottom-start', 'bottom-end'] as CardPosition[]).map(value => ({
+  value, label: t(`prefs.general.cardPositions.${value}`),
+})));
 const languageSelectOptions = computed(() => [
   { value: 'system', label: t('settings.appearance.language.options.system', { language: systemLanguage.value }) },
   ...languages.map(option => ({ value: option.value, label: option.label })),

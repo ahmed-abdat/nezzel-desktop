@@ -12,6 +12,9 @@ use tauri::{
   WebviewWindowBuilder, WindowEvent,
 };
 
+#[cfg(any(windows, test))]
+mod windows_tray;
+
 pub(crate) const NOTE_LABEL: &str = "close-note";
 const NOTE_WIDTH: f64 = 340.;
 /// Matches the prototype's first-close shrink.
@@ -62,7 +65,7 @@ pub struct NotePlacement {
   pub edge: Edge,
 }
 
-/// Logical-pixel rectangle.
+/// Pixel rectangle; every input to a geometry calculation must use the same coordinate space.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Area {
   pub x: f64,
@@ -199,31 +202,12 @@ pub fn close_to_tray(app: &AppHandle) {
   });
 }
 
-/// Logical point the window shrinks to and the note points at, plus the side the note opens on.
+/// Windows anchors are physical pixels; other platforms keep their existing logical coordinates.
 fn tray_anchor(app: &AppHandle) -> Option<(f64, f64, Edge)> {
   let window = app.get_webview_window("main")?;
-  let monitor = window
-    .current_monitor()
-    .ok()
-    .flatten()
-    .or_else(|| window.primary_monitor().ok().flatten())?;
+  let monitor = tray_monitor(&window)?;
   let scale = monitor.scale_factor();
-  let full = monitor.size().to_logical::<f64>(scale);
-  let origin = monitor.position().to_logical::<f64>(scale);
   let work = monitor.work_area();
-  let work_pos = work.position.to_logical::<f64>(scale);
-  let work_size = work.size.to_logical::<f64>(scale);
-
-  if cfg!(target_os = "windows") {
-    // New tray icons land in the hidden-icons flyout: point at the ^ left of the clock.
-    let bar_top = work_pos.y + work_size.height;
-    let bar_h = (origin.y + full.height - bar_top).max(40.);
-    return Some((
-      origin.x + full.width - 150.,
-      bar_top + bar_h / 2.,
-      Edge::Bottom,
-    ));
-  }
 
   let tray_rect = app
     .state::<TrayState>()
@@ -233,39 +217,112 @@ fn tray_anchor(app: &AppHandle) -> Option<(f64, f64, Edge)> {
     .clone()
     .and_then(|id| app.tray_by_id(&id))
     .and_then(|tray| tray.rect().ok().flatten());
-  if let Some(rect) = tray_rect {
-    let p = rect.position.to_logical::<f64>(scale);
-    let s = rect.size.to_logical::<f64>(scale);
-    if s.width > 0. {
-      return Some((p.x + s.width / 2., p.y + s.height, Edge::Top));
+
+  #[cfg(windows)]
+  {
+    let screen = Area {
+      x: f64::from(monitor.position().x),
+      y: f64::from(monitor.position().y),
+      w: f64::from(monitor.size().width),
+      h: f64::from(monitor.size().height),
+    };
+    let physical_rect = |rect: tauri::Rect| {
+      let p = rect.position.to_physical::<f64>(scale);
+      let s = rect.size.to_physical::<f64>(scale);
+      Area {
+        x: p.x,
+        y: p.y,
+        w: s.width,
+        h: s.height,
+      }
+    };
+    // An overflow icon can have a valid rect in its open flyout; only a taskbar rect is an anchor.
+    if let Some(anchor) = tray_rect.and_then(|rect| {
+      let bar = windows_tray::taskbar_rect()?;
+      windows_tray::taskbar_anchor(screen, bar, physical_rect(rect))
+    }) {
+      return Some(anchor);
     }
+    if let Some(rect) = windows_tray::hidden_icons_rect() {
+      // UIA already checked that the chevron is inside Shell_TrayWnd (also handles auto-hide).
+      return Some((
+        rect.x + rect.w / 2.,
+        rect.y + rect.h / 2.,
+        if rect.y + rect.h / 2. < screen.y + screen.h / 2. {
+          Edge::Top
+        } else {
+          Edge::Bottom
+        },
+      ));
+    }
+    // Explorer/UIA unavailable: retain the old estimate as the last fallback.
+    let work = Area {
+      x: f64::from(work.position.x),
+      y: f64::from(work.position.y),
+      w: f64::from(work.size.width),
+      h: f64::from(work.size.height),
+    };
+    Some(windows_tray::fallback_anchor(
+      screen,
+      work,
+      scale,
+      windows_tray::taskbar_is_rtl(),
+    ))
   }
-  if !cfg!(target_os = "linux") {
-    // Hidden menu bar: the top end of the screen.
-    return Some((
-      origin.x + full.width - 60.,
-      work_pos.y.max(origin.y + 26.),
-      Edge::Top,
-    ));
+
+  #[cfg(not(windows))]
+  {
+    let full = monitor.size().to_logical::<f64>(scale);
+    let origin = monitor.position().to_logical::<f64>(scale);
+    let work_pos = work.position.to_logical::<f64>(scale);
+    let work_size = work.size.to_logical::<f64>(scale);
+    if let Some(rect) = tray_rect {
+      let p = rect.position.to_logical::<f64>(scale);
+      let s = rect.size.to_logical::<f64>(scale);
+      if s.width > 0. {
+        return Some((p.x + s.width / 2., p.y + s.height, Edge::Top));
+      }
+    }
+    if !cfg!(target_os = "linux") {
+      // Hidden menu bar: the top end of the screen.
+      return Some((
+        origin.x + full.width - 60.,
+        work_pos.y.max(origin.y + 26.),
+        Edge::Top,
+      ));
+    }
+    // Linux has no tray rect: the end of the panel the tray lives in.
+    let screen = Area {
+      x: origin.x,
+      y: origin.y,
+      w: full.width,
+      h: full.height,
+    };
+    let work = Area {
+      x: work_pos.x,
+      y: work_pos.y,
+      w: work_size.width,
+      h: work_size.height,
+    };
+    Some(panel_anchor(
+      screen,
+      work,
+      crate::platform::current_desktop(),
+    ))
   }
-  // Linux has no tray rect: the end of the panel the tray lives in.
-  let screen = Area {
-    x: origin.x,
-    y: origin.y,
-    w: full.width,
-    h: full.height,
-  };
-  let work = Area {
-    x: work_pos.x,
-    y: work_pos.y,
-    w: work_size.width,
-    h: work_size.height,
-  };
-  Some(panel_anchor(
-    screen,
-    work,
-    crate::platform::current_desktop(),
-  ))
+}
+
+fn tray_monitor(window: &WebviewWindow) -> Option<tauri::Monitor> {
+  // Shell_TrayWnd (the notification area) lives on the primary monitor, even when main is elsewhere.
+  #[cfg(windows)]
+  if let Some(monitor) = window.primary_monitor().ok().flatten() {
+    return Some(monitor);
+  }
+  window
+    .current_monitor()
+    .ok()
+    .flatten()
+    .or_else(|| window.primary_monitor().ok().flatten())
 }
 
 /// Where the tray probably is when the OS won't say: the screen edge a panel reserves (work area
@@ -300,6 +357,8 @@ fn shrink_into(
   let Ok(scale) = window.scale_factor() else {
     return;
   };
+  #[cfg(windows)]
+  let (tx, ty) = windows_tray::logical_point((tx, ty), scale);
   let (Ok(pos), Ok(size), Ok(inner)) = (
     window.outer_position(),
     window.outer_size(),
@@ -349,13 +408,12 @@ fn shrink_into(
 
 fn open_note(app: &AppHandle, anchor: Option<(f64, f64, Edge)>) -> tauri::Result<()> {
   let window = app.get_webview_window("main");
-  let monitor = window
-    .as_ref()
-    .and_then(|w| w.current_monitor().ok().flatten())
-    .or_else(|| window.as_ref()?.primary_monitor().ok().flatten());
+  let monitor = window.as_ref().and_then(tray_monitor);
   let placement = match (anchor, monitor) {
     (Some((x, y, edge)), Some(m)) => {
       let scale = m.scale_factor();
+      #[cfg(windows)]
+      let (x, y) = windows_tray::logical_point((x, y), scale);
       let pos = m.position().to_logical::<f64>(scale);
       let size = m.size().to_logical::<f64>(scale);
       let area = Area {

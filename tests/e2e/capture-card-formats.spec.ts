@@ -15,22 +15,22 @@ const audio = (kbps: number, mb: number | null): CardChoice => ({ choice: { kind
 const details = (patch: Partial<CaptureDetails>): CaptureDetails => ({ ...emptyDetails(), ...patch });
 
 const YOUTUBE = {
-  url: 'https://www.youtube.com/watch?v=abc', site: 'youtube.com', title: 'How the Strait of Gibraltar was formed',
+  read: true, url: 'https://www.youtube.com/watch?v=abc', site: 'youtube.com', title: 'How the Strait of Gibraltar was formed',
   details: details({
     mediaKind: 'video', duration: 872, bestHeight: 2160, bestExt: 'mp4', size: 1240 * MB, hasAudio: true, audioSize: 13 * MB,
     choices: [video(2160, 1240), video(1440, 640), video(1080, 312), video(720, 148), video(480, 74), video(360, 41), audio(129, 13.2), audio(48, 5)],
   }),
 };
 const PHOTO = {
-  url: 'https://www.instagram.com/p/abc/', site: 'instagram.com', title: 'غروب على شاطئ نواكشوط',
+  read: true, url: 'https://www.instagram.com/p/abc/', site: 'instagram.com', title: 'غروب على شاطئ نواكشوط',
   details: details({ mediaKind: 'carousel', photos: 6 }),
 };
 const PLAYLIST = {
-  url: 'https://www.youtube.com/playlist?list=PL1', site: 'youtube.com', title: 'دورة الخط العربي للمبتدئين',
-  details: details({ mediaKind: null, hasAudio: true }),
+  read: true, url: 'https://www.youtube.com/playlist?list=PL1', site: 'youtube.com', title: 'دورة الخط العربي للمبتدئين',
+  details: details({ mediaKind: 'playlist' }),
 };
 const WORST = {
-  url: 'https://media.bibliotheque-numerique-nationale.example.org/v/1', site: 'media.bibliotheque-numerique-nationale.example.org',
+  read: true, url: 'https://media.bibliotheque-numerique-nationale.example.org/v/1', site: 'media.bibliotheque-numerique-nationale.example.org',
   title: 'المحاضرة الكاملة 🎓 «تاريخ المخطوطات الشنقيطية» — الجزء الثالث مع ترجمة فورية وأسئلة الجمهور ونقاش مطوّل حول الحفظ الرقمي '.repeat(2),
   details: details({
     mediaKind: 'video', duration: 11_564, bestHeight: 4320, bestExt: 'webm', size: 12_800 * MB, hasAudio: true,
@@ -42,22 +42,23 @@ const WORST = {
   }),
 };
 
-async function openCard(page: Page, locale: 'en' | 'ar', offer: Partial<CaptureOffer>) {
+async function openCard(page: Page, locale: 'en' | 'ar', offer: Partial<CaptureOffer>, surface = 'capture-card') {
   await page.route(/^https?:\/\/(?!localhost)/, route => route.abort());
   const data: MockData = { capture: { offer }, settings: { appearance: { language: locale, theme: 'light' } } };
   await page.addInitScript((d) => {
     window.E2E = d;
   }, data);
-  await page.setViewportSize(CARD);
-  await page.goto('/?window=capture-card');
+  await page.setViewportSize(surface === 'capture-card' ? CARD : { width: 720, height: 280 });
+  await page.goto(`/?window=${surface}`);
   await expect(page.locator('html')).toHaveAttribute('lang', locale);
   await expect(page.locator('section.capture-panel')).toBeVisible({ timeout: 30_000 }); // first load waits for Vite
 }
 const calls = (page: Page, cmd: string) =>
   page.evaluate(c => ((window as unknown as { __captureCalls?: CaptureCall[] }).__captureCalls ?? []).filter(call => call.cmd === c), cmd);
+const layoutCalls = async (page: Page) => (await calls(page, 'capture_fit')).filter(call => typeof (call.args as { height?: number })?.height === 'number');
 /** The native window follows capture_fit; the browser viewport plays that window here. */
 async function followFit(page: Page) {
-  const fits = await calls(page, 'capture_fit');
+  const fits = await layoutCalls(page);
   const height = (fits.at(-1)?.args as { height: number }).height;
   await page.setViewportSize({ width: CARD.width, height });
   return height;
@@ -125,7 +126,7 @@ for (const locale of ['en', 'ar'] as const) {
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('capture-formats')).toHaveCount(0);
       await expect(toggle).toBeFocused();
-      expect((await calls(page, 'capture_fit')).at(-1)?.args).toEqual({ height: CARD.height });
+      expect((await layoutCalls(page)).at(-1)?.args).toEqual({ height: CARD.height });
       expect((await calls(page, 'capture_action')).filter(c => (c.args as { action: string }).action === 'dismiss')).toEqual([]);
     });
 
@@ -137,7 +138,7 @@ for (const locale of ['en', 'ar'] as const) {
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('capture-formats')).toHaveCount(0);
       expect((await calls(page, 'capture_action')).filter(c => (c.args as { action: string }).action === 'dismiss')).toEqual([]);
-      expect((await calls(page, 'capture_fit')).at(-1)?.args).toEqual({ height: CARD.height });
+      expect((await layoutCalls(page)).at(-1)?.args).toEqual({ height: CARD.height });
       await page.keyboard.press('Escape'); // closed list: Esc dismisses the card as before
       expect((await calls(page, 'capture_action')).at(-1)?.args).toMatchObject({ action: 'dismiss' });
     });
@@ -159,12 +160,42 @@ for (const locale of ['en', 'ar'] as const) {
       await expectNoOverflow(page);
     });
 
-    test('a playlist offers best for each video, height ceilings and audio', async ({ page }) => {
+    test('a playlist opens the main picker instead of downloading every item', async ({ page }) => {
       await openCard(page, locale, PLAYLIST);
-      await page.getByTestId('capture-formats-toggle').click();
-      await followFit(page);
-      const choices = await page.getByTestId('capture-formats').getByRole('menuitem').evaluateAll(rows => rows.map(r => r.getAttribute('data-choice')));
-      expect(choices).toEqual(['best', 'video:1080', 'video:720', 'video:480', 'audio']);
+      await expect(page.getByTestId('capture-formats-toggle')).toHaveCount(0);
+      await expect(page.locator('[data-pick=best]')).toHaveText(locale === 'ar' ? 'اختيار العناصر' : 'Choose items');
+      await page.locator('[data-pick=best]').click();
+      expect((await calls(page, 'capture_action')).at(-1)?.args).toMatchObject({ action: 'options', choice: null });
+      await expectNoOverflow(page);
+    });
+
+    test('reading reserves the choice height with a skeleton and keeps best available', async ({ page }) => {
+      await openCard(page, locale, { url: YOUTUBE.url, site: YOUTUBE.site });
+      const loading = page.getByTestId('capture-choices-loading');
+      await expect(loading).toBeVisible();
+      expect((await loading.boundingBox())!.height).toBe(32);
+      await expect(page.getByTestId('capture-formats-toggle')).toHaveCount(0);
+      await page.locator('[data-pick=best]').click();
+      expect((await calls(page, 'capture_action')).at(-1)?.args).toMatchObject({ action: 'download', choice: null });
+      await expectNoOverflow(page);
+    });
+
+    test('the bar hides unknown choices, allows known Audio, and routes feed Enter to the picker', async ({ page }) => {
+      await openCard(page, locale, { url: YOUTUBE.url, site: YOUTUBE.site }, 'capture-bar');
+      await expect(page.getByTestId('capture-choices-loading')).toBeVisible();
+      await expect(page.locator('[data-pick=audio], [data-pick=small]')).toHaveCount(0);
+      await page.locator('#capture-url').press('Enter');
+      expect((await calls(page, 'capture_action')).at(-1)?.args).toMatchObject({ action: 'download', choice: null });
+
+      await openCard(page, locale, { url: 'https://soundcloud.com/artist/track', site: 'soundcloud.com' }, 'capture-bar');
+      await expect(page.getByTestId('capture-choices-loading')).toHaveCount(0);
+      await expect(page.locator('[data-pick=audio]')).toBeVisible();
+      await expect(page.locator('[data-pick=small]')).toHaveCount(0);
+
+      await openCard(page, locale, { url: 'https://youtube.com/feed/subscriptions', feed: true }, 'capture-bar');
+      await expect(page.locator('[data-pick=best]')).toHaveText(locale === 'ar' ? 'اختيار العناصر' : 'Choose items');
+      await page.locator('#capture-url').press('Enter');
+      expect((await calls(page, 'capture_action')).at(-1)?.args).toMatchObject({ action: 'options', choice: null });
     });
 
     test('worst case: long site and title stay inside the card, 18 rows scroll inside a capped list', async ({ page }) => {

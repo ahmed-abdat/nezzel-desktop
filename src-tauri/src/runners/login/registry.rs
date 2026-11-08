@@ -66,7 +66,7 @@ pub(super) fn choices_for_group(group_id: String) -> Result<LoginNeeded, String>
   // An explicit Change action refreshes metadata after the user signs in elsewhere.
   DISCOVERY.lock().unwrap().remove(&used.host);
   let candidates = discovered_candidates(&used.host, Some(&used.candidate.id));
-  let blocked = candidates.iter().any(|c| c.app_bound);
+  let blocked_browser = candidates.iter().find(|c| c.app_bound).map(|c| c.browser);
   let candidates: Vec<_> = candidates.into_iter().filter(|c| !c.app_bound).collect();
   let request_id = uuid::Uuid::new_v4().to_string();
   let payload = LoginNeeded {
@@ -74,11 +74,12 @@ pub(super) fn choices_for_group(group_id: String) -> Result<LoginNeeded, String>
     id: used.id.clone(),
     group_id: used.group_id.clone(),
     host: used.host.clone(),
-    reason: if blocked {
+    reason: if blocked_browser.is_some() {
       APP_BOUND_REASON.into()
     } else {
       CHANGE_PROFILE_REASON.into()
     },
+    blocked_browser,
     status: LoginStatus::Needed,
     candidates: candidates.clone(),
     change_only: true,

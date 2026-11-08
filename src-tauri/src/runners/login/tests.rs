@@ -249,6 +249,52 @@ fn safari_without_evidence_requires_a_picker_unless_globally_allowed() {
 }
 
 #[test]
+fn app_bound_reason_requires_a_blocked_session_without_a_usable_login() {
+  for (blocked, signed_in, expected) in [
+    (false, false, "signInRequired"),
+    (true, false, APP_BOUND_REASON),
+    (true, true, "signInRequired"),
+  ] {
+    let mut session = LoginSession::from_auth(
+      AuthSettings::default(),
+      "https://reddit.com/r/videos/",
+      None,
+    );
+    let (_, candidates) = session.decide(Some("signInRequired"), false, false, |_| {
+      let mut candidates = vec![];
+      if blocked {
+        candidates.push(LoginCandidate {
+          id: "edge:/signed".into(),
+          browser: BrowserKind::Edge,
+          profile: "Default".into(),
+          signed_in: true,
+          app_bound: true,
+        });
+      }
+      if signed_in {
+        candidates.push(LoginCandidate {
+          id: "firefox:/signed".into(),
+          browser: BrowserKind::Firefox,
+          profile: "Default".into(),
+          signed_in: true,
+          app_bound: false,
+        });
+      }
+      candidates
+    });
+    assert_eq!(
+      session.failure_reason(Some("signInRequired"), &candidates),
+      expected
+    );
+    assert_eq!(
+      session.blocked_browser,
+      blocked.then_some(BrowserKind::Edge)
+    );
+    assert!(candidates.iter().all(|c| !c.app_bound));
+  }
+}
+
+#[test]
 fn automatic_signed_profiles_need_no_prompt_and_skip_app_bound_chromium() {
   for (blocked, expected) in [(false, "chrome:/signed"), (true, "firefox:/signed")] {
     let mut session = LoginSession::from_auth(
@@ -442,6 +488,11 @@ fn failed_anonymous_retry_reports_the_more_informative_attempt() {
       "ERROR: private video",
       "signInRequired",
     ),
+    (
+      "ERROR: [Reddit] Account authentication is required. Use --cookies",
+      "ERROR: Unsupported URL",
+      "signInRequired",
+    ),
   ] {
     let mut session = LoginSession::from_auth(
       AuthSettings::default(),
@@ -462,6 +513,9 @@ fn failed_anonymous_retry_reports_the_more_informative_attempt() {
       .decide(reason.as_deref(), false, false, |_| vec![])
       .0;
     assert!(matches!(action, RetryAction::Stop | RetryAction::AskLogin));
+    if cookie_error.contains("Account authentication is required") {
+      assert_eq!(session.best_failure.as_ref().unwrap().raw, cookie_error);
+    }
     assert_eq!(
       session
         .failure_diagnostics(diagnostics)

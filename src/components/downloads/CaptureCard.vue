@@ -5,6 +5,14 @@
     :aria-label="t('capture.copiedLink')"
     class="capture-panel flex flex-col overflow-hidden rounded-xl border border-hairline bg-background text-foreground h-screen"
     :style="{ fontSize: rtl ? '14px' : '13px' }"
+    @pointerenter="touch(); pointerInside = true"
+    @pointerleave="pointerInside = false"
+    @pointermove.passive="touch"
+    @pointerdown.capture="touch(); pointerInside = true"
+    @click.capture="touch(); pointerInside = true"
+    @keydown.capture="touch"
+    @focusin="touch(); focusInside = true"
+    @focusout="onFocusOut"
   >
     <!-- Card part keeps the closed window height minus the 1px borders whether or not the format list is open; the list grows the window below it. -->
     <div class="flex shrink-0 flex-col p-3" :style="{ height: `${CAPTURE_CARD_SIZE.height - 2}px` }">
@@ -20,23 +28,24 @@
     </div>
     <p v-if="offer.feed" class="text-[12.5px] text-foreground/80 text-pretty" role="status" data-testid="capture-feed">{{ t('capture.feedPage') }}</p>
     <p v-else-if="error" class="text-[12.5px] text-destructive" role="alert">{{ t(error === 'action' ? 'capture.actionFailed' : 'capture.failed') }}</p>
-    <template v-else-if="offer.title">
-      <p class="line-clamp-2 text-start text-[13px] leading-[1.4] font-medium rtl:leading-[1.5]"><bdi dir="auto">{{ offer.title }}</bdi></p>
+    <template v-else-if="offer.read && !offer.failed">
+      <p class="line-clamp-2 text-start text-[13px] leading-[1.4] font-medium rtl:leading-[1.5]"><bdi dir="auto">{{ offer.title || offer.site }}</bdi></p>
       <p v-if="facts.length" class="tnum mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12px] whitespace-nowrap text-muted-foreground" data-testid="capture-best">
         <template v-for="(part, index) in facts" :key="index"><span v-if="index > 0" class="nz-sep" aria-hidden="true" /><bdi :class="part.strong && 'font-medium text-foreground'">{{ part.text }}</bdi></template>
       </p>
     </template>
     <CaptureFailure v-else-if="offer.failed" :reason="failure" :site="offer.site" />
     <p v-else class="text-[12.5px] text-muted-foreground" role="status">{{ slow ? t('capture.stillReading') : t('capture.loading') }}</p>
-    <div v-if="!offer.feed" class="mt-auto flex items-center justify-end gap-1.5">
+    <div class="mt-auto flex items-center justify-end gap-1.5">
       <CaptureFailActions v-if="offer.failed" :reason="failure" :busy="acting" @act="onFail" />
       <template v-else>
         <Button variant="ghost" size="sm" class="-ms-2 me-auto px-2 text-muted-foreground" :disabled="!offer.url || acting" @click="act('options')">{{ t('capture.options') }}</Button>
         <!-- Download best | ▾: one tap stays the fastest path; ▾ opens every format the link offers. -->
-        <div class="flex" data-testid="capture-picks">
+        <div class="flex w-[208px] shrink-0" data-testid="capture-picks">
           <Button
             size="sm"
-            :class="rows.length ? 'rounded-e-none' : undefined"
+            class="min-w-0 flex-1"
+            :class="rows.length || choicesLoading ? 'rounded-e-none' : undefined"
             :disabled="!offer.url || acting"
             :aria-busy="acting || undefined"
             aria-keyshortcuts="1 Enter"
@@ -44,10 +53,11 @@
             @click="pick('best')"
           >
             <LoaderCircle v-if="acting" class="animate-spin" aria-hidden="true" /><ArrowDownToLine v-else aria-hidden="true" />
-            {{ acting ? t('capture.starting') : rows.length ? t('capture.downloadBest') : t('capture.pick.download') }}
+            {{ acting ? t('capture.starting') : isPlaylist ? t('capture.chooseItems') : rows.length || choicesLoading ? t('capture.downloadBest') : t('capture.pick.download') }}
           </Button>
+          <Skeleton v-if="choicesLoading" class="size-8 shrink-0 rounded-s-none" role="status" :aria-label="t('capture.loading')" data-testid="capture-choices-loading" />
           <Button
-            v-if="rows.length"
+            v-else-if="rows.length"
             ref="caret"
             size="icon"
             class="rounded-s-none shadow-[inset_1px_0_0_color-mix(in_oklab,var(--primary-foreground)_28%,transparent)] rtl:shadow-[inset_-1px_0_0_color-mix(in_oklab,var(--primary-foreground)_28%,transparent)]"
@@ -88,6 +98,7 @@ import CaptureFailure from './CaptureFailure.vue';
 import { cardRows, pickChoice, type PickKey } from '../../helpers/captureChoices';
 import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { ArrowDownToLine, ChevronDown, ClipboardCheck, LoaderCircle, X } from '@lucide/vue';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
@@ -97,12 +108,66 @@ import { CAPTURE_CARD_SIZE, type CaptureChoice } from '@/generated/contract';
 
 const { t, locale } = useI18n();
 const panel = ref<HTMLElement>();
-const { offer, error, acting, slow, faviconFailed, details, failure, favicon, facts, act, onFail, start } = useCaptureOffer();
+const { offer, error, acting, slow, faviconFailed, details, failure, isPlaylist, choicesLoading, favicon, facts, act, onFail, start } = useCaptureOffer();
 
 const rtl = computed(() => localeDirection(locale.value) === 'rtl');
-/** The card's ▾ format menu: rows for this link (generic ceilings before the read), [] = plain Download. */
-const rows = computed(() => cardRows(details.value, !!offer.value.title));
+/** The card's format menu only contains known formats. */
+const rows = computed(() => isPlaylist.value ? [] : cardRows(details.value, offer.value.read, offer.value.url));
 const formatsOpen = ref(false);
+// Click/down also latch the hold: non-focusable native windows may omit pointerenter.
+const pointerInside = ref(false);
+const focusInside = ref(false);
+const engaged = computed(() => pointerInside.value || focusInside.value || formatsOpen.value);
+let heartbeat: ReturnType<typeof setInterval> | undefined;
+// A missed pointerleave/focusout would otherwise keep the heartbeat (and the card) alive forever:
+// with no pointer or key activity for CARD_IDLE_MS the hold lets go and the normal grace applies.
+const CARD_IDLE_MS = 30_000;
+let lastActivity = 0;
+function touch() {
+  lastActivity = Date.now();
+}
+let disposed = false;
+let resetVersion = 0;
+function resetInteraction(derive = false) {
+  const version = ++resetVersion;
+  const active = document.activeElement;
+  if (!derive && active instanceof HTMLElement && panel.value?.contains(active)) active.blur();
+  pointerInside.value = false;
+  focusInside.value = false;
+  formatsOpen.value = false;
+  // Closing the old menu may remove its focused row. Derive from the settled DOM, not that row.
+  if (derive) void nextTick(() => {
+    if (disposed || version !== resetVersion || document.hidden) return;
+    pointerInside.value = !!panel.value?.matches(':hover');
+    focusInside.value = !!document.activeElement && !!panel.value?.contains(document.activeElement);
+  });
+}
+async function reportEngaged(id: number, value: boolean) {
+  if (!id) return;
+  try {
+    const visible = await invoke<boolean>('capture_fit', { id, engaged: value });
+    if (!disposed && visible === false && offer.value.id === id) resetInteraction();
+  } catch { /* A missing heartbeat expires in Rust. */ }
+}
+// The webview survives native hide/show. Never carry a click/focus latch into the next offer.
+watch(() => offer.value.id, () => resetInteraction(!document.hidden), { flush: 'sync' });
+watch(() => [offer.value.id, engaged.value] as const, ([id, value]) => {
+  clearInterval(heartbeat);
+  void reportEngaged(id, value);
+  if (id && value) touch();
+  heartbeat = id && value
+    ? setInterval(() => {
+        if (Date.now() - lastActivity > CARD_IDLE_MS) resetInteraction();
+        else void reportEngaged(id, true);
+      }, 3000)
+    : undefined;
+}, { immediate: true, flush: 'sync' });
+function onVisibilityChange() {
+  resetInteraction(!document.hidden);
+}
+function onFocusOut(event: FocusEvent) {
+  focusInside.value = event.relatedTarget instanceof Node && !!panel.value?.contains(event.relatedTarget);
+}
 const formatList = ref<{ focusFirst: () => void } | null>(null);
 const caret = ref<{ $el: HTMLElement } | null>(null);
 /** Grow (or shrink) the native window to the card plus the open list; Rust keeps it on its screen corner. */
@@ -152,7 +217,14 @@ function onEsc(event: KeyboardEvent) {
 }
 onMounted(async () => {
   window.addEventListener('keydown', onEsc);
+  document.addEventListener('visibilitychange', onVisibilityChange);
   await start();
 });
-onBeforeUnmount(() => window.removeEventListener('keydown', onEsc));
+onBeforeUnmount(() => {
+  disposed = true;
+  clearInterval(heartbeat);
+  void reportEngaged(offer.value.id, false);
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  window.removeEventListener('keydown', onEsc);
+});
 </script>

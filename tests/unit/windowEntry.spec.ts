@@ -16,7 +16,8 @@ beforeEach(() => {
     const allowed: Record<string, unknown> = {
       config_get: structuredClone(defaultSettings),
       get_platform: 'macos',
-      capture_snapshot: { id: 1, url: '', site: '', title: '', details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false },
+      capture_fit: undefined,
+      capture_snapshot: { id: 1, url: '', site: '', title: '', read: false, details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false },
     };
     if (cmd in allowed) return allowed[cmd];
     if (cmd === 'plugin:event|listen') return 1;
@@ -53,7 +54,7 @@ describe('native window entry isolation', () => {
 describe('copied-link card', () => {
   it('shows the title from the snapshot when capture_changed never arrives (Linux, tauri#3654)', async () => {
     vi.useFakeTimers();
-    const reading = { id: 4, url: 'https://www.youtube.com/watch?v=card', site: 'youtube.com', title: '', details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false, feed: false };
+    const reading = { id: 4, url: 'https://www.youtube.com/watch?v=card', site: 'youtube.com', title: '', read: false, details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false, feed: false };
     let snapshot = reading;
     const previous = window.__TAURI_INTERNALS__.invoke;
     window.__TAURI_INTERNALS__.invoke = async (cmd, ...rest) => (cmd === 'capture_snapshot' ? snapshot : previous(cmd, ...rest));
@@ -64,7 +65,7 @@ describe('copied-link card', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(document.querySelector('.capture-panel')?.textContent).not.toContain('Card title');
       // The preview finished in Rust; its event is held, so only the next snapshot carries the title.
-      snapshot = { ...reading, title: 'Card title' };
+      snapshot = { ...reading, title: 'Card title', read: true };
       await vi.advanceTimersByTimeAsync(1600);
       expect(document.querySelector('.capture-panel')?.textContent).toContain('Card title');
     } finally {
@@ -74,7 +75,7 @@ describe('copied-link card', () => {
   });
 
   it('reads a new offer through the snapshot when woken; the event carries nothing', async () => {
-    const offer = (id: number, title: string) => ({ id, url: `https://www.youtube.com/watch?v=${id}`, site: 'youtube.com', title, details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false, feed: false });
+    const offer = (id: number, title: string) => ({ id, url: `https://www.youtube.com/watch?v=${id}`, site: 'youtube.com', title, read: true, details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false, feed: false });
     let snapshot = offer(6, 'First');
     let wake: number | undefined;
     const previous = window.__TAURI_INTERNALS__.invoke;
@@ -101,7 +102,7 @@ describe('copied-link card', () => {
 
   it('stops asking once the offer is gone (dismissed while reading)', async () => {
     vi.useFakeTimers();
-    const reading = { id: 5, url: 'https://www.youtube.com/watch?v=gone', site: 'youtube.com', title: '', details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false, feed: false };
+    const reading = { id: 5, url: 'https://www.youtube.com/watch?v=gone', site: 'youtube.com', title: '', read: false, details: { thumbnail: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: null }, failed: false, resolving: false, feed: false };
     let snapshot: typeof reading = reading;
     let asked = 0;
     const previous = window.__TAURI_INTERNALS__.invoke;

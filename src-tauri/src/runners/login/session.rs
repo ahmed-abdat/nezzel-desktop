@@ -59,7 +59,7 @@ pub struct LoginSession {
   pub(super) attempted: HashSet<String>,
   pub(super) starting_browser: Option<String>,
   pub(super) selected: Option<LoginCandidate>,
-  pub(super) app_bound_detected: bool,
+  pub(super) blocked_browser: Option<browsers::BrowserKind>,
   pub(super) network_down: bool,
   pub(super) best_failure: Option<DiagnosticEvent>,
 }
@@ -138,7 +138,7 @@ impl LoginSession {
       just_accepted,
       starting_browser,
       selected: None,
-      app_bound_detected: false,
+      blocked_browser: None,
       network_down: false,
       best_failure: None,
     }
@@ -237,6 +237,7 @@ impl LoginSession {
     self.succeeded(app, group);
   }
   pub(crate) fn fetch_exhausted(&self, app: &AppHandle, entry: &FetchEntry) {
+    self.emit_failure(app);
     crate::events::emit(
       app,
       crate::events::MEDIA_LOGIN_NEEDED,
@@ -246,6 +247,7 @@ impl LoginSession {
         group_id: entry.group_id.clone(),
         host: self.host.clone(),
         reason: LOGIN_FAILED_REASON.into(),
+        blocked_browser: None,
         status: LoginStatus::Exhausted,
         candidates: Vec::new(),
         change_only: false,
@@ -385,6 +387,28 @@ impl LoginSession {
     })
   }
 
+  pub(super) fn failure_reason<'a>(
+    &self,
+    reason: Option<&'a str>,
+    candidates: &[LoginCandidate],
+  ) -> &'a str {
+    if self.blocked_browser.is_some() && !candidates.iter().any(|c| c.signed_in) {
+      APP_BOUND_REASON
+    } else {
+      reason.unwrap_or(LOGIN_FAILED_REASON)
+    }
+  }
+
+  fn emit_failure(&self, app: &AppHandle) {
+    if let Some(event) = &self.best_failure {
+      crate::events::emit(
+        app,
+        crate::events::MEDIA_DIAGNOSTIC,
+        crate::models::MediaDiagnosticPayload::from_diagnostic_event(event.clone()),
+      );
+    }
+  }
+
   pub fn failed(
     &mut self,
     app: &AppHandle,
@@ -410,11 +434,8 @@ impl LoginSession {
         id: id.into(),
         group_id: group_id.into(),
         host: self.host.clone(),
-        reason: if self.app_bound_detected && !candidates.iter().any(|c| c.signed_in) {
-          APP_BOUND_REASON.into()
-        } else {
-          reason.unwrap_or(LOGIN_FAILED_REASON).into()
-        },
+        reason: self.failure_reason(reason, &candidates).into(),
+        blocked_browser: self.blocked_browser,
         status,
         candidates: candidates.clone(),
         change_only: false,
@@ -431,6 +452,7 @@ impl LoginSession {
       {
         return RetryAction::AskLogin;
       }
+      self.emit_failure(app);
       crate::events::emit(app, crate::events::MEDIA_LOGIN_NEEDED, payload);
       if exhausted {
         return RetryAction::Stop;
@@ -477,7 +499,11 @@ impl LoginSession {
     self.selected = None;
     self.state.browser_attempted = false;
     let candidates = find(self.starting_browser.as_deref());
-    self.app_bound_detected |= candidates.iter().any(|c| c.app_bound);
+    self.blocked_browser = candidates
+      .iter()
+      .find(|c| c.app_bound)
+      .map(|c| c.browser)
+      .or(self.blocked_browser);
     let candidates: Vec<_> = candidates.into_iter().filter(|c| !c.app_bound).collect();
     let available = |c: &&LoginCandidate| !self.attempted.contains(&c.id);
     let selected = candidates

@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useI18n } from 'vue-i18n';
 import { emptyDetails, type CaptureOffer } from '../captureTypes';
 import { failReason, type FailAction } from '../helpers/captureFailure';
+import { isKnownAudioSite } from '../helpers/captureChoices';
 import { fileCategory } from '../helpers/fileCategory';
 import { formatDuration } from '../helpers/units';
 import { useLocaleNumber } from './useLocaleNumber';
@@ -26,7 +27,7 @@ export interface CaptureOfferHooks {
 export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   const { t } = useI18n();
   const { size: formatSize } = useLocaleNumber();
-  const offer = ref<CaptureOffer>({ remoteImages: false, id: 0, url: '', site: '', title: '', details: emptyDetails(), failed: false, reason: null, resolving: false, feed: false });
+  const offer = ref<CaptureOffer>({ remoteImages: false, id: 0, url: '', site: '', title: '', read: false, details: emptyDetails(), failed: false, reason: null, resolving: false, feed: false });
   /** 'fetch' = the link could not be read; 'action' = Download/Options could not start. */
   const error = ref<false | 'fetch' | 'action'>(false);
   const acting = ref(false);
@@ -42,6 +43,9 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   const failure = computed(() => failReason(offer.value.reason));
   const fileKind = computed(() => details.value.mediaKind === 'file' ? fileCategory(offer.value.title || offer.value.url) : undefined);
   const isPhotos = computed(() => ['image', 'carousel', 'mixed'].includes(details.value.mediaKind ?? ''));
+  const isPlaylist = computed(() => offer.value.feed || details.value.mediaKind === 'playlist');
+  const choicesLoading = computed(() => !!offer.value.url && !offer.value.read && !offer.value.failed
+    && !isPlaylist.value && !isKnownAudioSite(offer.value.url));
   /** The site's own favicon (the same host the link points to; nothing goes to a third party). */
   const favicon = computed(() => {
     if (!offer.value.remoteImages) return null;
@@ -111,7 +115,11 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   async function act(action: CaptureWindowAction, choice?: CaptureChoice) {
     // A failed read never offers Download (it would fail again): Enter does nothing there.
     if (action === 'download' && offer.value.failed) return;
-    if (action !== 'dismiss' && action !== 'report' && (!offer.value.url || offer.value.feed || offer.value.resolving || editing.value || acting.value)) return;
+    if (action === 'download' && isPlaylist.value) {
+      action = 'options';
+      choice = undefined;
+    }
+    if (action !== 'dismiss' && action !== 'report' && (!offer.value.url || offer.value.resolving || editing.value || acting.value)) return;
     if (action !== 'dismiss') acting.value = true;
     try {
       await invoke('capture_action', { id: offer.value.id, action, choice: choice ?? null });
@@ -135,17 +143,17 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   }
 
   /** Slow sites: after a few seconds say it's still working, and that Download already works (the list finishes reading). */
-  watch(() => [offer.value.id, offer.value.url, !!offer.value.title, offer.value.failed] as const, ([, url, hasTitle, failed]) => {
+  watch(() => [offer.value.id, offer.value.url, offer.value.read, offer.value.failed] as const, ([, url, read, failed]) => {
     clearTimeout(slowTimer);
     slow.value = false;
-    if (url && !hasTitle && !failed && !offer.value.feed) slowTimer = setTimeout(() => {
+    if (url && !read && !failed && !offer.value.feed) slowTimer = setTimeout(() => {
       slow.value = true;
     }, SLOW_MS);
   });
   /** Linux can hold capture_changed for this hidden, always-on-top window until the next input
    * (tauri#3654): while the card still reads, ask again without waiting on the event. Dismissed, reported
    * or expired, Rust has no offer (id 0): the panel takes the empty one and stops asking. */
-  const waitingForRead = computed(() => !!offer.value.url && !offer.value.title && !offer.value.failed && !offer.value.feed && !offer.value.resolving);
+  const waitingForRead = computed(() => !!offer.value.url && !offer.value.read && !offer.value.failed && !offer.value.feed && !offer.value.resolving);
   watch(waitingForRead, (waiting) => {
     clearInterval(snapshotTimer);
     snapshotTimer = waiting ? setInterval(() => void refresh().catch(() => {}), SNAPSHOT_MS) : undefined;
@@ -162,5 +170,5 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
     clearInterval(snapshotTimer);
   });
 
-  return { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, fileKind, isPhotos, favicon, bestParts, facts, act, onFail, start };
+  return { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, fileKind, isPhotos, isPlaylist, choicesLoading, favicon, bestParts, facts, act, onFail, start };
 }

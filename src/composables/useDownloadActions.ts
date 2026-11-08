@@ -11,7 +11,7 @@ import { useToastStore } from '../stores/toast';
 import { revealsInFolder } from '../helpers/fileCategory';
 import { baseName } from '../helpers/folderPath';
 import { hasVideo as groupHasVideo } from '../helpers/groupView';
-import { hasAudio, optionsForChoice } from '../helpers/quickChoice';
+import { defaultDownloadOptions, optionsForChoice } from '../helpers/quickChoice';
 import { useOpener } from './useOpener';
 import { countUsage } from '../tauri/usage';
 import { useListRemoval } from './useListRemoval';
@@ -70,11 +70,8 @@ export function useGroupActions({ reportErrors = true }: { reportErrors?: boolea
   }
 
   async function downloadGroup(group: Group) {
-    let options = optionsStore.getOptions(group.id);
-    if (!options || (options.trackType === 'audio' && !hasAudio(group))) {
-      options = optionsForChoice(defaultChoice.value, group.formats ?? [], group.mediaKind);
-      optionsStore.setOptions(group.id, options);
-    }
+    const options = defaultDownloadOptions(group, optionsStore.getOptions(group.id), defaultChoice.value);
+    optionsStore.setOptions(group.id, options);
     const ok = await mediaStore.downloadGroup(group.id, options);
     if (!ok) reportError('feedback.downloadFailed');
     return ok === true;
@@ -133,6 +130,21 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
 
   function remove() {
     removeRows([group.value.id]);
+  }
+
+  function cancel() {
+    const undo = useMediaStore().cancelDownload(group.value.id);
+    if (!undo) return;
+    toastStore.showToast(t('downloads.row.cancelled'), {
+      style: 'info',
+      duration: 5000,
+      action: {
+        label: t('downloads.list.undo'),
+        run: () => void undo().then((ok) => {
+          if (!ok && reportErrors) toastStore.showToast(t('feedback.downloadFailed'), { style: 'error' });
+        }),
+      },
+    });
   }
 
   const retry = () => retryGroup(group.value);
@@ -221,5 +233,5 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
 
   const canTrash = computed(() => !isTrashRefused(group.value.id));
 
-  return { download, pause, remove, retry, recover, recoveryLabel, recoveryIsSwitch, openFile, revealFile, openPage, copyLink, deleteFile, trashFile, canTrash };
+  return { download, pause, remove, cancel, retry, recover, recoveryLabel, recoveryIsSwitch, openFile, revealFile, openPage, copyLink, deleteFile, trashFile, canTrash };
 }

@@ -325,6 +325,7 @@
           "other": "autre"
         },
         "status": {
+          "queued": "En attente",
           "initializing": "Initialisation",
           "downloading": "Téléchargement",
           "merging": "Fusion",
@@ -1483,6 +1484,7 @@
       },
       "stillReading": "Lecture en cours… {s} s",
       "readingStuck": "Ce site met du temps à répondre. Réessayez ou retirez-le",
+      "cancelled": "Téléchargement annulé",
       "resuming": "Reprise…",
       "cancel": "Annuler le téléchargement"
     },
@@ -1499,13 +1501,15 @@
       "tryAnother": "Essayer un autre navigateur",
       "settings": "Réglages de connexion",
       "refusedBrowser": "{site} n'a pas accepté votre connexion {browser}. Connectez-vous à {site} dans {browser}, ou essayez un autre navigateur",
-      "noBrowser": "Aucune connexion de navigateur acceptée par {site} n'a été trouvée",
+      "noBrowser": "Ce site vous demande de vous connecter (sur certains réseaux, il le demande à tout le monde). Connectez-vous dans votre navigateur, ou ajoutez un fichier de cookies dans les paramètres de connexion",
+      "noBrowserWindows": "Ce site vous demande de vous connecter (sur certains réseaux, il le demande à tout le monde). Connectez-vous avec Firefox, ou ajoutez un fichier de cookies dans les paramètres de connexion",
       "turnedOff": "{site} nécessite une connexion. Les connexions du navigateur sont désactivées dans les réglages de connexion",
       "thisSite": "ce site",
       "signedIn": "connecté à {host}",
       "usingProfile": "Avec {profile}",
       "changeProfile": "Changer de profil",
-      "windowsAppBound": "Votre navigateur sous Windows verrouille sa connexion tant qu'il est ouvert. Fermez-le et réessayez, ou utilisez Firefox",
+      "windowsAppBound": "Edge et Chrome sous Windows ne permettent pas aux autres applications d’utiliser leurs connexions. Connectez-vous à ce site dans Firefox, ou ajoutez un fichier de cookies dans les paramètres de connexion",
+      "windowsAppBoundBrowser": "{browser} sous Windows ne permet pas aux autres applications d’utiliser ses connexions. Connectez-vous à ce site dans Firefox, ou ajoutez un fichier de cookies dans les paramètres de connexion",
       "expired": "Cette demande de connexion a expiré. Réessayez le lien",
       "again": "Se reconnecter",
       "skipped": "Vous avez passé la connexion, {site} n’a donc pas autorisé ce téléchargement",
@@ -1626,6 +1630,15 @@
       "card": "Carte pour les liens copiés",
       "cardHint": "Affiche une petite carte par-dessus les autres apps quand vous copiez un lien, même si Nezzel est en arrière-plan. Rien ne se télécharge sans votre choix",
       "cardFocusHint": "Sur ce bureau, les liens copiés sont détectés lorsque la fenêtre de Nezzel est au premier plan.",
+      "cardKeepOpen": "Garder la carte ouverte jusqu’à sa fermeture",
+      "cardPosition": "Position de la carte",
+      "cardPositions": {
+        "automatic": "Automatique",
+        "top-start": "En haut à gauche",
+        "top-end": "En haut à droite",
+        "bottom-start": "En bas à gauche",
+        "bottom-end": "En bas à droite"
+      },
       "choose": "Choisir…"
     },
     "logins": {
@@ -1792,6 +1805,7 @@
     "copiedLink": "Lien copié",
     "dismiss": "Fermer",
     "url": "Lien vidéo ou audio",
+    "chooseItems": "Choisir les éléments",
     "downloadBest": "Meilleure qualité",
     "options": "Options",
     "loading": "Lecture du lien…",
@@ -1833,7 +1847,7 @@
     "slowHint": "Ce site est lent. Vous pouvez lancer le téléchargement ; Nezzel continue la lecture dans la liste",
     "actionFailed": "Impossible de lancer le téléchargement. Réessayez",
     "starting": "Démarrage…",
-    "feedPage": "C'est un fil, pas une publication. Ouvrez une publication, puis copiez son lien",
+    "feedPage": "Choisissez les éléments à enregistrer dans la fenêtre principale",
     "pick": {
       "group": "Télécharger en",
       "download": "Télécharger",

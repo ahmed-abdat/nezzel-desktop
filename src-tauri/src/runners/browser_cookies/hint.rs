@@ -1,6 +1,9 @@
 //! Sign-in hints from a browser cookie database: host, name, expiry and access time only.
 //! Cookie values are never read here.
-use super::{chromium, cookie_domains, firefox, same_site, session_present};
+use super::{
+  chromium, cookie_domains, firefox, is_session_cookie, known_login_host, same_site,
+  session_present,
+};
 use crate::runners::{
   browser_logins::{BrowserEnv, Os},
   browsers::{BrowserKind, CookieStore},
@@ -80,11 +83,8 @@ pub(in crate::runners) fn cookie_hint(
       )?;
       Ok::<_, Box<dyn std::error::Error>>(read_hint(&connection, browser, os, host, now)?)
     })
-    .unwrap_or_else(|_| CookieHint {
-      // This flag also represents an unreadable Windows Chromium jar, not only v20.
-      app_bound: browser.app_bound_on(os),
-      ..Default::default()
-    })
+    // An unreadable jar is not evidence of a signed-in, app-bound session.
+    .unwrap_or_default()
 }
 
 fn read_hint(
@@ -141,7 +141,9 @@ fn read_hint(
       if (schema.expired)(expires, now) {
         continue;
       }
-      hint.app_bound |= app_bound;
+      // Listed sites: only a session cookie makes the jar an unreadable login (visitor cookies don't).
+      // Unlisted sites have no session names, so any v20 row still marks the jar unreadable.
+      hint.app_bound |= app_bound && (!known_login_host(host) || is_session_cookie(host, &name));
       hint.last_access = hint.last_access.max((schema.access_micros)(access));
       names.insert(name);
     }

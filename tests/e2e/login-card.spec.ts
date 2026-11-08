@@ -17,9 +17,15 @@ test('a login request shows on its row and Not now turns it into a plain failure
     const { useMediaStateStore } = await import('/src/stores/media/state.ts');
     // @ts-ignore
     const { useLoginStore } = await import('/src/stores/login.ts');
+    // @ts-ignore
+    const { useMediaDiagnosticsStore } = await import('/src/stores/media/diagnostics.ts');
     const group = Object.values(useMediaGroupStore().groups)[0] as { id: string; items: Record<string, { id: string }> };
     const itemId = Object.keys(group.items)[0];
     useMediaStateStore().setState(itemId, 'fetching');
+    useMediaDiagnosticsStore().processMediaDiagnosticPayload({
+      id: itemId, groupId: group.id, code: 'signInRequired', level: 'error', component: 'Reddit',
+      message: 'Account authentication is required', raw: 'ERROR: [Reddit] Account authentication is required. Use --cookies', timestamp: 0,
+    });
     useLoginStore().receive({
       requestId: 'r1', id: itemId, groupId: group.id, host: 'www.instagram.com', reason: 'signInRequired', status: 'needed',
       candidates: [
@@ -36,6 +42,8 @@ test('a login request shows on its row and Not now turns it into a plain failure
   await expect(page.getByRole('option', { name: 'Firefox (Ahmed.work)' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(row.getByRole('button', { name: 'Use it' })).toBeVisible();
+  await row.getByRole('button', { name: 'Details', exact: true }).click();
+  await expect(row.getByTestId('login-details')).toHaveText('ERROR: [Reddit] Account authentication is required. Use --cookies');
 
   await row.getByRole('button', { name: 'Not now' }).click();
   await expect(row.getByTestId('login-needed')).toBeHidden();
@@ -43,4 +51,6 @@ test('a login request shows on its row and Not now turns it into a plain failure
   await expect(row.getByText('You skipped the login, so Instagram didn\'t allow this download')).toBeVisible();
   await expect(row.getByRole('button', { name: 'Log in again' })).toBeVisible();
   await expect(row.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+  await expect(row.getByRole('button', { name: 'Details', exact: true })).toBeVisible();
+  await expect(row.getByTestId('login-details')).toBeVisible();
 });

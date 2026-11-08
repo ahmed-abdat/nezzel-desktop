@@ -142,6 +142,30 @@ describe('download row recovery', () => {
     expect(groups.groupOrder).toEqual(order);
   });
 
+  it('stops a cancelled download immediately and offers requeue for five seconds', async () => {
+    vi.useFakeTimers();
+    const cancelled = vi.fn();
+    installTauriMock({ group_cancel: cancelled });
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'cancel-toast', url: 'https://example.com/a', total: 1, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'item', isLeader: true, url: 'https://example.com/a', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaStateStore().setGroupState('cancel-toast', MediaState.downloading);
+    const { actions, wrapper } = actionsFor(groups.findGroupById('cancel-toast'));
+    try {
+      actions.cancel();
+      expect(cancelled).toHaveBeenCalledWith('group_cancel', { groupId: 'cancel-toast', discardFiles: true });
+      expect(groups.orderedGroups).toHaveLength(0);
+      const toast = useToastStore().toasts.at(-1)!;
+      expect(toast).toMatchObject({ message: 'Download cancelled', duration: 5000, action: { label: 'Undo' } });
+      toast.action!.run();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(groups.orderedGroups).toHaveLength(1);
+      expect(useMediaStateStore().getGroupState(groups.orderedGroups[0].id)).toBe(MediaState.downloading);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(useToastStore().toasts).not.toContainEqual(toast);
+    } finally { wrapper.unmount(); }
+  });
+
   it('hides immediately, allows Undo, and cancels only after an unrevoked removal expires', async () => {
     vi.useFakeTimers();
     const cancelled: unknown[] = [];

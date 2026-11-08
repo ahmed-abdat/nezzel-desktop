@@ -51,18 +51,24 @@ export async function startCaptureDelivery() {
     }
   }
 
+  function openPicker(groupId: string) {
+    sheet.show(groupId);
+    void getCurrentWindow().unminimize().then(() => getCurrentWindow().show()).then(() => getCurrentWindow().setFocus()).catch(() => {});
+  }
+
   function handle(message: CaptureMessage) {
     switch (message.kind) {
       case 'action': {
         if (!(CAPTURE_CLAIMS as readonly string[]).includes(message.action)) return;
         const groupId = captureGroupId(message.id);
         // An existing row is one focus adopted; Rust sends the click that upgrades it once.
-        if (!groups.findGroupById(groupId)) media.createCaptureGroup(groupId, message.url, message.action === 'download');
+        if (!groups.findGroupById(groupId)) media.createCaptureGroup(groupId, message.url);
         if (message.action === 'download') {
-          void media.downloadPreparedGroup(groupId, message.choice ?? undefined).catch(() => {});
+          void media.downloadPreparedGroup(groupId, message.choice ?? undefined).then((result) => {
+            if (result === 'playlist') openPicker(groupId);
+          }).catch(() => {});
         } else if (message.action === 'options') {
-          sheet.show(groupId);
-          void getCurrentWindow().show().then(() => getCurrentWindow().setFocus()).catch(() => {});
+          openPicker(groupId);
         }
         if (message.item) void fillRow(message.id, message.item);
         return;

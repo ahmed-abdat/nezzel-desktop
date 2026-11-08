@@ -64,11 +64,25 @@ impl Default for NetworkSettings {
   }
 }
 
+/// Logical screen corner for the copied-link card; Automatic preserves the platform default.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CardPosition {
+  #[default]
+  Automatic,
+  TopStart,
+  TopEnd,
+  BottomStart,
+  BottomEnd,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct InputSettings {
   pub auto_fill_clipboard: bool,
   pub watch_clipboard: bool,
+  pub card_keep_open: bool,
+  pub card_position: CardPosition,
   pub capture_shortcut: String,
   pub prefer_video_in_mixed_links: bool,
   pub global_shortcuts: bool,
@@ -97,6 +111,8 @@ impl Default for InputSettings {
     Self {
       auto_fill_clipboard: true,
       watch_clipboard: true,
+      card_keep_open: false,
+      card_position: CardPosition::Automatic,
       capture_shortcut: DEFAULT_CAPTURE_SHORTCUT.into(),
       prefer_video_in_mixed_links: false,
       global_shortcuts: true,

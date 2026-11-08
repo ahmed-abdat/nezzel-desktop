@@ -12,7 +12,7 @@ export type CaptureMockData = {
 };
 
 const offer = (): CaptureOffer => ({
-  id: 1, url: '', site: '', title: '', details: emptyDetails(), failed: false, reason: null, resolving: false, feed: false,
+  id: 1, url: '', site: '', title: '', read: false, details: emptyDetails(), failed: false, reason: null, resolving: false, feed: false,
   ...window.E2E.capture?.offer,
 });
 

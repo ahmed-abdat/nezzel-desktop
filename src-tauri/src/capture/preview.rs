@@ -165,10 +165,14 @@ fn bytes(format: &Value) -> Option<u64> {
 }
 
 pub fn summarize(item: &Value) -> PreviewDetails {
-  let media_kind = item
-    .get("mediaKind")
-    .and_then(Value::as_str)
-    .map(str::to_owned);
+  let media_kind = if item.get("entries").is_some_and(Value::is_array) {
+    Some("playlist".to_owned())
+  } else {
+    item
+      .get("mediaKind")
+      .and_then(Value::as_str)
+      .map(str::to_owned)
+  };
   let photos_only = matches!(media_kind.as_deref(), Some("image" | "carousel"));
   let formats: Vec<&Value> = item
     .get("formats")
@@ -438,6 +442,18 @@ pub async fn read_output_reason(
 mod summary_tests {
   use super::*;
   use serde_json::json;
+
+  #[test]
+  fn playlist_previews_are_identified_even_with_no_entries() {
+    for entries in [json!([]), json!([{"url": "https://example.com/video"}])] {
+      assert_eq!(
+        summarize(&json!({"entries": entries}))
+          .media_kind
+          .as_deref(),
+        Some("playlist")
+      );
+    }
+  }
 
   /// Gallery previews arrive in the parsed shape: listed codecs still count as sound.
   #[test]

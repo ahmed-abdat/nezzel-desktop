@@ -133,6 +133,24 @@ describe('capture delivery to the main window', () => {
     expect(info).toHaveBeenCalledTimes(preview === 'fallback' ? 1 : 0);
   });
 
+  it.each(['inline', 'late', 'adopted', 'fallback'])('opens playlist selection without expanding or downloading (%s)', async (mode) => {
+    const { info, download, groups, states, sheet, send } = await setup();
+    const playlist = { ...item, entries: [{ index: 1, videoUrl: 'https://example.com/one' }, { index: 2, videoUrl: 'https://example.com/two' }] };
+    const expand = vi.spyOn(window.__TAURI_INTERNALS__, 'invoke');
+    if (mode === 'adopted') await send({ kind: 'action', id: 4, url, action: 'adopt', item: playlist, choice: null });
+    await send({ kind: 'action', id: 4, url, action: 'download', item: mode === 'inline' ? playlist : null, choice: null });
+    if (mode === 'fallback') info.mockImplementation(() => emit('media_add', { groupId: 'capture-4', total: 2, item: playlist }));
+    if (mode === 'late' || mode === 'fallback') await send({ kind: 'item', id: 4, item: mode === 'late' ? playlist : null });
+    await flushPromises();
+    expect(groups.orderedGroups).toHaveLength(1);
+    expect(states.getGroupState('capture-4')).toBe(MediaState.playlistSelection);
+    expect(sheet.groupId).toBe('capture-4');
+    expect(sheet.open).toBe(true);
+    expect(download).not.toHaveBeenCalled();
+    expect(expand.mock.calls.some(([cmd]) => cmd === 'media_playlist_expand')).toBe(false);
+    expect(expand.mock.calls.map(([cmd]) => cmd).filter(cmd => ['plugin:window|unminimize', 'plugin:window|show', 'plugin:window|set_focus'].includes(cmd))).toEqual(['plugin:window|unminimize', 'plugin:window|show', 'plugin:window|set_focus']);
+  });
+
   it('a click after focus adopted the row starts that row, not a second one', async () => {
     const { download, groups, states, send } = await setup();
     await send({ kind: 'action', id: 5, url, action: 'adopt', item, choice: null });

@@ -1,5 +1,5 @@
 import type { CaptureDetails, CardChoice } from '../captureTypes';
-import { GENERIC_HEIGHTS, HIGH_FPS_MIN, SMALL_MAX_HEIGHT, type CaptureChoice } from '@/generated/contract';
+import { HIGH_FPS_MIN, type CaptureChoice } from '@/generated/contract';
 import { TrackType, type DownloadOptions, type MediaFormat, type SourceMediaKind } from '../tauri/types/media';
 import { BEST_AUDIO, optionsForChoice, videoFormats } from './quickChoice';
 
@@ -12,6 +12,18 @@ import { BEST_AUDIO, optionsForChoice, videoFormats } from './quickChoice';
 /** Photos, files and posts have one way to save: no Audio/Smaller pick, no format menu. */
 const NO_MENU = new Set(['file', 'image', 'carousel']);
 
+/** Only these supported hosts establish audio-only media before metadata arrives. */
+const AUDIO_SITES = ['soundcloud.com', 'mixcloud.com', 'bandcamp.com', 'audiomack.com'];
+export function isKnownAudioSite(url: string): boolean {
+  try {
+    const { hostname, protocol } = new URL(url);
+    return ['http:', 'https:'].includes(protocol)
+      && AUDIO_SITES.some(host => hostname === host || hostname.endsWith(`.${host}`));
+  } catch {
+    return false;
+  }
+}
+
 /** Quick picks in the bar. `best` is always first and the primary. */
 export type PickKey = 'best' | 'audio' | 'small';
 export interface CapturePick { key: PickKey; height: number | null; size: number | null }
@@ -23,21 +35,12 @@ export function pickChoice(key: PickKey): CaptureChoice | undefined {
   return undefined;
 }
 
-/**
- * Which picks a link offers. Before the read every pick works (the engine falls back: Smaller = best ≤720p,
- * else the nearest lower), so all three show. After the read only picks that change something stay:
- * no Smaller with one quality, no Audio without sound, nothing but Download for audio-only links, photos and files.
- */
-export function capturePicks(details: CaptureDetails, read: boolean): CapturePick[] {
-  if (!read) {
-    return [
-      { key: 'best', height: null, size: null },
-      { key: 'audio', height: null, size: null },
-      { key: 'small', height: SMALL_MAX_HEIGHT, size: null },
-    ];
-  }
+/** No speculative picks while reading. The primary default action is rendered separately. */
+export function capturePicks(details: CaptureDetails, read: boolean, url = ''): CapturePick[] {
+  if (details.mediaKind === 'playlist') return [];
   const best: CapturePick = { key: 'best', height: details.bestHeight, size: details.size };
-  if (!details.bestHeight || NO_MENU.has(details.mediaKind ?? '')) return [best];
+  if (!read) return isKnownAudioSite(url) ? [best, { key: 'audio', height: null, size: null }] : [];
+  if (!details.bestHeight || NO_MENU.has(details.mediaKind ?? '') || details.mediaKind === 'audio') return [best];
   const picks = [best];
   if (details.hasAudio) picks.push({ key: 'audio', height: null, size: details.audioSize });
   if (details.smallHeight) picks.push({ key: 'small', height: details.smallHeight, size: details.smallSize });
@@ -55,7 +58,7 @@ export interface CardRow {
   size: number | null;
   /** The first video row: what Download best gets. */
   best: boolean;
-  /** Generic rows (still reading, playlists): the height is a ceiling per item, not a known format. */
+  /** Whether a height is a ceiling rather than a known format. */
   upTo: boolean;
 }
 
@@ -68,14 +71,6 @@ function rowKey(choice: RowChoice): string {
 const row = (choice: RowChoice, size: number | null, upTo = false): CardRow =>
   ({ key: rowKey(choice), choice, size, best: choice.kind === 'best', upTo });
 
-function genericRows(withAudio: boolean): CardRow[] {
-  return [
-    row({ kind: 'best' }, null),
-    ...GENERIC_HEIGHTS.map(height => row({ kind: 'video', height }, null, true)),
-    ...(withAudio ? [row({ kind: 'audio' }, null)] : []),
-  ];
-}
-
 /** Rust sends the rows checked, deduped and ordered (videos highest first, 60 fps before 30, then audio). */
 function readRows(choices: CardChoice[]): CardRow[] {
   const rows = choices.map(choice => row(choice.choice, choice.size));
@@ -84,17 +79,12 @@ function readRows(choices: CardChoice[]): CardRow[] {
   return rows;
 }
 
-/**
- * Rows for the card's ▾ menu, or [] when the card shows a plain Download button. Before the read the menu
- * already works with generic ceilings (the engine falls back to the nearest lower height); after the read
- * it lists the link's own formats. A menu needs at least two ways to save.
- */
-export function cardRows(details: CaptureDetails, read: boolean): CardRow[] {
-  if (NO_MENU.has(details.mediaKind ?? '')) return [];
-  if (!read) return genericRows(true);
-  const rows = readRows(details.choices ?? []);
-  // Read, but no format list (a playlist or a page of links): generic ceilings apply to every item.
-  if (rows.length === 0) return details.bestHeight || details.mediaKind === 'audio' ? [] : genericRows(details.hasAudio || !details.mediaKind);
+/** Before the read, only a known audio host can offer a format. Afterward, use the real rows. */
+export function cardRows(details: CaptureDetails, read: boolean, url = ''): CardRow[] {
+  if (NO_MENU.has(details.mediaKind ?? '') || details.mediaKind === 'playlist') return [];
+  if (!read) return isKnownAudioSite(url) ? [row({ kind: 'audio' }, null)] : [];
+  const choices = (details.choices ?? []).filter(c => details.mediaKind !== 'audio' || c.choice.kind === 'audio');
+  const rows = readRows(choices);
   return rows.length >= 2 ? rows : [];
 }
 

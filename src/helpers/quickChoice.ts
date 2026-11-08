@@ -53,6 +53,17 @@ export function optionsForChoice(choice: QuickChoice, formats: MediaFormat[], so
   return { trackType: TrackType.both, ...video[0] };
 }
 
+/** Main-window Start and quick-panel Best share the same saved-options/default policy. */
+export function defaultDownloadOptions(
+  media: Pick<ChoiceSubject, 'formats' | 'audioCodecs' | 'mediaKind'>,
+  stored: DownloadOptions | undefined,
+  defaultChoice: QuickChoice,
+): DownloadOptions {
+  return !stored || (stored.trackType === TrackType.audio && !hasAudio(media))
+    ? optionsForChoice(defaultChoice, media.formats ?? [], media.mediaKind)
+    : stored;
+}
+
 /** Which plain choice an options object corresponds to, or `custom`. */
 export function choiceForOptions(options: DownloadOptions | undefined, formats: MediaFormat[], sourceKind?: SourceMediaKind): QuickChoice | 'custom' {
   if (!options) return 'best';

@@ -4,9 +4,9 @@
     <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-nz-caption">
       <span class="basis-full text-muted-foreground">{{ t('inputFilters.playlistSelection.description') }}</span>
       <template v-if="!hasAdvancedSelection">
-        <label for="playlist-selection-start">{{ t('inputFilters.playlistSelection.fields.start') }}</label>
+        <label :for="`${idPrefix}-start`">{{ t('inputFilters.playlistSelection.fields.start') }}</label>
         <Input
-          id="playlist-selection-start"
+          :id="`${idPrefix}-start`"
           v-model.number="simpleStart"
           type="number"
           step="1"
@@ -15,9 +15,9 @@
           :aria-invalid="!!displaySimpleValidationError || undefined"
           :placeholder="t('inputFilters.playlistSelection.fields.startPlaceholder')"
           @blur="simpleTouched = true" />
-        <label for="playlist-selection-end">{{ t('inputFilters.playlistSelection.fields.end') }}</label>
+        <label :for="`${idPrefix}-end`">{{ t('inputFilters.playlistSelection.fields.end') }}</label>
         <Input
-          id="playlist-selection-end"
+          :id="`${idPrefix}-end`"
           v-model.number="simpleEnd"
           type="number"
           step="1"
@@ -77,7 +77,8 @@ type PlaylistSelectionModalApi = {
 
 type SimplePlaylistIndex = number | '' | null;
 
-const { group } = defineProps({
+const { group, idPrefix } = defineProps({
+  idPrefix: { type: String, default: 'playlist-selection' },
   group: {
     type: Object as PropType<Group>,
     required: true,

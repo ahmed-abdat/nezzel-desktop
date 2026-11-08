@@ -17,6 +17,7 @@ export interface LoginNeeded {
   host: string;
   /** The engine's own reason, else the site's diagnostic code (open: it comes from the error rules). */
   reason: LoginReason | (string & {});
+  blockedBrowser?: string;
   status: 'needed' | 'exhausted';
   candidates: LoginCandidate[];
   /** Profile change for the next operation; no dispatcher slot is waiting. */

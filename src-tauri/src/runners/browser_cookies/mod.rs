@@ -141,3 +141,11 @@ pub(super) fn session_present(host: &str, names: &HashSet<String>) -> bool {
     None => false,
   }
 }
+
+/// Use the same site-specific names for encryption hints and sign-in detection.
+fn is_session_cookie(host: &str, name: &str) -> bool {
+  match session_cookies(host) {
+    Some(SessionCookies::Any(required) | SessionCookies::All(required)) => required.contains(&name),
+    None => false,
+  }
+}

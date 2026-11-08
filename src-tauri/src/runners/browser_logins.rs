@@ -303,6 +303,14 @@ fn discover_in(
               })
           })
           .unwrap_or_default();
+        // Windows Chromium without a known site session has no login to offer.
+        if host.is_some_and(super::browser_cookies::known_login_host)
+          && browser.app_bound_on(os)
+          && !hint.signed_in
+          && !hint.app_bound
+        {
+          continue;
+        }
         found.push(BrowserCandidate {
           id: format!("{}:{}", browser.name(), path.to_string_lossy()),
           browser,
@@ -708,15 +716,81 @@ mod tests {
   #[test]
   fn metadata_queries_ignore_expired_tracking_cookies_and_flag_windows_v20() {
     let now = 2_000_000_000_i64;
-    for (firefox, os, future, session, v20, signed, blocked) in [
-      (false, Os::Mac, true, false, false, true, false),
-      (false, Os::Mac, false, false, false, false, false),
-      (false, Os::Mac, false, true, false, true, false),
-      (true, Os::Linux, true, false, false, true, false),
-      (true, Os::Linux, false, false, false, false, false),
-      (true, Os::Linux, false, true, false, false, false),
-      (false, Os::Windows, true, false, true, true, true),
-      (false, Os::Mac, true, false, true, true, false),
+    for (firefox, os, name, future, session, v20, signed, blocked) in [
+      (false, Os::Mac, "sessionid", true, false, false, true, false),
+      (
+        false,
+        Os::Mac,
+        "sessionid",
+        false,
+        false,
+        false,
+        false,
+        false,
+      ),
+      (false, Os::Mac, "sessionid", false, true, false, true, false),
+      (
+        true,
+        Os::Linux,
+        "sessionid",
+        true,
+        false,
+        false,
+        true,
+        false,
+      ),
+      (
+        true,
+        Os::Linux,
+        "sessionid",
+        false,
+        false,
+        false,
+        false,
+        false,
+      ),
+      (
+        true,
+        Os::Linux,
+        "sessionid",
+        false,
+        true,
+        false,
+        false,
+        false,
+      ),
+      (
+        false,
+        Os::Windows,
+        "sessionid",
+        true,
+        false,
+        true,
+        true,
+        true,
+      ),
+      (
+        false,
+        Os::Windows,
+        "sessionid",
+        true,
+        false,
+        false,
+        true,
+        false,
+      ),
+      (
+        false,
+        Os::Windows,
+        "csrftoken",
+        true,
+        false,
+        true,
+        false,
+        false,
+      ),
+      (false, Os::Windows, "mid", true, false, true, false, false),
+      (false, Os::Mac, "sessionid", true, false, true, true, false),
     ] {
       let root = crate::runners::gallery_files::Staging::new().unwrap();
       let path = root.path.join("Cookies");
@@ -736,7 +810,7 @@ mod tests {
       metadata_db(
         &path,
         firefox,
-        &[(".instagram.com", "sessionid", expires, access, v20)],
+        &[(".instagram.com", name, expires, access, v20)],
       );
       let before = std::fs::read(&path).unwrap();
       let hint = cookie_hint(
@@ -922,7 +996,72 @@ mod tests {
       "instagram.com",
       2_000_000_000,
     );
-    assert!(!hint.signed_in && hint.app_bound);
+    assert!(!hint.signed_in && !hint.app_bound);
+  }
+
+  #[test]
+  fn windows_visitor_cookies_do_not_offer_a_login() {
+    for (host, rows, signed, blocked) in [
+      (
+        "reddit.com",
+        vec![("loid", true), ("csrf_token", true)],
+        false,
+        false,
+      ),
+      (
+        "instagram.com",
+        vec![("csrftoken", true), ("mid", true)],
+        false,
+        false,
+      ),
+      ("reddit.com", vec![("reddit_session", true)], true, true),
+      (
+        "reddit.com",
+        vec![("reddit_session", false), ("loid", true)],
+        true,
+        false,
+      ),
+      (
+        "instagram.com",
+        vec![("sessionid", false), ("mid", true)],
+        true,
+        false,
+      ),
+    ] {
+      let root = crate::runners::gallery_files::Staging::new().unwrap();
+      let path = root
+        .path
+        .join("local/Microsoft/Edge/User Data/Default/Network/Cookies");
+      let rows: Vec<_> = rows
+        .iter()
+        .map(|(name, v20)| (host, *name, 0, 0, *v20))
+        .collect();
+      metadata_db(&path, false, &rows);
+      let env = BrowserEnv {
+        local: root.path.join("local"),
+        ..BrowserEnv::test(Os::Windows).at(&root.path)
+      };
+      let found = discover_in(&env, None, Some(host));
+      assert_eq!(found.len(), usize::from(signed), "{host}: {rows:?}");
+      if signed {
+        assert_eq!((found[0].signed_in, found[0].app_bound), (signed, blocked));
+      }
+    }
+    // A site without known session names keeps the old rule: any v20 row marks the jar unreadable.
+    let root = crate::runners::gallery_files::Staging::new().unwrap();
+    let path = root
+      .path
+      .join("local/Microsoft/Edge/User Data/Default/Network/Cookies");
+    metadata_db(&path, false, &[("twitch.tv", "auth-token", 0, 0, true)]);
+    let env = BrowserEnv {
+      local: root.path.join("local"),
+      ..BrowserEnv::test(Os::Windows).at(&root.path)
+    };
+    let found = discover_in(&env, None, Some("twitch.tv"));
+    assert!(
+      !found.is_empty() && found.iter().all(|c| c.app_bound),
+      "{found:?}"
+    );
   }
 
   #[test]

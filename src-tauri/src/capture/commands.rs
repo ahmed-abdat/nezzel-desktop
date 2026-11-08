@@ -129,18 +129,43 @@ pub fn capture_retry(app: AppHandle, window: WebviewWindow) -> Result<(), String
   Ok(())
 }
 
-/// The card's format list opened or closed: resize to `height` (clamped) and keep the card on its corner,
-/// so on Windows and Linux it grows upward from the taskbar instead of past the screen edge.
+/// The card's presentation state: fit an open/closed list on its corner, or report interaction.
+/// Engagement is scoped to the offer id, so late messages cannot hold or release a replacement.
+/// Returns native visibility so the reused webview clears its interaction state after hiding.
 #[tauri::command]
-pub fn capture_fit(app: AppHandle, window: WebviewWindow, height: f64) -> Result<(), String> {
-  let height = fit_height(height)
-    .filter(|_| CaptureWindow::from_label(window.label()) == Some(CaptureWindow::Card))
-    .ok_or("capture unavailable")?;
-  window
-    .set_size(tauri::LogicalSize::new(CARD_WIDTH, height))
-    .map_err(|_| "capture unavailable")?;
-  place_card(&app, &window, height);
-  Ok(())
+pub fn capture_fit(
+  app: AppHandle,
+  window: WebviewWindow,
+  height: Option<f64>,
+  id: Option<u64>,
+  engaged: Option<bool>,
+) -> Result<bool, String> {
+  if capture_window(&window)? != CaptureWindow::Card {
+    return Err("capture unavailable".into());
+  }
+  let visible = window.is_visible().map_err(|_| "capture unavailable")?;
+  if let Some(engaged) = engaged {
+    let id = id.ok_or("capture unavailable")?;
+    let state = app.state::<CaptureState>();
+    if let Some(slot) = state
+      .offers
+      .lock()
+      .unwrap()
+      .slot_mut(CaptureWindow::Card)
+      .as_mut()
+    {
+      slot.card_timer.engage(id, engaged && visible);
+    }
+    state.changed.notify_waiters();
+  }
+  if let Some(height) = height {
+    let height = fit_height(height).ok_or("capture unavailable")?;
+    window
+      .set_size(tauri::LogicalSize::new(CARD_WIDTH, height))
+      .map_err(|_| "capture unavailable")?;
+    place_card(&app, &window, height);
+  }
+  Ok(visible)
 }
 
 /// Messages for the main window after `after`, the last seq it handled (which acknowledges everything up to it).

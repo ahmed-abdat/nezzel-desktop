@@ -51,9 +51,13 @@ export interface AudioOutputSettings {
   postprocessArgs: string;
 }
 
+export type CardPosition = 'automatic' | 'top-start' | 'top-end' | 'bottom-start' | 'bottom-end';
+
 export interface InputSettings {
   autoFillClipboard: boolean;
   watchClipboard: boolean;
+  cardKeepOpen: boolean;
+  cardPosition: CardPosition;
   captureShortcut: string;
   preferVideoInMixedLinks: boolean;
   globalShortcuts: boolean;
@@ -207,6 +211,8 @@ export const defaultNetworkSettings: NetworkSettings = {
 export const defaultInputSettings: InputSettings = {
   autoFillClipboard: true,
   watchClipboard: true,
+  cardKeepOpen: false,
+  cardPosition: 'automatic',
   captureShortcut: DEFAULT_CAPTURE_SHORTCUT,
   preferVideoInMixedLinks: false,
   globalShortcuts: true,

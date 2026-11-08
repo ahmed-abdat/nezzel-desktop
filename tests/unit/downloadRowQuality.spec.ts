@@ -1,8 +1,12 @@
 import { mount } from '@vue/test-utils';
 import { defineComponent, ref } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { useDownloadRow } from '../../src/composables/useDownloadRow';
+import { useMediaStore } from '../../src/stores/media/media';
+import { useMediaProgressStore } from '../../src/stores/media/progress';
+import { ProgressCategory, ProgressStage } from '../../src/tauri/types/progress';
+import { installTauriMock } from '../utils/tauriMock';
 import { phaseOf } from '../../src/helpers/groupView';
 import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
 import DownloadRow from '../../src/components/downloads/DownloadRow.vue';
@@ -136,5 +140,140 @@ describe('inspector thumbnail privacy', () => {
       inspector.unmount();
       Object.assign(settings, before);
     }
+  });
+});
+
+describe('inspector playlist selection', () => {
+  it('lets a captured playlist choose a subset before any download', async () => {
+    const expand = vi.fn();
+    const download = vi.fn();
+    installTauriMock({ media_playlist_expand: expand, media_download: download });
+    const entries = [{ index: 0, videoUrl: 'https://example.com/one' }, { index: 1, videoUrl: 'https://example.com/two' }];
+    const item = { id: 'playlist-leader', isLeader: true, url: 'https://example.com/list', audioCodecs: [], formats: [], filesize: 0, entries };
+    const groups = useMediaGroupStore();
+    groups.createGroup({ ...item, id: 'capture-playlist', title: 'Playlist', total: 2, processed: 0, errored: 0, isCombined: false, items: { [item.id]: item } });
+    useMediaStateStore().setGroupState('capture-playlist', MediaState.playlistSelection);
+    useDownloadSheetStore().show('capture-playlist');
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const inspector = mount(DownloadInspector, { global: { plugins: [router, i18n] } });
+    try {
+      await inspector.get('#inspector-playlist-selection-start').setValue('1');
+      await inspector.get('#inspector-playlist-selection-end').setValue('1');
+      const apply = inspector.findAll('button').find(button => button.text() === 'Download selected items');
+      await apply!.trigger('click');
+      expect(expand).toHaveBeenCalledWith('media_playlist_expand', expect.objectContaining({ groupId: 'capture-playlist', entries: [entries[0]] }));
+      expect(download).not.toHaveBeenCalled();
+    } finally {
+      inspector.unmount();
+    }
+  });
+});
+describe('row queue label', () => {
+  it.each([[false, 'en', 'Queued', 'Initializing'], [true, 'ar', 'في الانتظار', 'جارٍ التهيئة'], [false, 'fr', 'En attente', 'Initialisation']] as const)('labels a waiting row until a job starts (playlist: %s, locale: %s)', async (combined, locale, queued, initializing) => {
+    const previousLocale = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    installTauriMock({});
+    const groups = useMediaGroupStore();
+    const group = { id: 'waiting', url: 'https://example.com/v', total: combined ? 2 : 1, processed: 1, errored: 0, isCombined: combined,
+      audioCodecs: [], formats: [], filesize: 0, items: {
+        leader: { id: 'leader', isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats: [], filesize: 0,
+          ...(combined ? { entries: [{ index: 0, videoUrl: 'https://example.com/child' }] } : {}) },
+        ...(combined ? { child: { id: 'child', url: 'https://example.com/child', audioCodecs: [], formats: [], filesize: 0 } } : {}),
+      } };
+    groups.createGroup(group);
+    const host = mount(defineComponent({ setup: () => useDownloadRow(ref(groups.findGroupById(group.id)!)), render: () => null }), { global: { plugins: [i18n] } });
+    try {
+      await useMediaStore().downloadGroup(group.id, { trackType: TrackType.both });
+      await nextTick();
+      const vm = host.vm as unknown as { metaLine: string[]; percent: number | null };
+      expect(vm.metaLine).toContain(queued);
+      expect(vm.metaLine).not.toContain(initializing);
+      expect(vm.percent).toBeNull();
+      useMediaProgressStore().processMediaProgressStagePayload({ id: combined ? 'child' : 'leader', groupId: group.id, stage: ProgressStage.initializing });
+      await nextTick();
+      expect(vm.metaLine).not.toContain(queued);
+      if (!combined) expect(vm.metaLine).toContain(initializing);
+    } finally {
+      host.unmount();
+      i18n.global.locale.value = previousLocale;
+    }
+  });
+});
+
+describe('retained download progress', () => {
+  it('shows playlist completion between children waiting for a slot', async () => {
+    installTauriMock({});
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'between-children', url: 'https://example.com/list', total: 2, processed: 2, errored: 0, isCombined: true,
+      audioCodecs: [], formats: [], filesize: 0, items: {
+        leader: { id: 'leader', isLeader: true, entries: [], url: 'https://example.com/list', audioCodecs: [], formats: [], filesize: 0 },
+        first: { id: 'first', url: 'https://example.com/first', audioCodecs: [], formats: [], filesize: 0 },
+        second: { id: 'second', url: 'https://example.com/second', audioCodecs: [], formats: [], filesize: 0 },
+      } });
+    const states = useMediaStateStore();
+    states.setGroupState('between-children', MediaState.downloadingList);
+    states.setState('first', MediaState.done);
+    states.setState('second', MediaState.downloadingList);
+    useMediaProgressStore().processMediaProgressStagePayload({ id: 'second', groupId: 'between-children', stage: ProgressStage.queued });
+    const host = mount(defineComponent({ setup: () => useDownloadRow(ref(groups.findGroupById('between-children'))), render: () => null }), { global: { plugins: [i18n] } });
+    try {
+      const vm = host.vm as unknown as { percent: number | null; metaLine: string[] };
+      expect(vm.percent).toBe(50);
+      expect(vm.metaLine).toContain('1/2');
+      expect(vm.metaLine).not.toContain('Queued');
+    } finally { host.unmount(); }
+  });
+
+  it('retains a paused percentage while queued and resuming, then accepts new progress', async () => {
+    installTauriMock({});
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'resumed', url: 'https://example.com/video', total: 1, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'item', isLeader: true, url: 'https://example.com/video', audioCodecs: [], formats: [], filesize: 0 } } });
+    const progress = useMediaProgressStore();
+    const states = useMediaStateStore();
+    states.setGroupState('resumed', MediaState.paused);
+    progress.processMediaProgressStagePayload({ id: 'item', groupId: 'resumed', stage: ProgressStage.downloading });
+    progress.processMediaProgressPayload({ id: 'item', groupId: 'resumed', category: ProgressCategory.video, percentage: 36 });
+    const host = mount(defineComponent({ setup: () => useDownloadRow(ref(groups.findGroupById('resumed'))), render: () => null }), { global: { plugins: [i18n] } });
+    try {
+      const vm = host.vm as unknown as { percent: number | null; metaLine: string[] };
+      expect(vm.percent).toBe(36);
+      await useMediaStore().downloadGroup('resumed', { trackType: TrackType.both });
+      await nextTick();
+      expect(progress.findDownloadProgress('resumed')?.percentage).toBe(36);
+      expect(vm.percent).toBe(36);
+      expect(vm.metaLine).toContain('Queued');
+      progress.processMediaProgressStagePayload({ id: 'item', groupId: 'resumed', stage: ProgressStage.initializing });
+      await nextTick();
+      expect(vm.percent).toBe(36);
+      expect(vm.metaLine).toContain('Resuming…');
+      progress.processMediaProgressStagePayload({ id: 'item', groupId: 'resumed', stage: ProgressStage.downloading });
+      progress.processMediaProgressPayload({ id: 'item', groupId: 'resumed', category: ProgressCategory.video, percentage: 40 });
+      await nextTick();
+      expect(vm.percent).toBe(40);
+      expect(vm.metaLine).not.toContain('Resuming…');
+    } finally { host.unmount(); }
+  });
+});
+
+describe('row cancellation controls', () => {
+  it.each(['button', 'Delete'] as const)('cancels immediately using %s', async (gesture) => {
+    const cancel = vi.fn();
+    installTauriMock({ group_cancel: cancel });
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'cancel-row', url: 'https://example.com/v', total: 1, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'item', isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaStateStore().setGroupState('cancel-row', MediaState.downloading);
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const row = mount(DownloadRow, { props: { group: groups.findGroupById('cancel-row') }, global: { plugins: [router, i18n] } });
+    try {
+      expect(row.find('button[aria-label="Pause"]').exists()).toBe(true);
+      if (gesture === 'button') await row.get('button[aria-label="Cancel download"]').trigger('click');
+      else await row.get('li').trigger('keydown', { key: 'Delete' });
+      expect(cancel).toHaveBeenCalledWith('group_cancel', { groupId: 'cancel-row', discardFiles: true });
+      expect(groups.findGroupById('cancel-row')).toBeUndefined();
+    } finally { row.unmount(); }
   });
 });

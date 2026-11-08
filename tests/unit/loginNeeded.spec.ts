@@ -6,6 +6,39 @@ import { i18n } from '../../src/i18n';
 import { useLoginStore } from '../../src/stores/login';
 
 describe('login picker profile metadata', () => {
+  it.each(['en', 'ar', 'fr'] as const)('keeps the login reason and engine Details reachable in %s', async (locale) => {
+    const oldLocale = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const store = useLoginStore();
+    const raw = 'ERROR: [Reddit] Account authentication is required. Use --cookies';
+    try {
+      for (const { reason, blockedBrowser, status, expected } of [
+        { reason: 'signInRequired', status: 'exhausted', expected: i18n.global.t('downloads.login.noBrowserWindows') },
+        { reason: 'browserAppBound', status: 'exhausted', expected: i18n.global.t('downloads.login.windowsAppBound') },
+        { reason: 'browserAppBound', blockedBrowser: 'edge', status: 'exhausted', expected: i18n.global.t('downloads.login.windowsAppBoundBrowser', { browser: locale === 'ar' ? '\u2068Edge\u2069' : 'Edge' }) },
+        { reason: 'browserAppBound', blockedBrowser: 'chrome', status: 'needed', expected: i18n.global.t('downloads.login.windowsAppBoundBrowser', { browser: locale === 'ar' ? '\u2068Chrome\u2069' : 'Chrome' }) },
+      ] as const) {
+        store.receive({ requestId: 'details', id: 'item', groupId: 'details', host: 'reddit.com', reason, blockedBrowser, status,
+          candidates: status === 'needed' ? [{ id: 'firefox-token', browser: 'firefox', profile: 'Default', signedIn: false }] : [] });
+        const wrapper = mount(LoginNeeded, { props: { card: store.cardFor('details')!, details: raw }, global: { plugins: [i18n], stubs: { RouterLink: true } } });
+        try {
+          expect(wrapper.text()).toContain(expected);
+          const details = wrapper.findAll('button').find(button => button.text() === i18n.global.t('downloads.row.details'))!;
+          expect(details.attributes('aria-expanded')).toBe('false');
+          await details.trigger('click');
+          expect(details.attributes('aria-expanded')).toBe('true');
+          expect(wrapper.get('[data-testid="login-details"]').text()).toBe(raw);
+          expect(wrapper.get('[data-testid="login-details"]').attributes('dir')).toBe('ltr');
+        } finally {
+          wrapper.unmount();
+          store.forgetGroup('details');
+        }
+      }
+    } finally {
+      i18n.global.locale.value = oldLocale;
+    }
+  });
+
   it('names the refused browser from metadata while its candidate id stays opaque', () => {
     const wrapper = mount(LoginNeeded, {
       props: { card: { kind: 'failed', failure: { groupId: 'opaque', host: 'instagram.com', reason: 'exhausted', tried: '147599e2-568e-469f-a8cd-fbf9a79606ca', browser: 'chrome' } } },

@@ -38,6 +38,9 @@
         </template>
       </dl>
 
+      <div v-if="isPlaylistSelection" class="p-4">
+        <PlaylistSelectionStep :group="group" id-prefix="inspector-playlist-selection" />
+      </div>
       <MediaAttachmentPicker v-if="(group.attachments?.length ?? 0) > 1" :group="group" />
 
       <h3 v-if="hasFormatControls" :id="formatId" class="px-4 pb-1.5 pt-4 text-[11.5px] font-semibold text-muted-foreground">{{ t('sheet.format') }}</h3>
@@ -101,6 +104,7 @@
 </template>
 
 <script setup lang="ts">
+import PlaylistSelectionStep from '../media-card/steps/PlaylistSelectionStep.vue';
 import LoginProfile from './LoginProfile.vue';
 import FileTypeIcon from './FileTypeIcon.vue';
 import { groupFileKind, groupSite, isImageOnly as isImageOnlyGroup } from '../../helpers/groupView';
@@ -167,6 +171,7 @@ watch(() => group.value?.thumbnail, () => {
   thumbFailed.value = false;
 });
 const state = computed(() => (group.value ? stateStore.getGroupState(group.value.id) : undefined));
+const isPlaylistSelection = computed(() => state.value === MediaState.playlistSelection);
 const isReading = computed(() => state.value === MediaState.fetching || state.value === MediaState.fetchingList);
 const loginBusy = computed(() => isReading.value || state.value === MediaState.downloading || state.value === MediaState.downloadingList);
 const formats = computed(() => group.value?.formats ?? []);
@@ -185,7 +190,7 @@ const fileDetails = computed(() => {
     host ? { key: 'source', label: t('files.source'), value: host, ltr: true } : undefined,
   ].filter((row): row is NonNullable<typeof row> => !!row);
 });
-const hasFormatControls = computed(() => !isImageOnly.value && !isFile.value);
+const hasFormatControls = computed(() => !isPlaylistSelection.value && !isImageOnly.value && !isFile.value);
 const hasAttachments = computed(() => !!group.value?.attachments?.length);
 const title = computed(() => group.value?.title ?? group.value?.url ?? '');
 const duration = computed(() => formatDuration(group.value?.duration ?? 0, { pad: true }));

@@ -8,21 +8,27 @@
     data-testid="capture-picks"
     @keydown="onArrow"
   >
-    <tooltip v-for="pick in secondary" :key="pick.key" :content="t('capture.pick.keyTip', { n: keyOf(pick.key) })">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        :disabled="disabled"
-        :aria-keyshortcuts="String(keyOf(pick.key))"
-        :data-pick="pick.key"
-        @click="emit('pick', pick.key)"
-      >
-        <Music v-if="pick.key === 'audio'" aria-hidden="true" />
-        <bdi>{{ label(pick) }}</bdi>
-        <bdi v-if="!compact && pick.size" class="tnum font-normal text-muted-foreground">{{ formatSize(pick.size) }}</bdi>
-      </Button>
-    </tooltip>
+    <div class="grid h-8 w-[272px] shrink-0 grid-cols-2 gap-2">
+      <div v-if="loading" class="col-span-2 grid grid-cols-2 gap-2" role="status" :aria-label="t('capture.loading')" data-testid="capture-choices-loading">
+        <Skeleton v-for="slot in 2" :key="slot" class="h-8 w-full" />
+      </div>
+      <tooltip v-for="pick in secondary" :key="pick.key" :content="t('capture.pick.keyTip', { n: keyOf(pick.key) })">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          class="w-full min-w-0 last:col-start-2"
+          :disabled="disabled"
+          :aria-keyshortcuts="String(keyOf(pick.key))"
+          :data-pick="pick.key"
+          @click="emit('pick', pick.key)"
+        >
+          <Music v-if="pick.key === 'audio'" aria-hidden="true" />
+          <bdi class="shrink-0">{{ label(pick) }}</bdi>
+          <bdi v-if="!compact && pick.size" class="tnum min-w-0 truncate font-normal text-muted-foreground">{{ formatSize(pick.size) }}</bdi>
+        </Button>
+      </tooltip>
+    </div>
     <tooltip :content="t('capture.pick.keyTip', { n: keyOf('best') })" :disabled="secondary.length === 0">
       <Button
         :type="submit ? 'submit' : 'button'"
@@ -34,7 +40,7 @@
         @click="!submit && emit('pick', 'best')"
       >
         <LoaderCircle v-if="acting" class="animate-spin" aria-hidden="true" /><ArrowDownToLine v-else aria-hidden="true" />
-        {{ acting ? t('capture.starting') : compact ? t('capture.pick.download') : t('capture.downloadBest') }}
+        {{ acting ? t('capture.starting') : chooseItems ? t('capture.chooseItems') : compact ? t('capture.pick.download') : t('capture.downloadBest') }}
       </Button>
     </tooltip>
   </div>
@@ -46,13 +52,14 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ArrowDownToLine, LoaderCircle, Music } from '@lucide/vue';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import Tooltip from '@/components/ui/tooltip/Tooltip.vue';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import type { CapturePick, PickKey } from '../../helpers/captureChoices';
 import { SMALL_MAX_HEIGHT } from '@/generated/contract';
 
-const props = defineProps<{ picks: CapturePick[]; disabled: boolean; acting: boolean; compact?: boolean; submit?: boolean }>();
+const props = defineProps<{ picks: CapturePick[]; disabled: boolean; acting: boolean; compact?: boolean; submit?: boolean; loading?: boolean; chooseItems?: boolean }>();
 const emit = defineEmits<{ pick: [key: PickKey] }>();
 const { t } = useI18n();
 const { size: formatSize } = useLocaleNumber();

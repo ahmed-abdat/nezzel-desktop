@@ -10,12 +10,19 @@ describe('quick picks in the bar', () => {
   const d = (over: Partial<CaptureDetails>): CaptureDetails => ({ ...emptyDetails(), ...over });
   const keys = (details: CaptureDetails, read = true) => capturePicks(details, read).map(pick => pick.key);
 
-  it('offers every pick before the read: they work right away', () => {
-    expect(capturePicks(emptyDetails(), false)).toEqual([
-      { key: 'best', height: null, size: null },
-      { key: 'audio', height: null, size: null },
-      { key: 'small', height: 720, size: null },
-    ]);
+  it.each([
+    ['reading', emptyDetails(), false, 'https://example.com/video', [], []],
+    ...['soundcloud.com', 'mixcloud.com', 'bandcamp.com', 'audiomack.com'].map(host =>
+      [host, emptyDetails(), false, `https://artist.${host}/track`, ['best', 'audio'], ['audio']]),
+    ['unsupported Apple Music', emptyDetails(), false, 'https://music.apple.com/album/1', [], []],
+    ['lookalike host', emptyDetails(), false, 'https://soundcloud.com.example.org/track', [], []],
+    ['read video', d({ mediaKind: 'video', bestHeight: 1080, hasAudio: true, smallHeight: 720, choices: [{ choice: { kind: 'video', height: 1080 }, size: null }, { choice: { kind: 'audio' }, size: null }] }), true, '', ['best', 'audio', 'small'], ['video:1080', 'audio']],
+    ['read audio-only', d({ mediaKind: 'audio', hasAudio: true }), true, '', ['best'], []],
+    ['photos override audio host', d({ mediaKind: 'image', photos: 1 }), true, 'https://bandcamp.com/merch/photo', ['best'], []],
+    ['playlist', d({ mediaKind: 'playlist' }), true, '', [], []],
+  ] as [string, CaptureDetails, boolean, string, string[], string[]][])('%s offers only supported choices', (_name, details, read, url, picks, rows) => {
+    expect(capturePicks(details, read, url).map(p => p.key)).toEqual(picks);
+    expect(cardRows(details, read, url).map(r => r.key)).toEqual(rows);
   });
 
   it.each([
@@ -55,21 +62,16 @@ describe('cardRows: the copied-link card format menu', () => {
     expect(rows[3].choice).toEqual({ kind: 'audio', kbps: 160 });
   });
 
-  it('offers generic ceilings before the read and for playlists, but no menu for photos, files or one format', () => {
-    expect(keys({}, false)).toEqual(['best', 'video:1080', 'video:720', 'video:480', 'audio']);
-    expect(keys({ mediaKind: null, bestHeight: null, hasAudio: false, choices: [] })).toEqual(['best', 'video:1080', 'video:720', 'video:480', 'audio']);
+  it('has no generic rows for unread links, playlists, photos, files or one format', () => {
+    expect(keys({}, false)).toEqual([]);
+    expect(keys({ mediaKind: 'playlist', bestHeight: null, choices: [] })).toEqual([]);
+    expect(keys({ mediaKind: null, bestHeight: null, hasAudio: false, choices: [] })).toEqual([]);
     expect(keys({ mediaKind: 'carousel' }, false)).toEqual([]);
     expect(keys({ mediaKind: 'file', choices: [video(1080), audio(128)] })).toEqual([]);
     expect(keys({ choices: [video(720)] })).toEqual([]);
-    expect(keys({ choices: [] })).toEqual([]); // read with a known best but no list: plain Download
+    expect(keys({ choices: [] })).toEqual([]);
     expect(keys({ choices: [video(720), audio(null)] })).toEqual(['video:720', 'audio']);
-  });
-
-  it('marks generic heights as ceilings without sizes; Download best sends best', () => {
-    const rows = cardRows(details({}), false);
-    expect(rows.filter(row => row.upTo).map(row => row.choice)).toEqual([1080, 720, 480].map(height => ({ kind: 'video', height })));
-    expect(rows.every(row => row.size === null)).toBe(true);
-    expect(rows[0].choice).toEqual({ kind: 'best' });
+    expect(keys({ mediaKind: 'audio', choices: [audio(128), audio(48)] })).toEqual(['audio:128', 'audio:48']);
   });
 });
 

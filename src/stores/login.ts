@@ -23,6 +23,7 @@ export interface FailedLogin {
   /** Browser family from candidate metadata; candidate ids are opaque. */
   browser?: string;
   hint?: string;
+  blockedBrowser?: string;
 }
 
 interface TriedProfile {
@@ -54,7 +55,7 @@ export const useLoginStore = defineStore('login', () => {
       const candidate = using.value[request.groupId]?.candidate;
       const last = tried.value[request.host];
       const browser = candidate?.browser ?? last?.browser;
-      failed.value[request.groupId] = { groupId: request.groupId, host: request.host, reason: 'exhausted', tried: candidate?.id ?? last?.id, ...(browser ? { browser } : {}), ...(request.reason === LOGIN_APP_BOUND_REASON ? { hint: request.reason } : {}) };
+      failed.value[request.groupId] = { groupId: request.groupId, host: request.host, reason: 'exhausted', tried: candidate?.id ?? last?.id, ...(browser ? { browser } : {}), ...(request.reason === LOGIN_APP_BOUND_REASON ? { hint: request.reason, blockedBrowser: request.blockedBrowser } : {}) };
       return;
     }
     if (!request.changeOnly) delete failed.value[request.groupId];

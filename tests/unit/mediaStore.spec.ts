@@ -6,9 +6,12 @@ import { useMediaStore } from '../../src/stores/media/media';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaDestinationStore } from '../../src/stores/media/destination';
 import { useMediaOptionsStore } from '../../src/stores/media/options';
+import { useMediaProgressStore } from '../../src/stores/media/progress';
+import { ProgressStage } from '../../src/tauri/types/progress';
 import { useMediaStateStore, MediaState } from '../../src/stores/media/state';
 import { useSettingsStore } from '../../src/stores/settings';
 import { useWatchClipboardStore } from '../../src/stores/watchClipboard';
+import { useUiPrefs } from '../../src/composables/useUiPrefs';
 import { useLoginStore } from '../../src/stores/login';
 import type { LoginUsing } from '../../src/tauri/types/login';
 import { defaultSettings } from '../../src/tauri/types/config';
@@ -70,6 +73,84 @@ function createPlaylistGroup(groupId: string, total: number): Group {
 }
 
 describe('media store', () => {
+  it('cancels immediately through removal and Undo requeues the saved group with every option', async () => {
+    const requests: { cmd: string; args: unknown }[] = [];
+    installTauriMock({
+      group_cancel: (cmd, args) => { requests.push({ cmd, args }); },
+      media_download: (cmd, args) => { requests.push({ cmd, args }); },
+    });
+    const groups = useMediaGroupStore();
+    const store = useMediaStore();
+    const options = useMediaOptionsStore();
+    const group = createPlaylistGroup('cancel-me', 1);
+    delete group.items.leader.entries;
+    group.items.leader.attachments = [{ id: 'photo', kind: 'image', url: 'https://example.com/photo.jpg' }];
+    group.attachments = group.items.leader.attachments;
+    groups.createGroup(group);
+    useMediaStateStore().setGroupState(group.id, MediaState.downloading);
+    const chosen = { trackType: TrackType.both, height: 720 };
+    options.setEncodings(group.id, { audio: 'aac', video: 'h264' });
+    options.setTracks(group.id, { audio: 'en', video: 'main' });
+    options.setOverrides(group.id, { output: { downloadDir: '/chosen' } });
+    options.setAttachmentSelection(group.id, ['photo']);
+    await store.downloadGroup(group.id, chosen);
+    const originalRequest = requests.at(-1)!.args as { items: unknown[] };
+    requests.length = 0;
+
+    expect(useMediaProgressStore().findDownloadProgress(group.id)?.stage).toBe(ProgressStage.queued);
+    const undo = store.cancelDownload(group.id)!;
+    expect(groups.findGroupById(group.id)).toBeUndefined();
+    expect(options.getOptions(group.id)).toBeUndefined();
+    expect(requests).toEqual([{ cmd: 'group_cancel', args: { groupId: group.id, discardFiles: true } }]);
+    // Mutating the old reference cannot change the saved cancellation snapshot.
+    group.title = 'Changed after cancel';
+    expect(await undo()).toBe(true);
+    const restored = groups.orderedGroups[0];
+    expect(restored).toMatchObject({ title: 'Playlist', url: group.url });
+    expect(restored.id).not.toBe(group.id);
+    expect(Object.values(restored.items)[0].id).not.toBe('leader');
+    expect(requests.at(-1)).toMatchObject({ cmd: 'media_download', args: { groupId: restored.id, items: originalRequest.items.map(item => ({ ...(item as object), id: expect.any(String) })) } });
+    expect(options.getOptions(restored.id)).toEqual({ trackType: TrackType.both, height: 720 });
+    expect(options.getAttachmentSelection(restored.id)).toEqual(['photo']);
+    // Late events from the cancelled generation cannot complete the replacement.
+    useMediaProgressStore().processMediaCompletePayload({ id: 'leader', groupId: group.id });
+    expect(useMediaStateStore().getGroupState(restored.id)).toBe(MediaState.downloading);
+    await undo();
+    expect(requests.filter(r => r.cmd === 'media_download')).toHaveLength(1);
+  });
+
+  it('Undo keeps three finished playlist items and submits only the seven unfinished items', async () => {
+    const download = vi.fn();
+    installTauriMock({ media_download: download });
+    const groups = useMediaGroupStore();
+    const states = useMediaStateStore();
+    const destinations = useMediaDestinationStore();
+    const group = createPlaylistGroup('partial-playlist', 10);
+    group.isCombined = true;
+    group.processed = 10;
+    for (let index = 0; index < 10; index++) {
+      const id = `child-${index}`;
+      group.items[id] = { id, url: group.entries![index].videoUrl, audioCodecs: [], formats: [], filesize: 0 };
+    }
+    groups.createGroup(group);
+    states.setGroupState(group.id, MediaState.downloadingList);
+    for (let index = 0; index < 10; index++) {
+      states.setState(`child-${index}`, index < 3 ? MediaState.done : MediaState.downloadingList);
+      if (index < 3) destinations.addDestination(group.id, { path: `/downloads/${index}.mp4`, confidence: 100 });
+    }
+    const savedDestinations = [...destinations.getDestinations(group.id)];
+    const undo = useMediaStore().cancelDownload(group.id)!;
+    await undo();
+    const restored = groups.orderedGroups[0];
+    expect(download).toHaveBeenCalledTimes(1);
+    const submitted = download.mock.calls[0][1] as { items: { url: string }[] };
+    expect(submitted.items.map(item => item.url)).toEqual(group.entries!.slice(3).map(entry => entry.videoUrl));
+    const finished = Object.values(restored.items).filter(item => states.getState(item.id) === MediaState.done);
+    expect(finished).toHaveLength(3);
+    expect(destinations.getDestinations(restored.id)).toEqual(savedDestinations);
+    expect(useMediaProgressStore().findGroupProgress(restored.id)).toMatchObject({ done: 3, total: 10 });
+  });
+
   it('keeps successful links and puts rejected links in error', async () => {
     installTauriMock({ media_info: (_cmd, args) => {
       if ((args as { url: string }).url.endsWith('/bad')) throw new Error('queue closed');
@@ -598,5 +679,36 @@ describe('media store', () => {
     expect(sent).toContain(`"trackType":"${trackType}"`);
     if (height) expect(sent).toContain(`"height":${height}`);
     else expect(sent).not.toContain('"height":1080');
+  });
+
+  it.each([false, true])('applies the audio default to quick Best, preserving stored options (%s)', async (stored) => {
+    const writes: unknown[] = [];
+    installTauriMock({
+      media_download: (_cmd, payload) => {
+        writes.push(payload);
+        return 'ok';
+      },
+    });
+    const { defaultChoice } = useUiPrefs();
+    const previous = defaultChoice.value;
+    defaultChoice.value = 'audio';
+    try {
+      const media = useMediaStore();
+      const item = {
+        id: 'capture-default', url: 'https://example.com/video', title: 'Video',
+        audioCodecs: [], videoCodecs: [], filesize: 0, mediaKind: 'video' as const,
+        formats: [{ id: 'v1080', height: 1080, audioCodecs: [], videoCodecs: [] }],
+      };
+      const id = await media.dispatchMediaInfoFetch(item.url, true, true, item);
+      if (stored) useMediaOptionsStore().setOptions(id, { trackType: TrackType.both, height: 720 });
+      await media.downloadPreparedGroup(id);
+      expect(writes).toEqual([expect.objectContaining({
+        items: [expect.objectContaining({
+          format: expect.objectContaining(stored ? { trackType: TrackType.both, height: 720 } : { trackType: TrackType.audio }),
+        })],
+      })]);
+    } finally {
+      defaultChoice.value = previous;
+    }
   });
 });

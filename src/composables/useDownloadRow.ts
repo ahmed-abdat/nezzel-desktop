@@ -57,15 +57,35 @@ export function useDownloadRow(group: Ref<Group>) {
   const single = computed(() => progressStore.findDownloadProgress(group.value.id));
   const list = computed(() => (isList.value ? progressStore.findGroupProgress(group.value.id) : undefined));
 
+  const queued = computed(() => {
+    const pending = Object.values(group.value.items).filter((item) => {
+      const state = stateStore.getState(item.id);
+      return !item.entries && state !== MediaState.done && state !== MediaState.error;
+    });
+    return phase.value === 'downloading' && pending.length > 0
+      && (!isList.value || (list.value?.done ?? 0) === 0)
+      && pending.every(item => progressStore.progress[item.id]?.stage === ProgressStage.queued);
+  });
+
+  /** Keep the last percentage visible while the resumed job waits for its first update. */
+  const resuming = ref(false);
+  watch(phase, (now, before) => {
+    resuming.value = before === 'paused' && now === 'downloading';
+  });
+  watch(() => [single.value?.stage, single.value?.percentage], ([stage, percentage]) => {
+    if (stage === ProgressStage.downloading && percentage != null) resuming.value = false;
+  });
+
   /** 0–100, or null when the engine has no number yet (preparing, merging…). */
   const percent = computed<number | null>(() => {
     if (phase.value === 'done') return 100;
     if (isList.value) {
       const p = list.value;
-      if (!p || !p.total) return null;
+      if (!p || !p.total || queued.value) return null;
       return ((p.done ?? 0) / p.total) * 100;
     }
     const p = single.value;
+    if (queued.value || resuming.value) return p?.percentage ?? null;
     if (!p || p.stage !== ProgressStage.downloading || p.percentage == null) return phase.value === 'paused' ? (p?.percentage ?? null) : null;
     return p.percentage;
   });
@@ -110,15 +130,6 @@ export function useDownloadRow(group: Ref<Group>) {
     }
   });
 
-  /** Paused → downloading: say "Resuming…" until the engine reports a number again. */
-  const resuming = ref(false);
-  watch(phase, (now, before) => {
-    resuming.value = before === 'paused' && now === 'downloading';
-  });
-  watch(percent, (value) => {
-    if (value != null) resuming.value = false;
-  });
-
   /** Seconds this row has been reading (slow sites get a hint, then Retry). One shared clock for all rows. */
   const readingSince = ref<number | null>(null);
   // A retry swaps the items while the row keeps reading: that restarts the clock too.
@@ -152,7 +163,9 @@ export function useDownloadRow(group: Ref<Group>) {
         else parts.push(choiceLabel.value);
         break;
       case 'downloading':
-        if (percent.value == null) parts.push(resuming.value ? t('downloads.row.resuming') : stageLabel.value);
+        if (queued.value) parts.push(statusLocalization.value[ProgressStage.queued]);
+        else if (resuming.value && !isList.value) parts.push(t('downloads.row.resuming'));
+        else if (percent.value == null) parts.push(stageLabel.value);
         else {
           parts.push(isList.value ? `${list.value?.done ?? 0}/${list.value?.total ?? group.value.total}` : formatPct(percent.value));
           if (speed.value) parts.push(speed.value);

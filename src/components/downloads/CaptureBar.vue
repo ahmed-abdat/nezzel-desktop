@@ -25,7 +25,7 @@
             class="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/70"
             @input="edit"
             @paste="onPaste" />
-          <span v-if="offer.resolving || (offer.url && !offer.feed && !offer.title && !offer.failed)" class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary motion-reduce:animate-none" role="status" :aria-label="t('capture.loading')" />
+          <span v-if="offer.resolving || (offer.url && !offer.feed && !offer.read && !offer.failed)" class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary motion-reduce:animate-none" role="status" :aria-label="t('capture.loading')" />
         </div>
         <tooltip :content="t('capture.dismiss')">
           <Button type="button" variant="ghost" size="icon" class="size-9 shrink-0 text-muted-foreground" :aria-label="t('capture.dismiss')" data-testid="capture-close" @click="act('dismiss')">
@@ -47,8 +47,8 @@
             <span v-if="details.duration" class="tnum absolute bottom-1 end-1 rounded-[4px] bg-black/70 px-1 text-[11px] font-medium leading-4 text-white" dir="ltr">{{ formatDuration(details.duration, { pad: true }) }}</span>
           </div>
           <div class="flex min-w-0 flex-1 flex-col gap-0.5">
-            <p class="line-clamp-2 text-start text-[13px] font-medium leading-snug"><bdi dir="auto">{{ offer.title || (slow ? t('capture.stillReading') : t('capture.loading')) }}</bdi></p>
-            <p v-if="slow && !offer.title" class="text-[12px] text-muted-foreground" role="status">{{ t('capture.slowHint') }}</p>
+            <p class="line-clamp-2 text-start text-[13px] font-medium leading-snug"><bdi dir="auto">{{ offer.title || (offer.read ? offer.site : slow ? t('capture.stillReading') : t('capture.loading')) }}</bdi></p>
+            <p v-if="slow && !offer.read" class="text-[12px] text-muted-foreground" role="status">{{ t('capture.slowHint') }}</p>
             <p v-if="details.uploader || offer.site" class="flex min-w-0 items-center gap-1 text-[12px] text-muted-foreground">
               <bdi v-if="details.uploader" class="truncate">{{ details.uploader }}</bdi>
               <span v-if="details.uploader && offer.site" class="nz-sep" aria-hidden="true" />
@@ -78,7 +78,7 @@
         <CaptureFailActions v-if="offer.failed && !editing" :reason="failure" :busy="acting" @act="onFail" />
         <template v-else>
           <Button type="button" variant="ghost" size="sm" :disabled="!ready" @click="act('options')">{{ t('capture.options') }}</Button>
-          <CapturePicks :picks="picks" :disabled="!ready" :acting="acting" submit @pick="pick" />
+          <CapturePicks :picks="picks" :loading="choicesLoading" :choose-items="isPlaylist" :disabled="!ready" :acting="acting" submit @pick="pick" />
         </template>
       </div>
     </form>
@@ -115,7 +115,7 @@ const panel = ref<HTMLElement>();
 let editTimer: ReturnType<typeof setTimeout> | undefined;
 let sizer: ResizeObserver | undefined;
 
-const { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, fileKind, isPhotos, favicon, bestParts, act, onFail, start } = useCaptureOffer({
+const { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, fileKind, isPhotos, isPlaylist, choicesLoading, favicon, bestParts, act, onFail, start } = useCaptureOffer({
   onNewOffer(value, wasEditing) {
     if (wasEditing) return;
     text.value = value.url;
@@ -125,7 +125,7 @@ const { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details
 });
 
 const rtl = computed(() => localeDirection(locale.value) === 'rtl');
-const ready = computed(() => !!offer.value.url && !offer.value.feed && !offer.value.resolving && !editing.value && !acting.value);
+const ready = computed(() => !!offer.value.url && !offer.value.resolving && !editing.value && !acting.value);
 const compactCount = (value: number) => new Intl.NumberFormat(locale.value, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 const escKey = computed(() => (isMac.value ? 'esc' : 'Esc'));
 
@@ -157,8 +157,8 @@ function fitBar() {
   if (height > 0) void getCurrentWindow().setSize(new LogicalSize(window.innerWidth || CAPTURE_BAR_SIZE.width, height)).catch(() => {});
 }
 
-/** Picks for this link: all three before the read (they work right away), then only those that apply. */
-const picks = computed(() => capturePicks(details.value, !!offer.value.title));
+/** Offer only known picks; the primary default action stays available during the read. */
+const picks = computed(() => isPlaylist.value ? [] : capturePicks(details.value, offer.value.read, offer.value.url));
 function pick(key: PickKey) {
   void act('download', pickChoice(key));
 }
@@ -167,7 +167,7 @@ function onPickKey(event: KeyboardEvent) {
   if (!['1', '2', '3'].includes(event.key) || event.metaKey || event.ctrlKey || event.altKey) return;
   if ((event.target as HTMLElement | null)?.closest('input, textarea')) return;
   const key = (['best', 'audio', 'small'] as const)[Number(event.key) - 1];
-  if (!picks.value.some(p => p.key === key)) return;
+  if (key !== 'best' && !picks.value.some(p => p.key === key)) return;
   event.preventDefault();
   pick(key);
 }

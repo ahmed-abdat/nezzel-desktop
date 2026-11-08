@@ -55,7 +55,7 @@
             </p>
           </Tooltip>
 
-          <login-needed v-if="loginCard" class="mt-1" :card="loginCard" :site="site" @retry="retry" />
+          <login-needed v-if="loginCard" class="mt-1" :card="loginCard" :site="site" :details="diagnostic.raw === 'unknown' ? undefined : diagnostic.raw" @retry="retry" />
           <p v-else-if="phase === 'error'" class="mt-0.5 flex items-start gap-1.5 text-[12.5px] font-medium text-destructive-foreground">
             <triangle-alert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
             <!-- What happened, then what to do (muted): every runner error carries both. -->
@@ -107,29 +107,30 @@
             <!-- A permanent refusal (removed, protected, region…) keeps Try again, but quiet: retrying rarely helps. -->
             <Button :variant="errorIsPermanent ? 'ghost' : 'outline'" @click="recover"><Film v-if="recoveryIsSwitch" /><rotate-cw v-else />{{ recoveryLabel }}</Button>
           </template>
-          <!-- Merging or converting: nothing to pause. Cancel takes the same slot, so the row doesn't shift. -->
-          <tooltip v-else-if="processing && loginCard?.kind !== 'needed'" :content="t('downloads.row.cancel')">
-            <Button
-              size="icon-xs"
-              variant="outline"
-              class="rounded-full"
-              :aria-label="t('downloads.row.cancel')"
-              @click="remove"
-            >
-              <x />
-            </Button>
-          </tooltip>
-          <tooltip v-else-if="(phase === 'downloading' || phase === 'paused') && loginCard?.kind !== 'needed'" :content="phase === 'paused' ? t('downloads.row.resume') : t('downloads.row.pause')">
-            <Button
-              size="icon-xs"
-              variant="outline"
-              class="rounded-full"
-              :aria-label="phase === 'paused' ? t('downloads.row.resume') : t('downloads.row.pause')"
-              @click="phase === 'paused' ? download() : pause()"
-            >
-              <Play v-if="phase === 'paused'" /><Pause v-else />
-            </Button>
-          </tooltip>
+          <template v-else-if="phase === 'downloading' || phase === 'paused'">
+            <tooltip v-if="!processing && loginCard?.kind !== 'needed'" :content="phase === 'paused' ? t('downloads.row.resume') : t('downloads.row.pause')">
+              <Button
+                size="icon-xs"
+                variant="outline"
+                class="rounded-full"
+                :aria-label="phase === 'paused' ? t('downloads.row.resume') : t('downloads.row.pause')"
+                @click="phase === 'paused' ? download() : pause()"
+              >
+                <Play v-if="phase === 'paused'" /><Pause v-else />
+              </Button>
+            </tooltip>
+            <tooltip :content="t('downloads.row.cancel')">
+              <Button
+                size="icon-xs"
+                variant="outline"
+                class="rounded-full"
+                :aria-label="t('downloads.row.cancel')"
+                @click="cancel"
+              >
+                <X />
+              </Button>
+            </tooltip>
+          </template>
           <template v-else-if="phase === 'done'">
             <!-- Primary action stays visible (first-time, touch and magnifier users); the folder icon waits for hover. -->
             <tooltip :content="t('downloads.row.noLocation')" :disabled="!!(destination)">
@@ -263,7 +264,7 @@ const cells = computed(() => [
   { key: 'size', value: columns.value.size, cls: 'w-20 text-end', num: true },
   { key: 'length', value: columns.value.length, cls: 'w-16 text-end', num: true },
 ]);
-const { download, pause, retry, recover, recoveryLabel, recoveryIsSwitch, remove, openFile, revealFile, openPage, copyLink, deleteFile, canTrash } = useDownloadActions(group);
+const { download, pause, retry, recover, recoveryLabel, recoveryIsSwitch, remove, cancel, openFile, revealFile, openPage, copyLink, deleteFile, canTrash } = useDownloadActions(group);
 /** Finished with a known file: double-click, thumbnail, title and Enter open it. Nothing else opens. */
 /** A file that only reveals its folder (installer, archive, unknown): the primary action says so. */
 const revealsFile = computed(() => group.value.mediaKind === 'file' && revealsInFolder(destination.value));
@@ -353,7 +354,8 @@ function onKey(event: KeyboardEvent) {
     const rows = Array.from(document.querySelectorAll<HTMLElement>(ROW_SELECTOR));
     const index = rows.indexOf(row);
     const next = rows[index + 1] ?? rows[index - 1];
-    void remove();
+    if (phase.value === 'downloading' || phase.value === 'paused') cancel();
+    else remove();
     void nextTick(() => next?.focus());
   } else if (event.key === ' ') {
     event.preventDefault();

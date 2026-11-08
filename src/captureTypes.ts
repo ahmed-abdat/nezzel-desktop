@@ -33,6 +33,8 @@ export interface CaptureOffer {
   url: string;
   site: string;
   title: string;
+  /** Preview completed, including an untitled result or a failed read. */
+  read: boolean;
   details: CaptureDetails;
   failed: boolean;
   /** Why the read failed (see helpers/captureFailure); null while reading or after success. */

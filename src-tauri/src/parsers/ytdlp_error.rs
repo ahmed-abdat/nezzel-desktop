@@ -769,8 +769,11 @@ ERROR: Unsupported URL: https://hackertube.org/";
       ("ERROR: [TikTok] This post may not be comfortable for some audiences. Log in for access", "signInRequired"),
       ("ERROR: [TikTok] You do not have permission to view this post. Log into an account that has access", "signInRequired"),
       ("ERROR: [twitter] You are not authorized to view this protected tweet", "signInRequired"),
+      ("ERROR: [twitter] 1851261049: Error(s) while querying API: You are not authorized to view this content", "signInRequired"),
       ("ERROR: [Reddit] Quarantined subreddit; an account that has opted in is required", "signInRequired"),
       ("ERROR: [Reddit] Private subreddit; an account that has been approved is required", "signInRequired"),
+      ("ERROR: [Reddit] Account authentication is required. Use --cookies", "signInRequired"),
+      ("ERROR: HTTP Error 429: Too Many Requests. Use --cookies", "rateLimited429"),
       ("ERROR: [twitch] Your account does not have access to this subscriber-only content. Use --cookies", "membersOnly"),
       ("ERROR: [youtube] The uploader has not made this video available in your country", "geoBlocked"),
       ("ERROR: [Reddit] Your IP address is unable to access the Reddit API", "accessForbidden403"),
@@ -815,7 +818,7 @@ ERROR: Unsupported URL: https://hackertube.org/";
       ("ERROR: [TikTok] Wrong password", "unknown"),
       ("ERROR: [Instagram] This content is unreachable", "signInRequired"),
       ("ERROR: [Instagram] Restricted Video", "signInRequired"),
-      ("ERROR: HTTP Error 403: Forbidden. Use --cookies", "signInRequired"),
+      ("ERROR: HTTP Error 403: Forbidden. Use --cookies", "accessForbidden403"),
       ("ERROR: This video does not exist; login required", "signInRequired"),
     ] {
       assert_eq!(parser.parse_line(line).unwrap().code, expected, "{line}");
@@ -880,8 +883,6 @@ ERROR: Unsupported URL: https://hackertube.org/";
       "ERROR: [vimeo] 13739299: The web client only works when logged-in",
       "ERROR: [vimeo] 76979871: The web client only works when logged-in. Use --cookies, --cookies-from-browser, --username and --password to provide account credentials.",
       "ERROR: [vimeo] This content is available to logged-in users",
-      "ERROR: Use --cookies, --cookies-from-browser to provide account cookies",
-      "ERROR: Use --cookies-from-browser to provide account cookies",
       "ERROR: [Instagram] login_required",
       "ERROR: This video is age-restricted",
       "ERROR: [Instagram] DfQUr1dMhUQ: This content isn't available to everyone: It can't be seen by certain audiences.",
@@ -892,10 +893,15 @@ ERROR: Unsupported URL: https://hackertube.org/";
         "{line}"
       );
     }
-    assert_eq!(
-      parser.login_reason("ERROR: HTTP Error 403: Forbidden"),
-      None
-    );
+    for line in [
+      "ERROR: HTTP Error 403: Forbidden",
+      "ERROR: HTTP Error 403: Forbidden. Use --cookies, --cookies-from-browser to provide account cookies",
+      "ERROR: HTTP Error 429: Too Many Requests. Use --cookies-from-browser to provide account cookies",
+      "ERROR: Use --cookies, --cookies-from-browser to provide account cookies",
+      "ERROR: Use --cookies-from-browser to provide account cookies",
+    ] {
+      assert_eq!(parser.login_reason(line), None, "{line}");
+    }
     assert_eq!(parser.login_reason("WARNING: login required"), None);
     assert_eq!(parser.login_reason("ERROR: Unsupported URL"), None);
   }

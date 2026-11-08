@@ -1,4 +1,6 @@
 import { defineStore } from 'pinia';
+import { toRaw } from 'vue';
+import { ProgressStage } from '../../tauri/types/progress';
 import type { MediaDestinationPayload } from '../../tauri/types/destination';
 import type { LibraryRecord } from '../../tauri/types/library';
 import { libraryPathKey } from '../../helpers/folderPath';
@@ -20,6 +22,8 @@ import { notify, notifyGroup } from '../../tauri/notifications';
 import { NotificationKind } from '../../tauri/types/app';
 import { resolvePlaylistIndex } from '../../helpers/playlistNumbering';
 import { optionsForCaptureChoice } from '../../helpers/captureChoices';
+import { defaultDownloadOptions } from '../../helpers/quickChoice';
+import { useUiPrefs } from '../../composables/useUiPrefs';
 import type { CaptureChoice } from '@/generated/contract';
 import { countUsage } from '../../tauri/usage';
 import { settingsToInputFilterOverride } from '../../helpers/inputFilters.ts';
@@ -31,6 +35,7 @@ import {
 
 type PendingReadyGroup = {
   resolve: (groupIds: string[]) => void;
+  stopAtPlaylist?: boolean;
   reject: (reason?: unknown) => void;
 };
 
@@ -48,6 +53,7 @@ export const useMediaStore = defineStore('media', () => {
   const sizeStore = useMediaSizeStore();
   const diagnosticsStore = useMediaDiagnosticsStore();
   const settingsStore = useSettingsStore();
+  const { defaultChoice } = useUiPrefs();
   const removedLibraryPaths = new Set<string>();
   let libraryLoad: Promise<void> | undefined;
   const libraryGroupsByPath = new Map<string, Set<string>>();
@@ -192,7 +198,11 @@ export const useMediaStore = defineStore('media', () => {
       Object.assign(group, meta);
       group.total = total;
       group.processed = 0;
-      if (group.skipPlaylistSelection) {
+      if (pendingReadyGroups.get(groupId)?.stopAtPlaylist) {
+        group.skipPlaylistSelection = false;
+        stateStore.setState(item.id, MediaState.playlistSelection);
+        resolvePendingReadyGroup(groupId, [groupId]);
+      } else if (group.skipPlaylistSelection) {
         void expandPlaylistGroup(groupId, { rows: [] }).catch((error) => {
           console.error(error);
           stateStore.setState(item.id, MediaState.playlistSelection);
@@ -333,8 +343,8 @@ export const useMediaStore = defineStore('media', () => {
   }
 
   /** A captured link's row; `groupId` comes from its capture id, so a later claim on it finds the same row. */
-  function createCaptureGroup(groupId: string, url: string, download: boolean) {
-    const group = createMediaInfoGroup(url, true, download, groupId);
+  function createCaptureGroup(groupId: string, url: string) {
+    const group = createMediaInfoGroup(url, true, false, groupId);
     recentCaptures.set(url, { groupId: group.id, createdAt: Date.now() });
     void notifyGroup(NotificationKind.QueueAdded, group);
     return group.id;
@@ -423,16 +433,16 @@ export const useMediaStore = defineStore('media', () => {
     optionsStore.removeOverrides(previousGroupId);
   }
 
-  function waitForGroupReady(groupId: string): Promise<string[]> {
+  function waitForGroupReady(groupId: string, stopAtPlaylist = false): Promise<string[]> {
     const group = groupStore.findGroupById(groupId);
     const state = stateStore.getGroupState(groupId);
 
-    if (group && state === MediaState.configure) {
+    if (group && (state === MediaState.configure || (stopAtPlaylist && state === MediaState.playlistSelection))) {
       return Promise.resolve([groupId]);
     }
 
     return new Promise<string[]>((resolve, reject) => {
-      pendingReadyGroups.set(groupId, { resolve, reject });
+      pendingReadyGroups.set(groupId, { resolve, reject, stopAtPlaylist });
     });
   }
 
@@ -475,15 +485,21 @@ export const useMediaStore = defineStore('media', () => {
     return readyGroupIds;
   }
 
-  /** `choice`: a quick pick from the bar or card; it decides this download's options once the link is read. */
   /** `choice`: a quick pick or a copied-link card format row; none = the user's default. */
   async function downloadPreparedGroup(groupId: string, choice?: CaptureChoice) {
-    const ready = await waitForGroupReady(groupId);
+    const ready = await waitForGroupReady(groupId, true);
+    // An early Download cannot commit every item when the read turns out to be a playlist.
+    if (stateStore.getGroupState(groupId) === MediaState.playlistSelection) return 'playlist';
     await Promise.all(ready.map((id) => {
       const group = groupStore.findGroupById(id);
-      if (choice && group) optionsStore.setOptions(id, optionsForCaptureChoice(choice, group.formats ?? [], group.mediaKind));
+      if (group) {
+        optionsStore.setOptions(id, choice
+          ? optionsForCaptureChoice(choice, group.formats ?? [], group.mediaKind)
+          : defaultDownloadOptions(group, optionsStore.getOptions(id), defaultChoice.value));
+      }
       return downloadGroup(id, getDownloadOptions(id));
     }));
+    return 'downloaded';
   }
 
   /** `origin`: 'batch' when one action starts several links (the caller counts funnel.batch once); a paused group
@@ -496,7 +512,8 @@ export const useMediaStore = defineStore('media', () => {
     const group = groupStore.findGroupById(groupId);
     if (!group) return;
     const prior = stateStore.getGroupState(groupId);
-    const usageOrigin = prior === MediaState.paused || prior === MediaState.pausedList ? 'resume' : origin ?? 'tap';
+    const resuming = prior === MediaState.paused || prior === MediaState.pausedList;
+    const usageOrigin = resuming ? 'resume' : origin ?? 'tap';
 
     const items: MediaItem[] = Object.values(group.items);
     const itemsWithoutLeader: MediaItem[] = items.filter(item => !item.entries && stateStore.getState(item.id) !== MediaState.done);
@@ -516,10 +533,16 @@ export const useMediaStore = defineStore('media', () => {
     const attachmentIds = hasAttachments ? optionsStore.getAttachmentSelection(groupId) : undefined;
     if (attachmentIds?.length === 0) return;
 
+    // Keep the submitted choice even when it came straight from a global default or capture.
+    optionsStore.setOptions(groupId, { ...options });
     const newState = group.isCombined ? MediaState.downloadingList : MediaState.downloading;
     items
       .filter(item => stateStore.getState(item.id) !== MediaState.done)
-      .forEach(item => stateStore.setState(item.id, newState));
+      .forEach((item) => {
+        stateStore.setState(item.id, newState);
+        if (!resuming) progressStore.deleteProgress(item.id);
+        if (!item.entries) progressStore.processMediaProgressStagePayload({ id: item.id, groupId, stage: ProgressStage.queued });
+      });
 
     try {
       await invoke<string>('media_download', {
@@ -643,6 +666,44 @@ export const useMediaStore = defineStore('media', () => {
     }
   }
 
+  /** Stop through the same removal path as the list; Undo starts a fresh engine generation. */
+  function cancelDownload(id: string) {
+    const original = groupStore.findGroupById(id);
+    if (!original) return;
+    const snapshot = <T>(value: T): T => value == null ? value : structuredClone(toRaw(value));
+    const group = snapshot(original);
+    const itemStates = new Map(Object.values(group.items).map(item => [item.id, stateStore.getState(item.id)]));
+    const destinations = snapshot(destinationStore.getDestinations(id));
+    const options = snapshot(optionsStore.getOptions(id));
+    const encodings = snapshot(optionsStore.getEncodings(id));
+    const tracks = snapshot(optionsStore.getTracks(id));
+    const overrides = snapshot(optionsStore.getOverrides(id));
+    const attachments = optionsStore.getAttachmentSelection(id);
+    const cancellation = deleteGroup(id);
+    let restored = false;
+    return async () => {
+      if (restored) return false;
+      restored = true;
+      await cancellation;
+      // Old jobs may still emit events while stopping. Never reuse their IDs.
+      group.id = uuidv4();
+      group.items = Object.fromEntries(Object.values(group.items).map((item) => {
+        const itemId = uuidv4();
+        const state = itemStates.get(item.id);
+        if (state) stateStore.setState(itemId, state);
+        return [itemId, { ...item, id: itemId, groupId: group.id }];
+      }));
+      groupStore.createGroup(group);
+      for (const destination of destinations) destinationStore.addDestination(group.id, destination);
+      if (options) optionsStore.setOptions(group.id, options);
+      if (encodings) optionsStore.setEncodings(group.id, encodings);
+      if (tracks) optionsStore.setTracks(group.id, tracks);
+      if (overrides) optionsStore.setOverrides(group.id, overrides);
+      optionsStore.setAttachmentSelection(group.id, attachments);
+      return downloadGroup(group.id, options ?? getDownloadOptions(group.id));
+    };
+  }
+
   function deleteGroup(id: string, removeHistory = true) {
     // Even when the row is already gone, a login card may still wait for it.
     useLoginStore().forgetGroup(id);
@@ -665,8 +726,9 @@ export const useMediaStore = defineStore('media', () => {
     diagnosticsStore.removeDiagnostics(group.id);
     destinationStore.deleteDestinations(group.id);
     optionsStore.removeOptions(group.id);
-    void groupStore.cancelGroup(group.id, true).catch(console.error);
+    const cancellation = groupStore.cancelGroup(group.id, true).catch(console.error);
     groupStore.deleteGroup(group.id);
+    return cancellation;
   }
 
   function deleteAllGroups(removeHistory = true) {
@@ -706,6 +768,7 @@ export const useMediaStore = defineStore('media', () => {
     pauseGroup,
     resumeAllGroups,
     deleteGroup,
+    cancelDownload,
     deleteAllGroups,
     deleteGroupsByState,
   };

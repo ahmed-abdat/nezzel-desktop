@@ -125,7 +125,6 @@
         { "kind": "substr", "value": "Account authentication is required" },
         { "kind": "substr", "value": "only works when logged-in" },
         { "kind": "substr", "value": "logged-in" },
-        { "kind": "substr", "value": "Use --cookies" },
         { "kind": "substr", "value": "requires authentication" },
         { "kind": "substr", "value": "log in to" },
         { "kind": "substr", "value": "login to" },
@@ -140,7 +139,7 @@
         { "kind": "substr", "value": "is requiring login for access" },
         { "kind": "substr", "value": "Log in for access" },
         { "kind": "substr", "value": "Log into an account that has access" },
-        { "kind": "substr", "value": "not authorized to view this protected tweet" },
+        { "kind": "substr", "value": "not authorized to view" },
         { "kind": "substr", "value": "Quarantined subreddit" },
         { "kind": "substr", "value": "Private subreddit" }
       ]

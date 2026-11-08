@@ -325,6 +325,7 @@
           "other": "other"
         },
         "status": {
+          "queued": "Queued",
           "initializing": "Initializing",
           "downloading": "Downloading",
           "merging": "Merging",
@@ -1479,6 +1480,7 @@
       },
       "stillReading": "Still reading… {s} s",
       "readingStuck": "This site is slow to answer. Retry or remove it",
+      "cancelled": "Download cancelled",
       "resuming": "Resuming…",
       "cancel": "Cancel download"
     },
@@ -1495,13 +1497,15 @@
       "tryAnother": "Try another browser",
       "settings": "Login settings",
       "refusedBrowser": "{site} didn't accept your {browser} login. Log in to {site} in {browser}, or try another browser",
-      "noBrowser": "Couldn't find a browser login that {site} accepts",
+      "noBrowser": "This site wants you to log in (on some networks it asks everyone). Sign in to it in your browser, or add a cookies file in Login settings",
+      "noBrowserWindows": "This site wants you to log in (on some networks it asks everyone). Sign in with Firefox, or add a cookies file in Login settings",
       "turnedOff": "{site} needs you to be logged in. Browser logins are off in Login settings",
       "thisSite": "this site",
       "signedIn": "logged in to {host}",
       "usingProfile": "Using {profile}",
       "changeProfile": "Change profile",
-      "windowsAppBound": "Your browser on Windows locks its login while it's open. Close it and try again, or use Firefox",
+      "windowsAppBound": "Edge and Chrome on Windows don't let other apps use their logins. Sign in to this site in Firefox, or add a cookies file in Login settings",
+      "windowsAppBoundBrowser": "{browser} on Windows doesn't let other apps use its logins. Sign in to this site in Firefox, or add a cookies file in Login settings",
       "expired": "That login request expired. Try the link again",
       "again": "Log in again",
       "skipped": "You skipped the login, so {site} didn't allow this download",
@@ -1622,6 +1626,15 @@
       "card": "Pop up a card for copied links",
       "cardHint": "Shows a small card over other apps when you copy a link, even when Nezzel is in the background. Nothing downloads until you choose",
       "cardFocusHint": "On this desktop, copied links are picked up when Nezzel's window is in front.",
+      "cardKeepOpen": "Keep the card open until I close it",
+      "cardPosition": "Card position",
+      "cardPositions": {
+        "automatic": "Automatic",
+        "top-start": "Top left",
+        "top-end": "Top right",
+        "bottom-start": "Bottom left",
+        "bottom-end": "Bottom right"
+      },
       "choose": "Choose…"
     },
     "logins": {
@@ -1788,6 +1801,7 @@
     "copiedLink": "Copied link",
     "dismiss": "Dismiss",
     "url": "Video or audio link",
+    "chooseItems": "Choose items",
     "downloadBest": "Download best",
     "options": "Options",
     "loading": "Reading the link…",
@@ -1829,7 +1843,7 @@
     "slowHint": "This site is slow. You can start the download now; Nezzel keeps reading in the list",
     "actionFailed": "Couldn't start the download. Try again",
     "starting": "Starting…",
-    "feedPage": "This is a feed, not a post. Open one post, then copy its link",
+    "feedPage": "Choose which items to save in the main window",
     "pick": {
       "group": "Download as",
       "download": "Download",

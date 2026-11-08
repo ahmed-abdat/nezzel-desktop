@@ -141,6 +141,13 @@ pub fn setup_download_dispatcher(
     },
     |tx, app: AppHandle, entry: DownloadEntry| async move {
       tracing::info!(download_id = %entry.id, "Starting download");
+      if let Some(progress) = starting_progress(
+        &entry.id,
+        &entry.group_id,
+        crate::scheduling::group_state::is_group_running(&entry.group_id),
+      ) {
+        crate::events::emit(&app, crate::events::MEDIA_PROGRESS_STAGE, progress);
+      }
       crate::usage::download_started(&app, &entry);
 
       let result = crate::runners::gallery::run_media_download(app.clone(), entry.clone()).await;
@@ -199,4 +206,35 @@ pub fn finish_download(
 
 pub fn forget_group_counter(group_id: &str) {
   DOWNLOAD_COUNTERS.lock().unwrap().remove(group_id);
+}
+
+/// Called only after the dispatcher has acquired a download slot.
+fn starting_progress(
+  id: &str,
+  group_id: &str,
+  running: bool,
+) -> Option<crate::models::MediaProgressStage> {
+  running.then(|| crate::models::MediaProgressStage {
+    id: id.to_owned(),
+    group_id: group_id.to_owned(),
+    stage: crate::models::ProgressStage::Initializing,
+  })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn started_job_reports_initializing_for_its_item_and_group() {
+    let progress = starting_progress("item", "group", true).unwrap();
+    assert_eq!(progress.id, "item");
+    assert_eq!(progress.group_id, "group");
+    assert_eq!(progress.stage, crate::models::ProgressStage::Initializing);
+  }
+
+  #[test]
+  fn paused_or_cancelled_job_does_not_report_starting() {
+    assert!(starting_progress("item", "group", false).is_none());
+  }
 }

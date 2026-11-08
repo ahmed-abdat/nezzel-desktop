@@ -4,7 +4,7 @@ use super::choice::Choice;
 use super::outbox::Outbox;
 use super::policy::{supported_url, CapturePolicy};
 use super::preview::{self, FailReason};
-use super::window::CaptureWindow;
+use super::window::{CaptureWindow, CardTimer};
 use serde::Serialize;
 use std::{
   sync::{
@@ -60,6 +60,8 @@ pub struct Offer {
   pub url: String,
   pub site: String,
   pub title: String,
+  /// The preview finished (success or failure); independent of whether the item has a title.
+  pub read: bool,
   pub details: preview::PreviewDetails,
   pub failed: bool,
   /// Why the read failed (`preview::reason_for_code` vocabulary); None while reading or after success.
@@ -94,6 +96,7 @@ pub(super) enum Claim {
 /// One capture window's current offer and everything that lives exactly as long as it.
 pub(super) struct OfferSlot {
   pub(super) offer: Offer,
+  pub(super) card_timer: CardTimer,
   /// The read's media item: None while reading, Some(None) when the read failed.
   pub(super) metadata: Option<Option<serde_json::Value>>,
   pub(super) claim: Claim,
@@ -102,10 +105,13 @@ pub(super) struct OfferSlot {
 }
 
 impl OfferSlot {
-  fn new(offer: Offer) -> Self {
+  fn new(mut offer: Offer) -> Self {
+    offer.read = offer.feed;
     Self {
+      card_timer: CardTimer::new(&offer),
+      // Feed pages have no preview job. Deliver None immediately so the main window reads the list.
+      metadata: offer.feed.then_some(None),
       offer,
-      metadata: None,
       claim: Claim::None,
       job: None,
     }
@@ -201,6 +207,7 @@ impl Offers {
       return false;
     };
     let current = &mut slot.offer;
+    current.read = true;
     current.failed = item.is_none();
     current.reason = reason;
     if let Some(item) = &item {
@@ -367,6 +374,7 @@ pub struct CaptureState {
   pub(super) started: Instant,
   pub(crate) shortcut: Mutex<Option<String>>,
   pub(super) changed: tokio::sync::Notify,
+  pub(super) card_keep_open: AtomicBool,
   pub shortcut_failed: AtomicBool,
   /// Why the global shortcut cannot work in this session ("wayland"), when it can't.
   pub(crate) shortcut_reason: Mutex<Option<&'static str>>,
@@ -392,6 +400,7 @@ impl Default for CaptureState {
       started: Instant::now(),
       shortcut: Mutex::default(),
       changed: tokio::sync::Notify::new(),
+      card_keep_open: AtomicBool::new(false),
       shortcut_failed: AtomicBool::new(false),
       shortcut_reason: Mutex::default(),
       data_control: tokio::sync::OnceCell::new(),
@@ -482,6 +491,39 @@ pub(super) fn dismiss_offer(state: &CaptureState, window: CaptureWindow, id: u64
 #[cfg(test)]
 pub(super) mod tests {
   use super::*;
+
+  #[test]
+  fn read_completion_is_independent_of_title_and_success() {
+    for item in [Some(serde_json::json!({"formats": []})), None] {
+      let mut offers = Offers::default();
+      offers.replace(
+        CaptureWindow::Bar,
+        Offer {
+          id: 1,
+          ..Offer::default()
+        },
+      );
+      assert!(!offers.current(CaptureWindow::Bar).unwrap().read);
+      assert!(offers.record_read(CaptureWindow::Bar, 1, item, None, None));
+      let offer = offers.current(CaptureWindow::Bar).unwrap();
+      assert!(offer.read);
+      assert!(offer.title.is_empty());
+    }
+  }
+
+  #[test]
+  fn feeds_without_a_preview_job_deliver_a_fallback_read() {
+    let mut offers = Offers::default();
+    let offer = Offer {
+      id: 1,
+      url: "https://www.youtube.com/feed/subscriptions".into(),
+      feed: true,
+      ..Offer::default()
+    };
+    offers.replace(CaptureWindow::Bar, offer);
+    assert_eq!(offers.item(1), ItemState::Read(None));
+    assert!(offers.current(CaptureWindow::Bar).unwrap().read);
+  }
 
   #[test]
   fn offer_blocks_remote_images_when_proxy_is_enabled_even_without_an_address() {
