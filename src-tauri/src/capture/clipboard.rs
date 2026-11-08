@@ -1,4 +1,4 @@
-//! Clipboard reads for the capture watcher and paste (by `crate::platform` session), and
+//! Clipboard reads and writes (by `crate::platform` session), and
 //! rate-limited diagnostics. Logs carry kinds only, never clipboard text or URLs.
 //!
 //! Linux: arboard (behind tauri-plugin-clipboard-manager) talks X11 or the Wayland data-control
@@ -8,10 +8,107 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+use super::state::CaptureState;
 use crate::platform::Session;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Writer {
+  Plugin,
+  Gtk,
+}
+
+/// GTK owns the native Wayland selection without requiring data-control. Keep other platforms'
+/// existing plugin writer, including X11. Data-control availability does not affect this choice.
+fn writer_for(session: Session, linux: bool) -> Writer {
+  if linux && session == Session::Wayland {
+    Writer::Gtk
+  } else {
+    Writer::Plugin
+  }
+}
+
+fn write_locked(
+  state: &CaptureState,
+  text: &str,
+  suppress_offer: bool,
+  write: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+  // Lock where the write actually runs, not while awaiting main-thread dispatch. A watcher that
+  // reads the new selection must wait until its self-write suppression has been recorded.
+  let mut policy = state.policy.lock().unwrap();
+  write()?;
+  if suppress_offer {
+    policy.own_write(text, state.started.elapsed());
+  }
+  Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn write_gtk(text: &str) -> Result<(), String> {
+  let display = gtk::gdk::Display::default().ok_or("clipboard unavailable")?;
+  let clipboard = gtk::Clipboard::default(&display).ok_or("clipboard unavailable")?;
+  let targets: Vec<_> = [
+    "UTF8_STRING",
+    "COMPOUND_TEXT",
+    "TEXT",
+    "STRING",
+    "text/plain;charset=utf-8",
+    "text/plain",
+  ]
+  .iter()
+  .map(|target| gtk::TargetEntry::new(target, gtk::TargetFlags::empty(), 0))
+  .collect();
+  let text = text.to_owned();
+  // Unlike set_text, set_with_data reports failure to acquire the selection. GTK retains the
+  // closure until ownership changes, serving text to other apps even after our window loses focus.
+  if clipboard.set_with_data(&targets, move |_, selection, _| {
+    selection.set_text(&text);
+  }) {
+    Ok(())
+  } else {
+    Err("clipboard unavailable".into())
+  }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn write_gtk(_: &str) -> Result<(), String> {
+  Err("clipboard unavailable".into())
+}
+
+/// All app text writes share the native writer. Only welcome's intentional "Try it" copy should
+/// pass false: its purpose is to offer the sample through the watcher.
+pub async fn write_text(app: &AppHandle, text: String, suppress_offer: bool) -> Result<(), String> {
+  let writer = writer_for(
+    crate::platform::current_session(),
+    cfg!(target_os = "linux"),
+  );
+  let handle = app.clone();
+  let write = move || {
+    let state = handle.state::<CaptureState>();
+    write_locked(&state, &text, suppress_offer, || match writer {
+      Writer::Gtk => write_gtk(&text),
+      Writer::Plugin => handle
+        .clipboard()
+        .write_text(&text)
+        .map_err(|_| String::from("clipboard unavailable")),
+    })
+  };
+  match writer {
+    Writer::Plugin => write(),
+    Writer::Gtk => {
+      let (tx, rx) = tokio::sync::oneshot::channel();
+      app
+        .run_on_main_thread(move || {
+          let _ = tx.send(write());
+        })
+        .map_err(|_| "clipboard unavailable")?;
+      rx.await.map_err(|_| "clipboard unavailable")?
+    }
+  }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reader {
@@ -244,6 +341,84 @@ impl Diagnostics {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn write_path_follows_the_session() {
+    for (linux, session, expected) in [
+      (true, Session::X11, Writer::Plugin),
+      (true, Session::Other, Writer::Plugin),
+      (true, Session::Wayland, Writer::Gtk),
+      (false, Session::X11, Writer::Plugin),
+      (false, Session::Other, Writer::Plugin),
+      (false, Session::Wayland, Writer::Plugin),
+    ] {
+      assert_eq!(
+        writer_for(session, linux),
+        expected,
+        "{session:?} linux={linux}"
+      );
+    }
+  }
+
+  #[test]
+  fn a_copy_holds_the_policy_lock_and_records_the_successful_write() {
+    let state = CaptureState::default();
+    let text = super::super::commands::TRY_LINK;
+    let mut written = None;
+    write_locked(&state, text, true, || {
+      assert!(state.policy.try_lock().is_err());
+      written = Some(text.to_owned());
+      Ok(())
+    })
+    .unwrap();
+    assert_eq!(written.as_deref(), Some(text));
+    assert_eq!(
+      state
+        .policy
+        .lock()
+        .unwrap()
+        .decide(text, state.started.elapsed())
+        .kind(),
+      "own-write"
+    );
+  }
+
+  #[test]
+  fn a_failed_write_surfaces_its_error_and_does_not_suppress_a_later_copy() {
+    let state = CaptureState::default();
+    let text = super::super::commands::TRY_LINK;
+    assert_eq!(
+      write_locked(&state, text, true, || Err("clipboard unavailable".into())),
+      Err("clipboard unavailable".into())
+    );
+    assert!(state
+      .policy
+      .lock()
+      .unwrap()
+      .decide(text, state.started.elapsed())
+      .offer()
+      .is_some());
+  }
+
+  #[test]
+  fn the_try_it_sample_is_written_but_still_offered() {
+    let state = CaptureState::default();
+    let text = super::super::commands::TRY_LINK;
+    let mut written = false;
+    write_locked(&state, text, false, || {
+      written = true;
+      Ok(())
+    })
+    .unwrap();
+    assert!(written);
+    assert!(state
+      .policy
+      .lock()
+      .unwrap()
+      .decide(text, state.started.elapsed())
+      .offer()
+      .is_some());
+  }
 
   #[test]
   fn background_and_shortcut_follow_the_session() {

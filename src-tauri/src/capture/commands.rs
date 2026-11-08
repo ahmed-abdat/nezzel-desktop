@@ -11,7 +11,6 @@ use crate::SharedConfig;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Manager, WebviewWindow};
-use tauri_plugin_clipboard_manager::ClipboardExt;
 
 /// Which capture window sent a command; any other window is refused.
 fn capture_window(window: &WebviewWindow) -> Result<CaptureWindow, String> {
@@ -218,20 +217,13 @@ pub async fn capture_action(
 }
 
 #[tauri::command]
-pub fn capture_write_clipboard(
+pub async fn capture_write_clipboard(
   app: AppHandle,
   window: WebviewWindow,
   text: String,
 ) -> Result<(), String> {
   main_only(&window)?;
-  let state = app.state::<CaptureState>();
-  let mut policy = state.policy.lock().unwrap();
-  app
-    .clipboard()
-    .write_text(&text)
-    .map_err(|_| "clipboard unavailable")?;
-  policy.own_write(&text, state.started.elapsed());
-  Ok(())
+  clipboard::write_text(&app, text, true).await
 }
 
 /// Welcome "Try it" sample: a short, long-lived public video ("Me at the zoo").
@@ -240,15 +232,12 @@ pub const TRY_LINK: &str = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
 /// Welcome "Try it": copies the fixed sample link, and the clipboard watcher brings up the real card
 /// for it like any copied link (dedupe included). Only with the card setting on; never reads the clipboard.
 #[tauri::command]
-pub fn capture_try_link(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+pub async fn capture_try_link(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
   main_only(&window)?;
   if !app.state::<SharedConfig>().load().input.watch_clipboard {
     return Err("card off".into());
   }
-  app
-    .clipboard()
-    .write_text(TRY_LINK)
-    .map_err(|_| String::from("clipboard unavailable"))
+  clipboard::write_text(&app, TRY_LINK.to_owned(), false).await
 }
 
 #[cfg(test)]
