@@ -5,6 +5,7 @@ import { useLoginStore } from '../../src/stores/login';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
 import { useMediaStore } from '../../src/stores/media/media';
+import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
 import { registerLoginListeners } from '../../src/tauri/listeners/login';
 import type { LoginNeeded } from '../../src/tauri/types/login';
 import type { Group } from '../../src/tauri/types/group';
@@ -122,9 +123,16 @@ describe('login store', () => {
 
   it('dismiss tells the engine, clears the card and leaves the row failed with "needs login"', async () => {
     addGroup();
+    const diagnostics = useMediaDiagnosticsStore();
+    const raw = 'ERROR: [Instagram] Account authentication is required';
+    diagnostics.processMediaDiagnosticPayload({
+      id: 'item1', groupId: 'g1', code: 'signInRequired', level: 'error', component: 'Instagram',
+      message: 'Account authentication is required', raw, timestamp: 0,
+    });
     const store = useLoginStore();
     store.receive(request());
     await store.dismiss('r1');
+    expect(diagnostics.findLastFatalByGroupId('g1')?.details).toBe(raw);
     expect(dismiss).toHaveBeenCalledWith('r1');
     expect(store.cardFor('g1')).toEqual({ kind: 'failed', failure: { groupId: 'g1', host: 'www.instagram.com', reason: 'dismissed' } });
     expect(useMediaStateStore().getGroupState('g1')).toBe(MediaState.error);

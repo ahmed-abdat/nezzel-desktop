@@ -36,6 +36,35 @@ fn contains(outer: Area, inner: Area) -> bool {
     && inner.y + inner.h <= outer.y + outer.h
 }
 
+// Explorer's accessible names, not app copy. Match the noun phrase so verb/case changes work.
+const HIDDEN_ICONS_NAMES: &[&str] = &[
+  "hidden icons",
+  "notification chevron",
+  "notificationchevron",
+  "icônes cachées",
+  "icônes masquées",
+  "الأيقونات المخفية",
+  "الأيقونات المستترة",
+  "الرموز المخفية",
+];
+
+/// SystemTrayIcon IDs and SystemTray.NormalButton classes are shared with clock/volume buttons.
+/// Only a specific Chevron identity or a localized hidden-icons button name is safe to anchor to.
+fn hidden_icons_source(id: &str, class: &str, name: &str, button: bool) -> Option<&'static str> {
+  let name = name.to_lowercase();
+  if id.to_lowercase().contains("chevron") || class.to_lowercase().contains("chevron") {
+    Some("uia_identity")
+  } else if button
+    && HIDDEN_ICONS_NAMES
+      .iter()
+      .any(|fragment| name.contains(fragment))
+  {
+    Some("uia_name")
+  } else {
+    None
+  }
+}
+
 /// Use the actual taskbar bounds, including an auto-hide taskbar overlaid on the work area.
 pub(super) fn taskbar_anchor(screen: Area, taskbar: Area, rect: Area) -> Option<(f64, f64, Edge)> {
   if !contains(screen, rect) || !contains(taskbar, rect) {
@@ -91,9 +120,9 @@ pub(super) fn taskbar_is_rtl() -> bool {
   }
 }
 
-/// Physical pixels. Called by close_to_tray's worker; COM never runs on Tauri's UI thread.
+/// Physical pixels and the matching path. COM never runs on Tauri's UI thread.
 #[cfg(windows)]
-pub(super) fn hidden_icons_rect() -> Option<Area> {
+pub(super) fn hidden_icons_rect() -> Option<(Area, &'static str)> {
   use std::{
     sync::mpsc,
     time::{Duration, Instant},
@@ -111,16 +140,33 @@ pub(super) fn hidden_icons_rect() -> Option<Area> {
       },
       UI::{
         Accessibility::{
-          CUIAutomation8, IUIAutomation2, IUIAutomationCondition, PropertyConditionFlags,
+          CUIAutomation8, IUIAutomation2, PropertyConditionFlags,
           PropertyConditionFlags_IgnoreCase, PropertyConditionFlags_MatchSubstring,
           TreeScope_Descendants, UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
-          UIA_ClassNamePropertyId, UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
+          UIA_ButtonControlTypeId, UIA_ClassNamePropertyId, UIA_ControlTypePropertyId,
+          UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
         },
         WindowsAndMessaging::{FindWindowW, GetWindowRect},
       },
     },
   };
 
+  // Cold Explorer/XAML providers can take >1 s. The close worker waits before showing the note;
+  // the receiver remains bounded even if COM initialization or a provider ignores its timeout.
+  const WAIT: Duration = Duration::from_millis(1500);
+  let started = Instant::now();
+  macro_rules! uia {
+    ($stage:literal, $call:expr) => {
+      $call.inspect_err(|error| {
+        tracing::info!(
+          stage = $stage,
+          hresult = format_args!("{:#010x}", error.code().0 as u32),
+          elapsed_ms = started.elapsed().as_millis() as u64,
+          "tray anchor UIA error"
+        );
+      })?
+    };
+  }
   struct ComApartment;
   impl Drop for ComApartment {
     fn drop(&mut self) {
@@ -132,92 +178,207 @@ pub(super) fn hidden_icons_rect() -> Option<Area> {
   std::thread::spawn(move || {
     // SAFETY: COM objects stay on this MTA worker and drop before its apartment is uninitialized.
     let found = unsafe {
-      (|| -> windows::core::Result<Option<Area>> {
-        CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
+      (|| -> windows::core::Result<Option<(Area, &'static str)>> {
+        uia!(
+          "CoInitializeEx",
+          CoInitializeEx(None, COINIT_MULTITHREADED).ok()
+        );
         let _apartment = ComApartment;
-        let automation: IUIAutomation2 =
-          CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
-        automation.SetConnectionTimeout(100)?;
-        automation.SetTransactionTimeout(100)?;
-        let deadline = Instant::now() + Duration::from_millis(350);
-        let hwnd = FindWindowW(w!("Shell_TrayWnd"), None)?;
+        let automation: IUIAutomation2 = uia!(
+          "CoCreateInstance",
+          CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)
+        );
+        uia!(
+          "SetConnectionTimeout",
+          automation.SetConnectionTimeout(WAIT.as_millis() as u32)
+        );
+        uia!(
+          "SetTransactionTimeout",
+          automation.SetTransactionTimeout(WAIT.as_millis() as u32)
+        );
+        let hwnd = uia!("FindWindowW", FindWindowW(w!("Shell_TrayWnd"), None));
         let mut bar = RECT::default();
-        GetWindowRect(hwnd, &mut bar)?;
+        uia!("GetWindowRect", GetWindowRect(hwnd, &mut bar));
         let area = |r: RECT| Area {
           x: f64::from(r.left),
           y: f64::from(r.top),
           w: f64::from(r.right) - f64::from(r.left),
           h: f64::from(r.bottom) - f64::from(r.top),
         };
-        let root = automation.ElementFromHandle(hwnd)?;
-        let cache = automation.CreateCacheRequest()?;
-        cache.AddProperty(UIA_BoundingRectanglePropertyId)?;
-        let visible =
-          automation.CreatePropertyCondition(UIA_IsOffscreenPropertyId, &VARIANT::from(false))?;
+        tracing::info!(taskbar_rect = ?area(bar), "tray anchor UIA taskbar");
+        // Descendants crosses hosted UIA fragments, including Win11's
+        // Windows.UI.Composition.DesktopWindowContentBridge child of Shell_TrayWnd.
+        // Do not restrict this to immediate children or the legacy TrayNotifyWnd subtree.
+        let root = uia!("ElementFromHandle", automation.ElementFromHandle(hwnd));
+        let cache = uia!("CreateCacheRequest", automation.CreateCacheRequest());
+        uia!(
+          "SetTreeFilter",
+          cache.SetTreeFilter(&uia!(
+            "CreateTrueCondition",
+            automation.CreateTrueCondition()
+          ))
+        );
+        for property in [
+          UIA_BoundingRectanglePropertyId,
+          UIA_AutomationIdPropertyId,
+          UIA_ClassNamePropertyId,
+          UIA_NamePropertyId,
+          UIA_ControlTypePropertyId,
+        ] {
+          uia!("AddProperty", cache.AddProperty(property));
+        }
+        let visible = uia!(
+          "visible condition",
+          automation.CreatePropertyCondition(UIA_IsOffscreenPropertyId, &VARIANT::from(false))
+        );
         let flags = PropertyConditionFlags(
           PropertyConditionFlags_IgnoreCase.0 | PropertyConditionFlags_MatchSubstring.0,
         );
-        // SystemTrayIcon alone is shared by clock/volume; match the chevron's class or specific ID.
-        let identity = automation.CreateOrCondition(
-          &automation.CreatePropertyConditionEx(
+        let class = uia!(
+          "class condition",
+          automation.CreatePropertyConditionEx(
             UIA_ClassNamePropertyId,
             &VARIANT::from("Chevron"),
-            flags,
-          )?,
-          &automation.CreatePropertyConditionEx(
+            flags
+          )
+        );
+        let id = uia!(
+          "identity condition",
+          automation.CreatePropertyConditionEx(
             UIA_AutomationIdPropertyId,
             &VARIANT::from("Chevron"),
-            flags,
-          )?,
-        )?;
-        let find = |condition: &IUIAutomationCondition| {
-          root
-            .FindFirstBuildCache(TreeScope_Descendants, condition, &cache)
-            .ok()
-            .and_then(|element| element.CachedBoundingRectangle().ok())
-            .map(area)
-            .filter(|rect| contains(area(bar), *rect))
-        };
-        if let Some(rect) = find(&automation.CreateAndCondition(&identity, &visible)?) {
-          return Ok(Some(rect));
+            flags
+          )
+        );
+        let identity = uia!("identity OR", automation.CreateOrCondition(&class, &id));
+        let mut names = uia!("CreateFalseCondition", automation.CreateFalseCondition());
+        for name in HIDDEN_ICONS_NAMES {
+          let name = uia!(
+            "name condition",
+            automation.CreatePropertyConditionEx(UIA_NamePropertyId, &VARIANT::from(*name), flags)
+          );
+          names = uia!("names OR", automation.CreateOrCondition(&names, &name));
         }
-        if Instant::now() >= deadline {
+        // 24H2's button may have a generic SystemTrayIcon-style ID and
+        // SystemTray.NormalButton class. Its localized name disambiguates clock/volume.
+        let button = uia!(
+          "button condition",
+          automation.CreatePropertyCondition(
+            UIA_ControlTypePropertyId,
+            &VARIANT::from(UIA_ButtonControlTypeId.0)
+          )
+        );
+        let named_button = uia!(
+          "named button AND",
+          automation.CreateAndCondition(&names, &button)
+        );
+        let candidate = uia!(
+          "candidate OR",
+          automation.CreateOrCondition(&identity, &named_button)
+        );
+        let condition = uia!(
+          "visible AND",
+          automation.CreateAndCondition(&candidate, &visible)
+        );
+        let remaining = WAIT.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
           return Ok(None);
         }
-        // Only a failed identity lookup permits the localized name fallback; never enumerate the tree.
-        let mut names = automation.CreateFalseCondition()?;
-        for name in [
-          "Show hidden icons",
-          "Notification Chevron",
-          "NotificationChevron",
-          "Afficher les icônes cachées",
-          "Afficher les icônes masquées",
-          "إظهار الأيقونات المخفية",
-        ] {
-          let name = automation.CreatePropertyConditionEx(
-            UIA_NamePropertyId,
-            &VARIANT::from(name),
-            PropertyConditionFlags_IgnoreCase,
-          )?;
-          names = automation.CreateOrCondition(&names, &name)?;
-        }
-        Ok(find(&automation.CreateAndCondition(&names, &visible)?))
+        uia!(
+          "search timeout",
+          automation.SetTransactionTimeout(remaining.as_millis().max(1) as u32)
+        );
+        // One search covers both identities and localized names within the same cold-start budget.
+        let element = uia!(
+          "FindFirstBuildCache",
+          root.FindFirstBuildCache(TreeScope_Descendants, &condition, &cache)
+        );
+        let rect = area(uia!(
+          "CachedBoundingRectangle",
+          element.CachedBoundingRectangle()
+        ));
+        let id = uia!("CachedAutomationId", element.CachedAutomationId());
+        let class = uia!("CachedClassName", element.CachedClassName());
+        let name = uia!("CachedName", element.CachedName());
+        let button =
+          uia!("CachedControlType", element.CachedControlType()) == UIA_ButtonControlTypeId;
+        let source = hidden_icons_source(
+          &id.to_string(),
+          &class.to_string(),
+          &name.to_string(),
+          button,
+        );
+        let accepted = contains(area(bar), rect) && source.is_some();
+        // Never log provider strings: only their classification and physical geometry.
+        tracing::info!(
+          source = source.unwrap_or("unmatched"),
+          candidate_rect = ?rect,
+          taskbar_rect = ?area(bar),
+          accepted,
+          elapsed_ms = started.elapsed().as_millis() as u64,
+          "tray anchor UIA candidate"
+        );
+        Ok(source.filter(|_| accepted).map(|source| (rect, source)))
       })()
     }
-    .ok()
-    .flatten();
+    .unwrap_or_default();
+    tracing::info!(
+      found = found.is_some(),
+      elapsed_ms = started.elapsed().as_millis() as u64,
+      "tray anchor UIA finished"
+    );
     let _ = send.send(found);
   });
-  // A broken provider must not delay closing the app. Per-call UIA timeouts also bound the worker.
-  receive
-    .recv_timeout(Duration::from_millis(400))
-    .ok()
-    .flatten()
+  match receive.recv_timeout(WAIT) {
+    Ok(found) => found,
+    Err(error) => {
+      tracing::info!(
+        timeout = matches!(error, mpsc::RecvTimeoutError::Timeout),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "tray anchor UIA unavailable"
+      );
+      None
+    }
+  }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn xaml_hidden_icons_button_matches_localized_substrings_without_matching_other_tray_buttons() {
+    for name in [
+      "Show Hidden Icons",
+      "SHOW HIDDEN ICONS (3)",
+      "Afficher les icônes cachées (3)",
+      "AFFICHER LES ICÔNES MASQUÉES",
+      "إظهار الأيقونات المخفية (3)",
+      "إظهار الرموز المخفية",
+    ] {
+      assert_eq!(
+        hidden_icons_source("SystemTrayIcon", "SystemTray.NormalButton", name, true),
+        Some("uia_name"),
+        "{name}"
+      );
+    }
+    for (name, button) in [("Volume", true), ("Clock", true), ("Hidden icons", false)] {
+      assert_eq!(
+        hidden_icons_source("SystemTrayIcon", "SystemTray.NormalButton", name, button),
+        None,
+        "{name}"
+      );
+    }
+    for (id, class) in [
+      ("SystemTrayIcon.Chevron", "SystemTray.NormalButton"),
+      ("", "Chevron"),
+    ] {
+      assert_eq!(
+        hidden_icons_source(id, class, "", true),
+        Some("uia_identity")
+      );
+    }
+  }
 
   #[test]
   fn mixed_dpi_consumers_reach_the_same_physical_anchor() {

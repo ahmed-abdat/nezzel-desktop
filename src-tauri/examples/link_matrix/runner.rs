@@ -149,7 +149,7 @@ fn start() -> Result<(), Box<dyn Error>> {
   ));
   handle.manage(crate::i18n::I18nManager::new(handle));
   handle.manage(crate::logging::LogStoreState::new());
-  handle.manage(crate::commands::DownloadRecords::default());
+  handle.manage(crate::download_records::DownloadRecords::default());
   handle.manage(crate::library::Library::default());
   handle.manage(GalleryResources(resources));
   // LoginSession needs cleanup channels even when consent was supplied on the command line.

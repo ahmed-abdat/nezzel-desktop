@@ -6,7 +6,7 @@ async function addPlaylistAndApply(page: Page, url: string) {
   await page.goto('/');
   await page.fill('#queue-url-input', url);
   await page.keyboard.press('Enter');
-  await page.getByRole('button', { name: 'Download all items' }).click();
+  await page.getByRole('dialog', { name: 'Download options' }).getByRole('button', { name: 'Download all items' }).click();
 }
 
 test('it consolidates large playlists into a single group', async ({ page }) => {

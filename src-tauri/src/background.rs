@@ -220,6 +220,7 @@ fn tray_anchor(app: &AppHandle) -> Option<(f64, f64, Edge)> {
 
   #[cfg(windows)]
   {
+    let started = std::time::Instant::now();
     let screen = Area {
       x: f64::from(monitor.position().x),
       y: f64::from(monitor.position().y),
@@ -236,14 +237,24 @@ fn tray_anchor(app: &AppHandle) -> Option<(f64, f64, Edge)> {
         h: s.height,
       }
     };
+    let tray_rect = tray_rect.map(physical_rect);
+    let taskbar_rect = windows_tray::taskbar_rect();
+    tracing::info!(?tray_rect, ?taskbar_rect, "tray anchor geometry");
     // An overflow icon can have a valid rect in its open flyout; only a taskbar rect is an anchor.
-    if let Some(anchor) = tray_rect.and_then(|rect| {
-      let bar = windows_tray::taskbar_rect()?;
-      windows_tray::taskbar_anchor(screen, bar, physical_rect(rect))
-    }) {
+    if let Some(anchor) = tray_rect
+      .zip(taskbar_rect)
+      .and_then(|(rect, bar)| windows_tray::taskbar_anchor(screen, bar, rect))
+    {
+      tracing::info!(
+        source = "tray_rect",
+        ?anchor,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "tray anchor selected"
+      );
       return Some(anchor);
     }
-    if let Some(rect) = windows_tray::hidden_icons_rect() {
+    if let Some((rect, source)) = windows_tray::hidden_icons_rect() {
+      tracing::info!(source, anchor_rect = ?rect, elapsed_ms = started.elapsed().as_millis() as u64, "tray anchor selected");
       // UIA already checked that the chevron is inside Shell_TrayWnd (also handles auto-hide).
       return Some((
         rect.x + rect.w / 2.,
@@ -262,12 +273,14 @@ fn tray_anchor(app: &AppHandle) -> Option<(f64, f64, Edge)> {
       w: f64::from(work.size.width),
       h: f64::from(work.size.height),
     };
-    Some(windows_tray::fallback_anchor(
-      screen,
-      work,
-      scale,
-      windows_tray::taskbar_is_rtl(),
-    ))
+    let anchor = windows_tray::fallback_anchor(screen, work, scale, windows_tray::taskbar_is_rtl());
+    tracing::info!(
+      source = "fallback",
+      ?anchor,
+      elapsed_ms = started.elapsed().as_millis() as u64,
+      "tray anchor selected"
+    );
+    Some(anchor)
   }
 
   #[cfg(not(windows))]

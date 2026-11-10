@@ -19,7 +19,7 @@
     <div class="mb-2 flex h-5 items-center gap-2">
       <img v-if="favicon && !faviconFailed" :src="favicon" alt="" class="size-4 shrink-0 rounded-sm" @error="faviconFailed = true" />
       <ClipboardCheck v-else class="size-4 shrink-0 text-primary" aria-hidden="true" />
-      <p class="min-w-0 flex-1 truncate text-[12px] font-medium text-muted-foreground"><bdi>{{ offer.site || t('capture.copiedLink') }}</bdi></p>
+      <p class="min-w-0 flex-1 text-[12px] font-medium text-muted-foreground"><bdi class="block truncate">{{ offer.site || t('capture.copiedLink') }}</bdi></p>
       <tooltip :content="t('capture.dismiss')">
         <Button variant="ghost" size="icon-xs" class="-me-1.5 text-muted-foreground" :aria-label="t('capture.dismiss')" @click="act('dismiss')">
           <X aria-hidden="true" />

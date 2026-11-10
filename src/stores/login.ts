@@ -157,7 +157,9 @@ export const useLoginStore = defineStore('login', () => {
     for (const r of batch) {
       if (!groups.findGroupById(r.groupId)) continue;
       diagnostics.processMediaFatalPayload({
-        id: r.id, groupId: r.groupId, exitCode: null, internal: true, details: null,
+        id: r.id, groupId: r.groupId, exitCode: null, internal: true,
+        // The synthetic failure must keep the engine error reachable in the row's Details.
+        details: diagnostics.findLastDiagnosticByGroupId(r.groupId)?.raw ?? null,
         message: 'Login required', timestamp: Date.now(),
       });
     }

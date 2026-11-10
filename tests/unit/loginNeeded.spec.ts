@@ -4,6 +4,9 @@ import LoginNeeded from '../../src/components/downloads/LoginNeeded.vue';
 import LoginProfile from '../../src/components/downloads/LoginProfile.vue';
 import { i18n } from '../../src/i18n';
 import { useLoginStore } from '../../src/stores/login';
+import { resetPlatformForTests } from '../../src/composables/usePlatform';
+import { Platform } from '../../src/tauri/types/app';
+import { installTauriMock } from '../utils/tauriMock';
 
 describe('login picker profile metadata', () => {
   it.each(['en', 'ar', 'fr'] as const)('keeps the login reason and engine Details reachable in %s', async (locale) => {
@@ -12,16 +15,21 @@ describe('login picker profile metadata', () => {
     const store = useLoginStore();
     const raw = 'ERROR: [Reddit] Account authentication is required. Use --cookies';
     try {
-      for (const { reason, blockedBrowser, status, expected } of [
-        { reason: 'signInRequired', status: 'exhausted', expected: i18n.global.t('downloads.login.noBrowserWindows') },
-        { reason: 'browserAppBound', status: 'exhausted', expected: i18n.global.t('downloads.login.windowsAppBound') },
-        { reason: 'browserAppBound', blockedBrowser: 'edge', status: 'exhausted', expected: i18n.global.t('downloads.login.windowsAppBoundBrowser', { browser: locale === 'ar' ? '\u2068Edge\u2069' : 'Edge' }) },
-        { reason: 'browserAppBound', blockedBrowser: 'chrome', status: 'needed', expected: i18n.global.t('downloads.login.windowsAppBoundBrowser', { browser: locale === 'ar' ? '\u2068Chrome\u2069' : 'Chrome' }) },
+      for (const { platform, reason, blockedBrowser, status, expected } of [
+        { platform: Platform.Windows, reason: 'signInRequired', status: 'exhausted', expected: i18n.global.t('downloads.login.noBrowserWindows') },
+        { platform: Platform.Windows, reason: 'browserAppBound', status: 'exhausted', expected: i18n.global.t('downloads.login.windowsAppBound') },
+        { platform: Platform.Windows, reason: 'browserAppBound', blockedBrowser: 'edge', status: 'exhausted', expected: i18n.global.t('downloads.login.windowsAppBoundBrowser', { browser: locale === 'ar' ? '\u2068Edge\u2069' : 'Edge' }) },
+        { platform: Platform.Windows, reason: 'browserAppBound', blockedBrowser: 'chrome', status: 'needed', expected: i18n.global.t('downloads.login.windowsAppBoundBrowser', { browser: locale === 'ar' ? '\u2068Chrome\u2069' : 'Chrome' }) },
+        { platform: Platform.Linux, reason: 'signInRequired', status: 'exhausted', expected: i18n.global.t('downloads.login.noBrowser') },
+        { platform: Platform.MacOS, reason: 'signInRequired', status: 'exhausted', expected: i18n.global.t('downloads.login.noBrowser') },
       ] as const) {
+        installTauriMock({ get_platform: () => platform });
+        resetPlatformForTests(platform);
         store.receive({ requestId: 'details', id: 'item', groupId: 'details', host: 'reddit.com', reason, blockedBrowser, status,
           candidates: status === 'needed' ? [{ id: 'firefox-token', browser: 'firefox', profile: 'Default', signedIn: false }] : [] });
         const wrapper = mount(LoginNeeded, { props: { card: store.cardFor('details')!, details: raw }, global: { plugins: [i18n], stubs: { RouterLink: true } } });
         try {
+          await flushPromises();
           expect(wrapper.text()).toContain(expected);
           const details = wrapper.findAll('button').find(button => button.text() === i18n.global.t('downloads.row.details'))!;
           expect(details.attributes('aria-expanded')).toBe('false');
@@ -35,6 +43,7 @@ describe('login picker profile metadata', () => {
         }
       }
     } finally {
+      resetPlatformForTests();
       i18n.global.locale.value = oldLocale;
     }
   });
