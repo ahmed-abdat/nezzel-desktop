@@ -56,7 +56,8 @@
           </Tooltip>
 
           <login-needed v-if="loginCard" class="mt-1" :card="loginCard" :site="site" :details="diagnostic.raw === 'unknown' ? undefined : diagnostic.raw" @retry="retry" />
-          <p v-else-if="phase === 'error'" class="mt-0.5 flex items-start gap-1.5 text-[12.5px] font-medium text-destructive-foreground">
+          <template v-else-if="phase === 'error'">
+          <p class="mt-0.5 flex items-start gap-1.5 text-[12.5px] font-medium text-destructive-foreground">
             <triangle-alert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
             <!-- What happened, then what to do (muted): every runner error carries both. -->
             <i18n-t v-if="errorDisplay.action" keypath="errors.rowLine" tag="span" scope="global" class="line-clamp-2 text-pretty" data-testid="row-error">
@@ -65,6 +66,17 @@
             </i18n-t>
             <span v-else class="line-clamp-2 text-pretty" data-testid="row-error">{{ errorDisplay.shortMessage }}</span>
           </p>
+          <!-- Both stay one click away on the row: the engine's Details and the Report dialog. -->
+          <div class="ps-5 text-[12px]" data-testid="row-error-links">
+            <div class="flex flex-wrap items-center gap-x-3">
+              <Collapsible v-if="errorDetails" v-model:open="detailsOpen">
+                <CollapsibleTrigger class="min-h-6 cursor-pointer text-muted-foreground underline underline-offset-2 hover:no-underline" data-testid="row-error-details" @click.stop>{{ t('downloads.row.details') }}</CollapsibleTrigger>
+              </Collapsible>
+              <button type="button" class="min-h-6 cursor-pointer text-muted-foreground underline underline-offset-2 hover:no-underline" data-testid="row-error-report" @click.stop="reportProblem">{{ t('report.rowAction') }}</button>
+            </div>
+            <pre v-if="errorDetails && detailsOpen" dir="ltr" class="mt-1 whitespace-pre-wrap break-words text-start text-muted-foreground" data-testid="row-error-raw">{{ errorDetails }}</pre>
+          </div>
+          </template>
           <div v-else-if="showProgress || phase === 'reading'" class="mt-1 flex min-w-0 items-center gap-2.5 text-[12px] text-muted-foreground">
             <nz-progress :value="phase === 'reading' ? null : percent" :muted="phase === 'paused'" class="max-w-[180px] flex-[1_1_120px]" />
             <span class="flex min-w-0 items-center gap-1.5 truncate">
@@ -233,6 +245,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { useUiPrefs } from '../../composables/useUiPrefs';
 import LoginNeeded from './LoginNeeded.vue';
+import { Collapsible, CollapsibleTrigger } from '@/components/ui/collapsible';
 import PlaylistSelectionStep from '../media-card/steps/PlaylistSelectionStep.vue';
 import { useDownloadRow } from '../../composables/useDownloadRow';
 import { useDownloadActions } from '../../composables/useDownloadActions';
@@ -296,6 +309,9 @@ const diagnostic = computed<MediaDiagnostic>(() => {
   return base;
 });
 const { diagnosticDisplay: errorDisplay } = useDiagnostic(diagnostic, true);
+/** Engine text worth showing; the 'unknown' placeholder is not. */
+const errorDetails = computed(() => (diagnostic.value.raw && diagnostic.value.raw !== 'unknown' ? diagnostic.value.raw : ''));
+const detailsOpen = ref(false);
 const errorIsFilter = computed(() => diagnostic.value.code === 'rejectedByFilter');
 const errorIsPermanent = computed(() => isPermanentError(diagnostic.value.code));
 

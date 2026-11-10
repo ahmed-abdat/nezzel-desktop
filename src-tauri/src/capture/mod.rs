@@ -41,7 +41,6 @@ pub(crate) fn matrix_normalize(text: &str) -> Option<String> {
 }
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-  app.manage(CaptureState::default());
   let keep_open = app
     .state::<crate::SharedConfig>()
     .load()

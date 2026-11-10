@@ -13,7 +13,7 @@ const forwarded = useForwardPropsEmits(props, emits);
   <SwitchRoot
     v-bind="forwarded"
     data-slot="switch"
-    :class="cn('peer inline-flex h-[18px] w-8 shrink-0 items-center rounded-full outline-none transition-colors duration-150 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)] disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-[oklch(0.86_0_0)] dark:data-[state=unchecked]:bg-[oklch(0.42_0_0)]', props.class)"
+    :class="cn('peer inline-flex h-[18px] w-8 shrink-0 items-center rounded-full outline-none transition-colors duration-150 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)] disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/70 relative after:absolute after:inset-x-0 after:-inset-y-[3px]', props.class)"
   >
     <SwitchThumb
       data-slot="switch-thumb"

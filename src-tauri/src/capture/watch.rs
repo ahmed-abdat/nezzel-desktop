@@ -194,11 +194,11 @@ pub(super) async fn read_current(app: &AppHandle) -> Result<String, clipboard::R
 }
 
 pub fn open_quick_bar(app: &AppHandle, browser_first: bool) {
-  let request_id = app
-    .state::<CaptureState>()
-    .quick_request
-    .fetch_add(1, Ordering::Relaxed)
-    + 1;
+  // The single-instance plugin can call this before setup has registered capture state.
+  let Some(state) = app.try_state::<CaptureState>() else {
+    return;
+  };
+  let request_id = state.quick_request.fetch_add(1, Ordering::Relaxed) + 1;
   let app = app.clone();
   tauri::async_runtime::spawn(async move {
     // Resolve the foreground identity BEFORE focusing Nezzel. The second command may

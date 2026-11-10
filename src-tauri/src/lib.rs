@@ -123,22 +123,12 @@ pub fn run() {
       let shared_preferences = Arc::new(preferences_handle);
       handle.manage::<SharedPreferences>(shared_preferences);
 
-      create_main_window(handle, &path_handle)?;
-
+      // Register command state before any webview can invoke commands or capture can start work.
       // setup i18n management
       handle.manage(I18nManager::new(handle));
 
       // setup window management
       handle.manage(background::BackgroundState::default());
-      background::track_dock(handle);
-      restore_main_window(handle);
-      track_main_window(handle);
-      setup_close_behaviour(handle);
-
-      capture::setup(handle)?;
-      if wants_capture(&std::env::args().collect::<Vec<_>>()) {
-        capture::open_quick_bar(handle, true);
-      }
 
       // setup tray
       handle.manage(TrayState {
@@ -146,11 +136,6 @@ pub fn run() {
         active: StdMutex::new(None),
         counts: StdMutex::new((0, Vec::new())),
       });
-      create_tray(handle);
-
-      // setup autostart
-      init_autostart(handle);
-
       // manage update store
       handle.manage(Mutex::new(UpdateStore::default()));
 
@@ -175,13 +160,32 @@ pub fn run() {
       // setup binaries
       handle.manage(BinariesState::default());
       handle.manage(BinariesManager::new(handle));
-      BinariesManager::schedule_ytdlp_update(handle);
-
       // set up stronghold
       let app_path = path_handle.app_dir();
       let stronghold_path = app_path.join("vault.hold");
 
       handle.manage(stronghold_state::StrongholdState::new(stronghold_path));
+      handle.manage(capture::CaptureState::default());
+
+      create_main_window(handle, &path_handle)?;
+
+      // Window hooks and capture windows need the main window to exist.
+      background::track_dock(handle);
+      restore_main_window(handle);
+      track_main_window(handle);
+      setup_close_behaviour(handle);
+
+      capture::setup(handle)?;
+      if wants_capture(&std::env::args().collect::<Vec<_>>()) {
+        capture::open_quick_bar(handle, true);
+      }
+
+      create_tray(handle);
+
+      // setup autostart
+      init_autostart(handle);
+
+      BinariesManager::schedule_ytdlp_update(handle);
 
       // async init stronghold
       #[cfg(not(all(target_os = "macos", debug_assertions)))]

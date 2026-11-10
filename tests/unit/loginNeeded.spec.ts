@@ -48,6 +48,24 @@ describe('login picker profile metadata', () => {
     }
   });
 
+  // What helps comes first: settings when a retry can't work yet, the prompt when it was only closed.
+  it.each([
+    { reason: 'exhausted', first: 'downloads.login.settings', retry: 'downloads.login.tryAnother' },
+    { reason: 'dismissed', first: 'downloads.login.again', retry: 'downloads.login.again' },
+    { reason: 'expired', first: 'downloads.login.again', retry: 'downloads.login.again' },
+  ] as const)('a failed login ($reason) leads with the action that helps and keeps retry', async ({ reason, first, retry }) => {
+    const wrapper = mount(LoginNeeded, {
+      props: { card: { kind: 'failed', failure: { groupId: 'g', host: 'instagram.com', reason } } },
+      global: { plugins: [i18n], stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    });
+    const actions = wrapper.get('[data-testid="login-failed"]').findAll('a, button').map(el => el.text());
+    expect(actions[0]).toBe(i18n.global.t(first));
+    expect(actions).toContain(i18n.global.t('downloads.login.settings'));
+    await wrapper.findAll('button').find(b => b.text() === i18n.global.t(retry))!.trigger('click');
+    expect(wrapper.emitted('retry')).toHaveLength(1);
+    wrapper.unmount();
+  });
+
   it('names the refused browser from metadata while its candidate id stays opaque', () => {
     const wrapper = mount(LoginNeeded, {
       props: { card: { kind: 'failed', failure: { groupId: 'opaque', host: 'instagram.com', reason: 'exhausted', tried: '147599e2-568e-469f-a8cd-fbf9a79606ca', browser: 'chrome' } } },

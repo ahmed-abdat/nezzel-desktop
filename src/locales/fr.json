@@ -902,7 +902,8 @@
       "failed": "Certains téléchargements risquent de ne pas marcher. Réessayez ou signalez le problème",
       "installed": "Prêt à télécharger"
     },
-    "stay": "Rester ici"
+    "stay": "Rester ici",
+    "continueWithout": "Continuer sans les outils"
   },
   "components": {
     "base": {
@@ -971,7 +972,7 @@
       "internal": {
         "shortMessage": "Un problème est survenu dans Nezzel",
         "message": "Un problème est survenu dans Nezzel pendant ce téléchargement. Réessayez",
-        "action": "Réessayez. Si cela se reproduit, signalez le problème"
+        "action": "Réessayez"
       },
       "signInRequired": {
         "shortMessage": "Ce site demande une connexion",
@@ -1206,7 +1207,7 @@
       "unknown": {
         "shortMessage": "Téléchargement impossible",
         "message": "Nezzel n'a pas pu terminer ce téléchargement. Réessayez. Si cela se reproduit, signalez le problème ; les détails sont joints pour nous.",
-        "action": "Réessayez. Si cela se reproduit, signalez le problème"
+        "action": "Réessayez"
       },
       "rejectedByFilter": {
         "shortMessage": "Ignoré par vos filtres de liens",
@@ -1856,6 +1857,7 @@
     "fail": {
       "retry": "Réessayer",
       "report": "Signaler",
+      "useLogin": "Utiliser ma connexion du navigateur",
       "thisSite": "ce site",
       "login": {
         "title": "Ceci demande une connexion sur {site}",

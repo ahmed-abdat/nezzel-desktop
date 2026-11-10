@@ -22,17 +22,23 @@ function scaleBytes(bytes: number): { value: number; unit: typeof BYTE_UNITS[num
   return { value, unit: BYTE_UNITS[index] };
 }
 
+/** Arabic CLDR "short" units are cryptic abbreviations (م.ب); use the full word ("ميغابايت"). */
+const unitDisplayFor = (locale: string) => (locale.startsWith('ar') ? 'long' : 'short');
+
 /** File size with the locale's own unit words ("412 MB", "412 ميغابايت"), Latin digits. */
 export function formatSize(bytes: number, locale: string): string {
   const { value, unit } = scaleBytes(bytes);
   return new Intl.NumberFormat(intlLocale(locale), {
-    style: 'unit', unit, unitDisplay: 'short', maximumFractionDigits: value < 10 && unit !== 'byte' ? 1 : 0,
+    style: 'unit', unit, unitDisplay: unitDisplayFor(locale), maximumFractionDigits: value < 10 && unit !== 'byte' ? 1 : 0,
   }).format(value);
 }
 
-/** Transfer speed, e.g. "21.4 MB/s". */
+/** Transfer speed, e.g. "21.4 MB/s" ("21.4 ميغابايت/ث": the long "per second" form is too wide for a row). */
 export function formatSpeed(bytesPerSecond: number, locale: string): string {
   const { value, unit } = scaleBytes(bytesPerSecond);
+  if (locale.startsWith('ar')) {
+    return `${new Intl.NumberFormat(intlLocale(locale), { style: 'unit', unit, unitDisplay: 'long', maximumFractionDigits: 1 }).format(value)}/ث`;
+  }
   return new Intl.NumberFormat(intlLocale(locale), {
     style: 'unit', unit: `${unit}-per-second`, unitDisplay: 'short', maximumFractionDigits: 1,
   }).format(value);

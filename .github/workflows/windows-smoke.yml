@@ -1,0 +1,51 @@
+name: Windows installer smoke
+
+# Installs a release's NSIS setup on clean Windows runners and checks the result
+# (scripts/windows-package-smoke.ps1): install, uninstall entry, bundled tools, launch,
+# single instance, uninstall. Run it by hand against a draft or published release.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (a draft works)
+        required: true
+        default: app-v0.1.0-beta.1
+
+jobs:
+  smoke:
+    # Reading a draft release needs write-level access to contents.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            asset: x64-setup.exe
+          - platform: windows-11-arm
+            asset: arm64-setup.exe
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          New-Item -ItemType Directory pkg -Force | Out-Null
+          gh release download $env:TAG --repo $env:GITHUB_REPOSITORY --dir pkg --pattern "*_$($env:ASSET)" --pattern SHA256SUMS
+          $setup = Get-ChildItem pkg -Filter "*_$($env:ASSET)" | Select-Object -First 1
+          if (-not $setup) { Write-Error "no *_$($env:ASSET) in $env:TAG"; exit 1 }
+          $line = Get-Content pkg/SHA256SUMS | Where-Object { $_ -match [regex]::Escape($setup.Name) + '$' } | Select-Object -First 1
+          $expected = ($line -split '\s+')[0]
+          $actual = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash
+          if ($expected -ine $actual) { Write-Error "checksum mismatch for $($setup.Name)"; exit 1 }
+          "SETUP=$($setup.FullName)" >> $env:GITHUB_ENV
+          "VERSION=$($env:TAG -replace '^app-v', '')" >> $env:GITHUB_ENV
+
+      - name: Install, run, uninstall
+        shell: pwsh
+        run: ./scripts/windows-package-smoke.ps1 -Setup $env:SETUP -Version $env:VERSION

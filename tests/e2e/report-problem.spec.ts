@@ -29,6 +29,21 @@ test('Report a problem: an optional note and one Send button', async ({ page }) 
   ]);
 });
 
+test('a failed row shows Details and a Report control without opening a menu', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator(`#${MAIN_PANE_ID}`)).toBeVisible({ timeout: 20_000 });
+  await page.evaluate(async () => {
+    // @ts-expect-error served by the Vite dev server, not resolved by tsc
+    const { seed } = await import('/tests/e2e/utils/uiStateSeeds.ts');
+    await seed('row-error-unknown');
+  });
+  const links = page.getByTestId('row-error-links');
+  await links.getByTestId('row-error-details').click();
+  await expect(links.getByTestId('row-error-raw')).toBeVisible();
+  await links.getByTestId('row-error-report').click();
+  await expect(page.getByTestId('report-dialog')).toBeVisible();
+});
+
 test.describe('without a report key in the build', () => {
   test.use({ mockData: { reportSend: 'fail' } });
 

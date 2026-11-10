@@ -7,7 +7,7 @@ import fr from '../../src/locales/fr.json';
 
 describe('a failed read offers only actions that can work', () => {
   it.each([
-    ['login', 'options', ['retry', 'report']],
+    ['login', 'options', ['retry']], // a login wall is not a bug: no Report
     ['unavailable', 'retry', ['report']],
     ['unsupported', 'report', []],
     ['protected', null, ['report']],

@@ -28,9 +28,16 @@
         <span class="text-pretty">{{ failedMessage }}</span>
       </p>
       <div v-if="card.failure.reason !== 'refused' || !usedBrowser" class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 ps-5">
-        <Button v-if="card.failure.reason === 'exhausted'" variant="outline" @click="emit('retry')"><rotate-cw />{{ t('downloads.login.tryAnother') }}</Button>
-        <Button v-else-if="card.failure.reason === 'dismissed' || card.failure.reason === 'expired'" variant="outline" @click="emit('retry')"><rotate-cw />{{ t('downloads.login.again') }}</Button>
-        <router-link :to="{ name: 'settings.logins' }" class="text-[12.5px] font-medium underline underline-offset-2 hover:no-underline">{{ t('downloads.login.settings') }}</router-link>
+        <!-- Retrying can't help until the login is fixed (refused, exhausted): settings first, retry second.
+             Dismissed or expired: "Log in again" reopens the prompt, so it leads. -->
+        <template v-if="card.failure.reason === 'dismissed' || card.failure.reason === 'expired'">
+          <Button @click="emit('retry')"><rotate-cw />{{ t('downloads.login.again') }}</Button>
+          <router-link :to="{ name: 'settings.logins' }" class="text-[12.5px] font-medium underline underline-offset-2 hover:no-underline">{{ t('downloads.login.settings') }}</router-link>
+        </template>
+        <template v-else>
+          <Button as-child data-testid="login-settings"><router-link :to="{ name: 'settings.logins' }">{{ t('downloads.login.settings') }}</router-link></Button>
+          <Button v-if="card.failure.reason === 'exhausted'" variant="outline" @click="emit('retry')"><rotate-cw />{{ t('downloads.login.tryAnother') }}</Button>
+        </template>
       </div>
     </div>
     <Collapsible v-if="details" class="mt-1 ps-5">

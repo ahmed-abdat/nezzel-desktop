@@ -15,7 +15,7 @@ use std::{
   sync::Mutex,
   time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,7 +68,7 @@ fn take_metadata(data: &mut LibraryData, group_id: &str, id: &str) -> Completion
   metadata
 }
 
-fn configured_root(app: &AppHandle) -> Option<PathBuf> {
+fn configured_root<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
   app
     .state::<SharedConfig>()
     .load()
@@ -84,7 +84,7 @@ fn protected_dirs() -> (Option<PathBuf>, Option<PathBuf>) {
   (home, downloads)
 }
 
-fn index_path(app: &AppHandle) -> PathBuf {
+fn index_path<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
   app.state::<PathsManager>().app_dir().join("library.json")
 }
 
@@ -108,14 +108,14 @@ pub async fn complete(app: &AppHandle, entry: &DownloadEntry) {
   );
 }
 
-fn persist_completion(app: &AppHandle, entry: &DownloadEntry) -> Result<(), String> {
+fn persist_completion<R: Runtime>(app: &AppHandle<R>, entry: &DownloadEntry) -> Result<(), String> {
   let Some(records) = app.try_state::<DownloadRecords>() else {
     return Ok(());
   };
   let record = records.get(&entry.group_id);
   let authority = recorded_files(&record, &entry.id);
   let paths: Vec<_> = authority.iter().map(|file| file.path.clone()).collect();
-  let library = app.state::<Library>();
+  let library = app.try_state::<Library>().ok_or("library unavailable")?;
   let mut data = library.0.lock().map_err(|_| "library unavailable")?;
   let metadata = take_metadata(&mut data, &entry.group_id, &entry.id);
   if paths.is_empty() {
@@ -173,11 +173,12 @@ fn load_index<'a>(
 
 /// Two phases let the UI display indexed rows before the bounded folder scan finishes.
 #[tauri::command]
-pub async fn library_list(
-  app: AppHandle,
+pub async fn library_list<R: Runtime>(
+  app: AppHandle<R>,
   scan: Option<bool>,
 ) -> Result<Vec<LibraryRecord>, String> {
   tauri::async_runtime::spawn_blocking(move || {
+    let library = app.try_state::<Library>().ok_or("library unavailable")?;
     let (home, downloads) = protected_dirs();
     let root = configured_root(&app)
       .and_then(|root| safe_library_root(&root, home.as_deref(), downloads.as_deref()));
@@ -189,7 +190,6 @@ pub async fn library_list(
     } else {
       Vec::new()
     };
-    let library = app.state::<Library>();
     let mut data = library.0.lock().map_err(|_| "library unavailable")?;
     let index = load_index(&mut data, &index_path(&app), root.as_deref())?;
     index.prune();
@@ -228,9 +228,12 @@ pub async fn library_list(
 
 /// Hides rows durably; never deletes files. Exclusions prevent the next scan restoring removed rows.
 #[tauri::command]
-pub async fn library_remove(app: AppHandle, paths: Vec<PathBuf>) -> Result<(), String> {
+pub async fn library_remove<R: Runtime>(
+  app: AppHandle<R>,
+  paths: Vec<PathBuf>,
+) -> Result<(), String> {
   tauri::async_runtime::spawn_blocking(move || {
-    let library = app.state::<Library>();
+    let library = app.try_state::<Library>().ok_or("library unavailable")?;
     let mut data = library.0.lock().map_err(|_| "library unavailable")?;
     let (home, downloads) = protected_dirs();
     let root = configured_root(&app)

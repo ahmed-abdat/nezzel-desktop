@@ -26,5 +26,7 @@ const ACTIONS: Record<FailReason, { primary: FailAction | null; secondary: FailA
 
 export function failActions(reason: FailReason): { primary: FailAction | null; secondary: FailAction[] } {
   const { primary, secondary } = ACTIONS[reason];
+  // A login wall is not a bug: nothing to report.
+  if (reason === 'login') return { primary, secondary };
   return { primary, secondary: primary === 'report' ? secondary : [...secondary, 'report'] };
 }

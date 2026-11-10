@@ -48,7 +48,10 @@
           <bdi dir="ltr">{{ t('common.divide', { left: formatBytes(tool.received), right: formatBytes(tool.total) }) }}</bdi>
         </p>
       </template>
-      <Collapsible v-else class="group" :unmount-on-hide="false">
+      <template v-else>
+      <!-- The reason, one plain line; the full log stays behind the disclosure. -->
+      <p v-if="reason" class="mt-0.5 line-clamp-2 break-words text-nz-caption" data-testid="tool-error-reason"><bdi dir="auto">{{ reason }}</bdi></p>
+      <Collapsible class="group" :unmount-on-hide="false">
         <CollapsibleTrigger class="flex w-fit cursor-pointer items-center gap-1 rounded-[6px] text-nz-caption outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]">
           {{ t('components.base.toolCard.failed') }}
           <ChevronDown class="size-3.5 transition-transform duration-150 group-data-[state=open]:rotate-180" aria-hidden="true" />
@@ -57,6 +60,7 @@
           <pre dir="ltr" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-card/70 p-2 text-start font-mono text-[11.5px] text-foreground"><code>{{ tool.error }}</code></pre>
         </CollapsibleContent>
       </Collapsible>
+      </template>
     </div>
   </li>
 </template>
@@ -83,6 +87,7 @@ const { tool } = defineProps({
 });
 
 const hasError = computed(() => !!tool.error);
+const reason = computed(() => tool.error?.split('\n').map(line => line.trim()).find(Boolean) ?? '');
 const clampedPercent = computed(() => Math.round(Math.min(Math.max(tool.percent, 0), 100)));
 const state = computed(() => (hasError.value ? 'error' : clampedPercent.value >= 100 ? 'done' : 'progress'));
 </script>

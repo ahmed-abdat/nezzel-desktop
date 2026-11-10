@@ -51,6 +51,7 @@ test('a login request shows on its row and Not now turns it into a plain failure
   await expect(row.getByText('You skipped the login, so Instagram didn\'t allow this download')).toBeVisible();
   await expect(row.getByRole('button', { name: 'Log in again' })).toBeVisible();
   await expect(row.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+  await expect(row.getByRole('link', { name: 'Login settings' })).toBeVisible();
   // The row moved to the Failed section (remounted, Details closed): the engine error is still one click away.
   await row.getByRole('button', { name: 'Details', exact: true }).click();
   await expect(row.getByTestId('login-details')).toHaveText('ERROR: [Reddit] Account authentication is required. Use --cookies');

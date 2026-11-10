@@ -27,7 +27,7 @@ plain Modern Standard Arabic, not a word-for-word calque of the English.
 | en | ar | fr | rule |
 |---|---|---|---|
 | Nezzel (in a sentence) | نزّل | Nezzel | translate in ar prose; Latin in the folder path `Downloads / Nezzel` (it is the real folder name) |
-| download (verb) | تنزيل / نزّل | télécharger | translate |
+| download (verb) | تنزيل / نزّل | télécharger | translate; one verb family for the whole action (welcome, rows, buttons, menus). `حفظ` only where it means a place or a setting: `الحفظ في`, `مكان الحفظ`, saving settings |
 | Downloads (folder, list) | التنزيلات | Téléchargements | translate |
 | link | رابط | lien | translate |
 | paste | لصق | coller | translate |
@@ -86,7 +86,8 @@ plain Modern Standard Arabic, not a word-for-word calque of the English.
 | logs | السجلات | journaux | translate; only inside Technical details |
 | Copy details | نسخ التفاصيل | Copier les détails | translate |
 | Retry | إعادة المحاولة | Réessayer | translate |
+| Remaining (time) | المتبقي | restant | translate; not `متبقٍّ` |
 | Ready / Downloading / Paused / Done / Failed | جاهز / قيد التنزيل / متوقف مؤقتًا / اكتمل / فشل | Prêt / Téléchargement / En pause / Terminé / Échec | translate |
 | waiting (not started) | ينتظر / بانتظار التنزيل | en attente | translate |
-| speed units (MB/s, KB/s) | MB/s | Mo/s | keep in ar; fr uses Mo/Ko |
+| speed and size units (MB/s, MB) | ميغابايت/ث، ميغابايت | Mo/s, Mo | ar spells the unit word out (`localeNumber.ts`; CLDR short `م.ب` reads as a machine abbreviation); fr uses Mo/Ko; the Latin MB/s stays for en |
 | Open / Show in folder | فتح / إظهار في المجلد | Ouvrir / Afficher dans le dossier | translate |

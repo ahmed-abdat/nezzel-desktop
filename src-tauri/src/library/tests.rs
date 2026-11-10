@@ -2,6 +2,29 @@ use super::*;
 use crate::download_records::resolve_trash_target;
 use std::fs;
 
+#[tokio::test]
+async fn missing_library_returns_errors_without_panicking() {
+  let app = tauri::test::mock_app();
+  // Records must exist to reach the completion lookup instead of its no-records early return.
+  app.manage(DownloadRecords::default());
+  let item: crate::models::DownloadItem = serde_json::from_value(serde_json::json!({
+    "id": "item",
+    "url": "https://example.com/video",
+    "format": { "trackType": "both" },
+    "templateContext": { "values": {} }
+  }))
+  .unwrap();
+  let entry = DownloadEntry::from((item, "group".to_owned()));
+
+  assert!(persist_completion(app.handle(), &entry).is_err());
+  assert!(library_list(app.handle().clone(), Some(true))
+    .await
+    .is_err());
+  assert!(library_remove(app.handle().clone(), Vec::new())
+    .await
+    .is_err());
+}
+
 struct Sandbox(PathBuf);
 impl Sandbox {
   fn new() -> Self {

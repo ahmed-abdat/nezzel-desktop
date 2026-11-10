@@ -999,7 +999,8 @@
       "failed": "Some downloads may not work. Try again, or report the problem",
       "installed": "Ready to download"
     },
-    "stay": "Stay here"
+    "stay": "Stay here",
+    "continueWithout": "Continue without tools"
   },
   "components": {
     "base": {
@@ -1068,7 +1069,7 @@
       "internal": {
         "shortMessage": "Something went wrong in Nezzel",
         "message": "Something went wrong in Nezzel while handling this download. Try again",
-        "action": "Try again. If it keeps happening, report the problem"
+        "action": "Try again"
       },
       "signInRequired": {
         "shortMessage": "This site needs you to log in",
@@ -1308,7 +1309,7 @@
       "unknown": {
         "shortMessage": "Couldn't download",
         "message": "Nezzel couldn't finish this download. Try again. If it keeps happening, report the problem; the details are attached for us.",
-        "action": "Try again. If it keeps happening, report the problem"
+        "action": "Try again"
       }
     },
     "rowLine": "{what}. {action}"
@@ -1852,6 +1853,7 @@
     "fail": {
       "retry": "Retry",
       "report": "Report",
+      "useLogin": "Use my browser login",
       "thisSite": "this site",
       "login": {
         "title": "This needs a login on {site}",

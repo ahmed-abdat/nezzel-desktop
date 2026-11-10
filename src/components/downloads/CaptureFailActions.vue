@@ -13,7 +13,7 @@
     >
       {{ label(action) }}
     </Button>
-    <Button v-if="actions.primary" type="button" size="sm" :disabled="busy" @click="emit('act', actions.primary)">
+    <Button v-if="actions.primary" type="button" size="sm" :variant="reason === 'login' ? 'amber' : 'default'" :disabled="busy" @click="emit('act', actions.primary)">
       <RotateCw v-if="actions.primary === 'retry'" aria-hidden="true" />{{ label(actions.primary) }}
     </Button>
   </div>
@@ -30,5 +30,5 @@ const props = defineProps<{ reason: FailReason; busy: boolean }>();
 const emit = defineEmits<{ act: [action: FailAction] }>();
 const { t } = useI18n();
 const actions = computed(() => failActions(props.reason));
-const label = (action: FailAction) => action === 'options' ? t('capture.options') : t(`capture.fail.${action}`);
+const label = (action: FailAction) => action === 'options' ? t(props.reason === 'login' ? 'capture.fail.useLogin' : 'capture.options') : t(`capture.fail.${action}`);
 </script>

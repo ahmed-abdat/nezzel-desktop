@@ -10,6 +10,9 @@
         <template v-else-if="!installPartialFail && counting">
           {{ t('common.continue') }} <span class="tabular-nums text-primary-foreground/80">{{ t('common.parenthesis', { content: waitTime }) }}</span> <ArrowRight class="rtl:rotate-180" aria-hidden="true" />
         </template>
+        <template v-else-if="installPartialFail">
+          {{ t('install.continueWithout') }} <ArrowRight class="rtl:rotate-180" aria-hidden="true" />
+        </template>
         <template v-else>
           {{ t('common.continue') }} <ArrowRight class="rtl:rotate-180" aria-hidden="true" />
         </template>
