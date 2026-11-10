@@ -14,6 +14,8 @@ dist-ssr
 docs/manifest
 licenses/*
 !licenses/tools-NOTICES.txt
+# Tracked on purpose: tauri.conf.json bundles it, so a checkout without it cannot build.
+!licenses/3rdpartylicenses.txt
 *.local
 
 # Editor directories and files
