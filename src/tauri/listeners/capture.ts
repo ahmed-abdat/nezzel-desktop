@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useDownloadSheetStore } from '../../stores/downloadSheet';
 import { useMediaGroupStore } from '../../stores/media/group';
+import { MediaState, useMediaStateStore } from '../../stores/media/state';
 import { useMediaStore } from '../../stores/media/media';
 import { useReportStore } from '../../stores/report';
 import type { MediaItem } from '../types/media';
@@ -38,14 +39,29 @@ export async function startCaptureDelivery() {
   const media = useMediaStore();
   const sheet = useDownloadSheetStore();
   const groups = useMediaGroupStore();
+  const states = useMediaStateStore();
+  const optionChoices = new Map<string, CaptureChoice>();
   let lastSeq = 0;
+
+  function prepareOptions(groupId: string) {
+    const choice = optionChoices.get(groupId);
+    optionChoices.delete(groupId);
+    return media.prepareCaptureGroup(groupId, choice);
+  }
 
   async function fillRow(id: number, item: MediaItem | null) {
     const groupId = captureGroupId(id);
-    if (!groups.findGroupById(groupId)) return;
+    if (!groups.findGroupById(groupId)) {
+      optionChoices.delete(groupId);
+      return;
+    }
     try {
       if (item) media.processMediaAddPayload({ groupId, total: item.entries?.length ?? 1, item });
       else await media.fetchMediaInfoForGroup(groupId);
+      // Apply a pending Options choice using the read source kind and formats, never a guessed video ceiling.
+      if (optionChoices.has(groupId) || (groups.findGroupById(groupId)?.entries && sheet.open && sheet.groupId === groupId)) {
+        await prepareOptions(groupId);
+      }
     } catch {
       // Deliberately do not report engine errors together with captured URLs.
     }
@@ -53,6 +69,10 @@ export async function startCaptureDelivery() {
 
   function openPicker(groupId: string) {
     sheet.show(groupId);
+    // Focus may already have adopted and read this row before the Options click.
+    if (groups.findGroupById(groupId)?.entries || (optionChoices.has(groupId) && states.getGroupState(groupId) === MediaState.configure)) {
+      void prepareOptions(groupId).catch(() => {});
+    }
     void getCurrentWindow().unminimize().then(() => getCurrentWindow().show()).then(() => getCurrentWindow().setFocus()).catch(() => {});
   }
 
@@ -68,6 +88,8 @@ export async function startCaptureDelivery() {
             if (result === 'playlist') openPicker(groupId);
           }).catch(() => {});
         } else if (message.action === 'options') {
+          // Keep the choice until the read establishes whether this is a playlist, video or audio source.
+          if (message.choice) optionChoices.set(groupId, message.choice);
           openPicker(groupId);
         }
         if (message.item) void fillRow(message.id, message.item);

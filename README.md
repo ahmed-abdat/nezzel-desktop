@@ -7,7 +7,7 @@
 **Paste a link. Pick a quality. Save it.**
 
 Save videos, audio and photos from public links on macOS, Windows and Linux.<br>
-Free and open source. No ads, no account. In English, Arabic and French.
+Free and open source. No ads. In English, Arabic and French.
 
 <a href="https://github.com/ahmed-abdat/nezzel-desktop/releases/latest"><img src=".github/assets/download.svg" alt="Download Nezzel Desktop" height="64"></a>
 
@@ -58,9 +58,9 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 ## FAQ
 
-**Is it free?** Yes, and open source under the AGPL-3.0. No ads, no account, no paid tier.
+**Is it free?** Yes, and open source under the AGPL-3.0. No ads, no paid tier.
 
-**Does Nezzel send anything to a server?** No account and no ads. Crash and error reports go to our own Sentry project, and anonymous daily usage counts (features used, sites by domain only, never links or file names) go to our own server. Both are on by default and have a switch in Settings. Details in [PRIVACY.md](PRIVACY.md).
+**Does Nezzel send anything to a server?** Crash and error reports go to our own Sentry project, and anonymous daily usage counts (features used, sites by domain only, never links or file names) go to our own server. Both are on by default and have a switch in Settings. Details in [PRIVACY.md](PRIVACY.md).
 
 **Why does my OS warn me when I install it?** The beta isn't code-signed yet. See [Install](#install) for the one-time step.
 
@@ -72,7 +72,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 ## بالعربية
 
-‏**Nezzel Desktop** تطبيق مجاني ومفتوح المصدر لأجهزة macOS وWindows وLinux، يحفظ الفيديو والصوت والصور من الروابط العامة، بلا إعلانات ولا حساب.
+‏**Nezzel Desktop** تطبيق مجاني ومفتوح المصدر لأجهزة macOS وWindows وLinux، يحفظ الفيديو والصوت والصور من الروابط العامة، بلا إعلانات.
 
 انسخ الرابط، فيلتقطه Nezzel تلقائيًا (أو الصقه في خانة الرابط)، ثم اختر الجودة واضغط «تنزيل». تُحفظ الملفات في مجلد ‎`Downloads/Nezzel`‎.
 
@@ -86,7 +86,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 ## En français
 
-**Nezzel Desktop** est une application gratuite et libre pour macOS, Windows et Linux qui enregistre vidéos, sons et photos depuis des liens publics, sans publicité ni compte.
+**Nezzel Desktop** est une application gratuite et libre pour macOS, Windows et Linux qui enregistre vidéos, sons et photos depuis des liens publics, sans publicité.
 
 Copiez un lien : Nezzel le détecte (ou collez-le dans le champ). Choisissez la qualité, puis cliquez sur «&nbsp;Télécharger&nbsp;». Les fichiers vont dans `Downloads/Nezzel`. Téléchargez l’application depuis la [page des versions](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest).
 

@@ -2,18 +2,18 @@ import { expect } from '@playwright/test';
 import { test } from './utils/fixtures';
 import { MAIN_PANE_ID } from '../../src/helpers/domIds';
 
-const openAbout = async (page: import('@playwright/test').Page) => {
+const openSettings = async (page: import('@playwright/test').Page, state = 'settings-about') => {
   await page.goto('/');
   await expect(page.locator(`#${MAIN_PANE_ID}`)).toBeVisible({ timeout: 20_000 });
-  await page.evaluate(async () => {
+  await page.evaluate(async (state) => {
     // @ts-expect-error served by the Vite dev server, not resolved by tsc
     const { seed } = await import('/tests/e2e/utils/uiStateSeeds.ts');
-    await seed('settings-about');
-  });
+    await seed(state);
+  }, state);
 };
 
 test('Report a problem: an optional note and one Send button', async ({ page }) => {
-  await openAbout(page);
+  await openSettings(page);
   await page.getByTestId('about-report').click();
   const dialog = page.getByTestId('report-dialog');
   await expect(dialog.getByRole('heading')).toHaveText('Report a problem');
@@ -48,7 +48,7 @@ test.describe('without a report key in the build', () => {
   test.use({ mockData: { reportSend: 'fail' } });
 
   test('a failed send keeps the form and offers Copy details', async ({ page }) => {
-    await openAbout(page);
+    await openSettings(page);
     await page.getByTestId('about-report').click();
     await page.getByTestId('report-send').click();
     await expect(page.getByText('Couldn\'t send the report')).toBeVisible();
@@ -69,6 +69,6 @@ test.describe('after a crash with reports off', () => {
 });
 
 test('Settings has the reports switch, on by default', async ({ page }) => {
-  await openAbout(page);
+  await openSettings(page, 'settings-advanced');
   await expect(page.getByTestId('settings-send-reports')).toHaveAttribute('data-state', 'checked');
 });

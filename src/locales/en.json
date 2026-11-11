@@ -587,6 +587,10 @@
       }
     },
     "playlistSelection": {
+      "selectAll": "Select all",
+      "selectNone": "Select none",
+      "itemFallback": "Item {n}",
+      "checkedCount": "No items selected | {count} of {total} item selected | {count} of {total} items selected",
       "title": "Choose playlist items",
       "description": "Select what items to download",
       "selectionSummary": "{count} of {total} item selected | {count} of {total} items selected",
@@ -599,8 +603,8 @@
       "advancedEmpty": "No advanced selection configured yet",
       "addSingle": "Add item",
       "addRange": "Add range",
-      "applyFull": "Download all items",
-      "applySelection": "Download selected items",
+      "applyFull": "Download all {count}",
+      "applySelection": "Download {count} videos | Download {count} video | Download {count} videos",
       "useAdvanced": "Use advanced selection",
       "noMatches": "This range does not match any items in the playlist",
       "row": {
@@ -1001,11 +1005,11 @@
     },
     "subtitle": {
       "installing": "We're getting everything ready",
-      "failed": "Some downloads may not work. Try again, or report the problem",
+      "failed": "Downloads need these tools. Retry now, or repair them from the status bar in the app.",
       "installed": "Ready to download"
     },
     "stay": "Stay here",
-    "continueWithout": "Continue without tools"
+    "continueWithout": "Continue — downloads unavailable"
   },
   "components": {
     "base": {
@@ -1438,7 +1442,7 @@
     "title": "Downloads",
     "field": {
       "label": "Link to download",
-      "placeholder": "Paste a link",
+      "placeholder": "Paste one or more links",
       "submit": "Download",
       "more": "More ways to add links",
       "importFile": "Add links from a file…",
@@ -1451,12 +1455,16 @@
       "watchHint": "Shows a small card when you copy a link, even over other apps",
       "watchOnTip": "Copied-link card: on",
       "watchOffTip": "Copied-link card: off",
+      "clipboardTip": "{state}. {keys}",
       "filtersHint": "Skip videos by size, date or title when adding many",
       "filtersOn": "On: some videos will be skipped",
-      "pasteFirst": "Paste a link first"
+      "pasteFirst": "Paste a link first",
+      "captureSettings": "Set up quick download in Settings → Keyboard shortcuts",
+      "captureShortcut": "Quick download from any app: {shortcut}"
     },
     "drop": "Drop to download",
     "sections": {
+      "needsYou": "Needs you",
       "active": "In progress",
       "finished": "Completed",
       "failed": "Failed"
@@ -1464,7 +1472,8 @@
     "seeAll": "See all ({n})",
     "summary": {
       "ready": "No links ready | 1 link ready | {n} links ready",
-      "downloadAll": "Download all"
+      "downloadAll": "Download all",
+      "playlistsNeedSelection": "{n} playlist needs you to pick items | {n} playlists need you to pick items"
     },
     "empty": {
       "title": "Save videos, audio, photos and files from a link",
@@ -1472,7 +1481,7 @@
       "cta": "Paste a link",
       "tip": "Tip: copy a link anywhere and press Download, or drop a link on this window",
       "filtered": "Nothing here yet",
-      "hintPaste": "Paste or drop a link anywhere in this window",
+      "hintPaste": "Paste or drop a link. To add links from a file, open the … menu.",
       "hintQuick": "Quick download from any app, even your browser",
       "hintCopied": "Copy a link and {brand} offers it right away"
     },
@@ -1500,6 +1509,7 @@
       "details": "Details",
       "more": "More actions",
       "openPage": "Open the page",
+      "openBrowser": "Open in browser",
       "perDownload": "Settings for this download",
       "saved": "Saved",
       "items": "1 item | {n} items",
@@ -1558,6 +1568,7 @@
       "turnedOff": "{site} needs you to be logged in. Browser logins are off in Login settings",
       "thisSite": "this site",
       "signedIn": "logged in to {host}",
+      "profileStatus": "{profile} · {status}",
       "usingProfile": "Using {profile}",
       "changeProfile": "Change profile",
       "windowsAppBound": "Edge and Chrome on Windows don't let other apps use their logins. Sign in to this site in Firefox, or add a cookies file in Login settings",
@@ -1641,16 +1652,21 @@
     "audioHint": "Best sound",
     "small": "Smaller file",
     "smallHint": "Video · {height}p",
+    "smallAudioOnly": "This link has audio only; there is no video to resize",
+    "smallUnavailable": "No smaller format is available for this link",
+    "smallLabel": "Smaller file ({height}p)",
     "custom": "Custom format",
     "advanced": "All formats and extras",
     "advancedHint": "Pick an exact format, codec or track",
     "moreOptions": "Codecs and audio tracks…",
     "perDownload": "Folder, subtitles and more for this download",
     "remember": "Use this every time and skip this step",
+    "rememberHint": "Saved as your default. To undo, turn on “{setting}” in Settings → General.",
     "cancel": "Not now",
     "download": "Download",
     "reading": "Reading the link…",
     "size": "About {size}",
+    "choiceSize": "{hint} · about {size}",
     "format": "Format",
     "saveTo": "Save to",
     "waitingFormats": "Waiting for formats…"
@@ -1694,6 +1710,10 @@
       "choose": "Choose…"
     },
     "logins": {
+      "policy": "Browser logins",
+      "askChoice": "Ask",
+      "neverChoice": "Never",
+      "alwaysChoice": "Always",
       "note": "When a site needs a login, Nezzel uses a browser profile that is logged in to it. Your login is never saved or sent anywhere except that site",
       "browser": "Use logins from",
       "browserHint": "Automatic finds a logged-in profile when a site refuses. Change the profile on a download, or pick one browser for every site",
@@ -2111,7 +2131,7 @@
       "linuxKde": "system tray",
       "linuxOther": "notification area"
     },
-    "privacy": "No account needed and no ads. You can turn reports off anytime",
+    "privacy": "Free, open source and no ads. You can turn reports off anytime",
     "getStarted": "Get started",
     "later": "Change these anytime in Settings",
     "steps": {
@@ -2193,5 +2213,10 @@
       "text": "Crash and error reports are now on. They help us fix bugs and never include your files or accounts",
       "action": "Settings"
     }
+  },
+  "toolsRepair": {
+    "offline": "You’re offline. Connect to the internet, then retry the tool repair.",
+    "unavailable": "Downloads won’t work until the tools are repaired",
+    "action": "Repair download tools"
   }
 }

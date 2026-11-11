@@ -183,6 +183,7 @@ impl LoginSession {
     if self.browser.as_deref() == Some(ANONYMOUS_BROWSER) {
       return RetryAction::Stop;
     }
+    self.activate_fixed_browser();
     if self.uses_cookies() {
       self.announce(app, &entry.id, &entry.group_id);
       return RetryAction::Browser;
@@ -284,16 +285,22 @@ impl LoginSession {
   }
 
   pub fn uses_cookies(&self) -> bool {
-    if self.browser.as_deref() == Some(ANONYMOUS_BROWSER) {
+    !matches!(
+      browsers::CookieSource::for_site(&self.auth, self.browser.as_deref(), &self.host),
+      Ok(browsers::CookieSource::Anonymous)
+    )
+  }
+
+  fn activate_fixed_browser(&mut self) -> bool {
+    if self.browser.is_some() || self.state.browser_attempted || self.uses_cookies() {
       return false;
     }
-    self.browser.is_some()
-      || self
-        .auth
-        .cookie_file
-        .as_ref()
-        .is_some_and(|s| !s.is_empty())
-      || matches!(BrowserSetting::of(&self.auth), BrowserSetting::Fixed(_))
+    let BrowserSetting::Fixed(browser) = BrowserSetting::of(&self.auth) else {
+      return false;
+    };
+    self.browser = Some(browser.to_owned());
+    self.state.browser_attempted = true;
+    true
   }
 
   /// Retain only redacted diagnostics, never cookie contents or source URLs.
@@ -478,6 +485,15 @@ impl LoginSession {
       .best_failure
       .as_ref()
       .is_some_and(|event| matches!(event.code.as_str(), "networkTimeout" | "fetchTimeout"));
+    if !cancelled
+      && !self.network_down
+      && !timed_out
+      && !aria_denied
+      && reason.is_some()
+      && self.activate_fixed_browser()
+    {
+      return (RetryAction::Browser, vec![]);
+    }
     if cancelled
       || self.network_down
       || timed_out

@@ -3,7 +3,11 @@
     <tooltip-provider :delay-duration="500">
       <a :href="`#${MAIN_PANE_ID}`" class="nz-skip">{{ t('shell.skipToContent') }}</a>
       <div class="relative flex h-full min-h-0 bg-background text-[13px] text-foreground" :class="dir === 'rtl' && 'text-[14px]'">
-        <app-sidebar :collapsed="collapsed" :can-toggle="!narrowWindow" :inert="overlayOpen || undefined" @toggle="toggleSidebar" />
+        <app-sidebar :collapsed="collapsed" :can-toggle="!narrowWindow" :inert="overlayOpen || undefined" @toggle="toggleSidebar">
+          <template v-if="isSettings && !toggleInStrip && !narrowWindow" #title-start>
+            <sidebar-toggle :collapsed="collapsed" @toggle="toggleSidebar" />
+          </template>
+        </app-sidebar>
         <!-- macOS (LTR): the toggle sits in the title strip right after the traffic lights and stays put when the
              sidebar collapses. Physical `left` on purpose: the lights are at the physical left in every language. -->
         <div v-if="toggleInStrip" class="absolute top-3 z-40" style="left: 78px" :inert="overlayOpen || undefined">
@@ -12,7 +16,8 @@
 
         <div class="flex min-w-0 flex-1 flex-col" :inert="overlayOpen || undefined">
           <app-toolbar ref="toolbar" :lights-inset="lightsInset" :show-toggle="!toggleInStrip && !narrowWindow" :collapsed="collapsed" @toggle-sidebar="toggleSidebar" />
-          <main :id="MAIN_PANE_ID" class="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden outline-none" tabindex="-1">
+          <!-- A collapsed macOS LTR sidebar leaves its title-strip toggle over the main pane; clear it horizontally. -->
+          <main :id="MAIN_PANE_ID" class="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden outline-none" :style="isSettings && toggleInStrip && collapsed ? { paddingInlineStart: `${lightsInset}px` } : undefined" tabindex="-1">
             <router-view :key="$route.matched[1]?.path ?? $route.fullPath" />
             <the-updater />
             <Transition name="nz-drop">
@@ -62,6 +67,7 @@ import { useMediaGroupStore } from '../stores/media/group.ts';
 import { useDragDropStore } from '../stores/dragDrop.ts';
 import { useDownloadSheetStore } from '../stores/downloadSheet';
 import { useUiPrefs } from '../composables/useUiPrefs';
+import { useTrafficLightsInset } from '../composables/useTrafficLightsInset';
 import { usePlatform } from '../composables/usePlatform';
 import { localeDirection } from '../i18n';
 import { builtInKeyOf, eventAccelerator, IN_APP_ACTIONS, sameShortcut } from '../helpers/shortcut';
@@ -82,6 +88,7 @@ const isMissingGroupRedirecting = ref(false);
 const toolbar = ref<{ pasteField: () => Promise<void> } | null>(null);
 
 const dir = computed(() => localeDirection(locale.value));
+const isSettings = computed(() => String(route.name ?? '').startsWith('settings'));
 const narrowWindow = useMediaQuery('(max-width: 859px)');
 const narrow = useMediaQuery('(max-width: 1023px)');
 /** Small windows always get the icon sidebar; wide ones follow the user's toggle. */
@@ -96,9 +103,10 @@ const overlayOpen = computed(() => narrow.value && sheet.open);
 /** macOS LTR: the toggle lives in the title strip after the traffic lights. Everywhere else it opens the toolbar. */
 const toggleInStrip = computed(() => isMac.value && dir.value === 'ltr' && !narrowWindow.value);
 /** Toolbar left padding clear of the traffic lights (+ the strip toggle) when the toolbar touches that edge. */
+const { rtlInset } = useTrafficLightsInset();
 const lightsInset = computed<number>(() => {
   if (!isMac.value) return 0;
-  if (dir.value === 'rtl') return 84;
+  if (rtlInset.value) return rtlInset.value;
   if (!collapsed.value) return 0;
   // Collapsed: toolbar starts at 56px; lights end ~70px, toggle spans 78-106px.
   return toggleInStrip.value ? 64 : 28;

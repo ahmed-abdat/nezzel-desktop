@@ -12,10 +12,13 @@
       <div class="mt-2 flex flex-wrap items-center gap-2 ps-5">
         <template v-if="candidates.length > 1">
           <label :for="selectId" class="sr-only">{{ t('downloads.login.useFrom') }}</label>
-          <select-field :id="selectId" v-model="browser" :options="browserOptions" class="min-w-40 border-amber-border" />
+          <select-field :id="selectId" v-model="browser" :options="browserOptions" :value-dir="localeDirection(locale)" class="min-w-40 border-amber-border">
+            <template #value><LoginCandidateLabel :candidate="candidates.find(c => c.id === browser)" :host="host" /></template>
+            <template #option="{ option }"><LoginCandidateLabel :candidate="candidates.find(c => c.id === option.value)" :host="host" /></template>
+          </select-field>
         </template>
         <span v-else-if="candidates.length === 1" class="text-[12.5px]">
-          {{ t('downloads.login.useFrom') }} <bdi class="font-medium">{{ optionLabel(candidates[0]) }}</bdi>
+          {{ t('downloads.login.useFrom') }} <span class="font-medium"><LoginCandidateLabel :candidate="candidates[0]" :host="host" /></span>
         </span>
         <Button variant="amber" :disabled="busy || (!browser && candidates.length !== 1)" @click="use">{{ t('downloads.login.use') }}</Button>
         <Button variant="ghost" class="text-amber-foreground hover:bg-amber-border/50" :disabled="busy" @click="notNow">{{ t('downloads.login.notNow') }}</Button>
@@ -53,6 +56,7 @@
 import { computed, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { localeDirection } from '../../i18n';
+import LoginCandidateLabel from './LoginCandidateLabel.vue';
 import { KeyRound, RotateCw, TriangleAlert } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import { SelectField } from '@/components/ui/select';
@@ -88,11 +92,11 @@ watch(() => (props.card.kind === 'needed' ? `${props.card.request.requestId}|${p
   if (props.card.kind === 'needed') browser.value = props.card.preselect;
 }, { immediate: true });
 
-/** Plain-text option labels can't hold <bdi>: in RTL, Unicode isolates keep "Chrome (Person 1)" and the host in order. */
+/** Typeahead uses plain text; the rendered value and options use LoginCandidateLabel's <bdi> runs. */
 const isolate = (text: string) => (localeDirection(locale.value) === 'rtl' ? `\u2068${text}\u2069` : text);
 function optionLabel(candidate: LoginCandidate): string {
   const label = isolate(candidateLabel(candidate));
-  return candidate.signedIn ? `${label} · ${t('downloads.login.signedIn', { host: isolate(host.value) })}` : label;
+  return candidate.signedIn ? t('downloads.login.profileStatus', { profile: label, status: t('downloads.login.signedIn', { host: isolate(host.value) }) }) : label;
 }
 
 /** Browser the engine actually read the login from for this row, if any. */

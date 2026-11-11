@@ -7,6 +7,8 @@ import SettingsView from '../../src/views/app/SettingsView.vue';
 import SettingsShortcuts from '../../src/components/settings/SettingsShortcuts.vue';
 import SettingsGeneralTab from '../../src/views/app/settings/SettingsGeneralTab.vue';
 import SettingsLoginsTab from '../../src/views/app/settings/SettingsLoginsTab.vue';
+import { pickOption } from '../utils/selectField';
+import SettingsAboutTab from '../../src/views/app/settings/SettingsAboutTab.vue';
 import SettingsAdvancedTab from '../../src/views/app/settings/SettingsAdvancedTab.vue';
 import { i18n } from '../../src/i18n';
 import { defaultSettings, type Settings } from '../../src/tauri/types/config';
@@ -103,6 +105,7 @@ function createSettingsRouter() {
               { path: '', name: 'settings.general', component: SettingsGeneralTab },
               { path: 'logins', name: 'settings.logins', component: SettingsLoginsTab },
               { path: 'advanced', name: 'settings.advanced', component: SettingsAdvancedTab },
+              { path: 'about', name: 'settings.about', component: SettingsAboutTab },
             ],
           },
         ],
@@ -149,7 +152,7 @@ describe('SettingsView', () => {
     await nextTick();
 
     const tabs = wrapper.findAll('nav a');
-    expect(tabs.slice(0, 3).map(tab => tab.text())).toEqual(['General', 'Logins', 'Advanced']);
+    expect(tabs.map(tab => tab.text())).toEqual(['General', 'Logins', 'Advanced', 'About']);
     expect(tabs[0].attributes('aria-current')).toBe('page');
 
     await router.push('/settings/logins');
@@ -233,12 +236,38 @@ describe('SettingsView', () => {
     await router.push('/settings/logins');
     await router.isReady();
     const wrapper = mount(createRoot(), { global: { plugins: [router, i18n] } });
-    await wrapper.get('#pref-cookie-never').trigger('click');
+    await pickOption(wrapper, 'pref-login-policy', 'never');
     await vi.advanceTimersByTimeAsync(1000);
     await flushPromises();
 
     expect(patch).toHaveBeenCalledTimes(1);
     expect(patch.mock.calls[0][0]).toEqual({ ...defaultSettings, auth: { ...defaultSettings.auth, cookieBrowser: 'none' } });
+    wrapper.unmount();
+  });
+});
+
+describe('legacy login preferences', () => {
+  it.each([
+    ['automatic', false, 'ask'], ['chrome', false, 'ask'],
+    ['chrome', true, 'always'], ['none', false, 'never'], ['none', true, 'never'], ['', true, 'never'],
+  ])('reads %s / %s as %s and writes compatible settings', async (cookieBrowser, always, expected) => {
+    const settings = structuredClone(defaultSettings);
+    settings.auth.cookieBrowser = String(cookieBrowser);
+    settings.auth.alwaysUseBrowserLogins = Boolean(always);
+    const wrapper = mount(SettingsLoginsTab, { props: { modelValue: settings }, global: { plugins: [i18n] } });
+    const policy = wrapper.findAllComponents({ name: 'SelectField' }).find(c => c.props('id') === 'pref-login-policy')!;
+    expect(policy.props('modelValue')).toBe(expected);
+    await pickOption(wrapper, 'pref-login-policy', 'always');
+    expect(settings.auth.cookieBrowser).toBe(cookieBrowser === 'none' || cookieBrowser === '' ? 'automatic' : cookieBrowser);
+    expect(settings.auth.alwaysUseBrowserLogins).toBe(true);
+    await pickOption(wrapper, 'pref-cookie-browser', 'firefox');
+    await pickOption(wrapper, 'pref-login-policy', 'never');
+    expect(settings.auth.cookieBrowser).toBe('none');
+    expect(settings.auth.alwaysUseBrowserLogins).toBe(false);
+    await pickOption(wrapper, 'pref-login-policy', 'ask');
+    expect(settings.auth.cookieBrowser).toBe('firefox');
+    expect(settings.auth.alwaysUseBrowserLogins).toBe(false);
+    expect(settings.auth.cookieFile).toBe(defaultSettings.auth.cookieFile);
     wrapper.unmount();
   });
 });

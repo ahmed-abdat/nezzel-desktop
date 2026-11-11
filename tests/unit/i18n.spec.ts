@@ -88,3 +88,35 @@ describe('locale direction', () => {
     expect(document.documentElement.getAttribute('dir')).toBe(dir);
   });
 });
+
+describe('Arabic playlist selection counts', () => {
+  it.each([
+    [0, 'لم يُحدَّد أي عنصر'],
+    [1, 'عنصر واحد من 120'],
+    [2, 'عنصران من 120'],
+    [3, '3 من 120 محدّدة'],
+    [11, '11 من 120 محدّدًا'],
+    [100, '100 من 120 محدّد'],
+  ])('renders the Arabic plural form for %s', (count, expected) => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = 'ar';
+    try {
+      expect(i18n.global.t('inputFilters.playlistSelection.checkedCount', { count, total: 120 }, count)).toBe(expected);
+    } finally { i18n.global.locale.value = previous; }
+  });
+  it.each([
+    [0, 'تنزيل 0 فيديو', 'تنزيل كل العناصر (0)'],
+    [1, 'تنزيل فيديو واحد', 'تنزيل العنصر (1)'],
+    [2, 'تنزيل فيديوهين', 'تنزيل العنصرين (2)'],
+    [3, 'تنزيل 3 فيديوهات', 'تنزيل كل العناصر (3)'],
+    [11, 'تنزيل 11 فيديو', 'تنزيل كل العناصر (11)'],
+    [100, 'تنزيل 100 فيديو', 'تنزيل كل العناصر (100)'],
+  ])('counts the Arabic download actions for %s', (count, selected, all) => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = 'ar';
+    try {
+      expect(i18n.global.t('inputFilters.playlistSelection.applySelection', { count }, count)).toBe(selected);
+      expect(i18n.global.t('inputFilters.playlistSelection.applyFull', { count }, count)).toBe(all);
+    } finally { i18n.global.locale.value = previous; }
+  });
+});

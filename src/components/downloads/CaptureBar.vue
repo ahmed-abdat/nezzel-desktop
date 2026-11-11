@@ -59,7 +59,11 @@
               </template>
             </p>
             <p v-if="bestParts.length" class="tnum flex items-center gap-1 text-[12px] text-foreground/75" data-testid="capture-best">
-              <template v-for="(part, index) in bestParts" :key="index"><span v-if="index > 0" class="nz-sep" aria-hidden="true" /><bdi>{{ part }}</bdi></template>
+              <template v-for="(part, index) in bestParts" :key="index">
+                <span v-if="index > 0" class="nz-sep" aria-hidden="true" />
+                <i18n-t v-if="part.estimate" keypath="sheet.size" tag="span" scope="global"><template #size><bdi dir="ltr">{{ part.text }}</bdi></template></i18n-t>
+                <bdi v-else :dir="part.ltr ? 'ltr' : undefined">{{ part.text }}</bdi>
+              </template>
             </p>
           </div>
         </div>
@@ -70,9 +74,9 @@
         <p v-else class="text-[12.5px] text-muted-foreground">{{ t('capture.emptyHint') }}</p>
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <p v-if="isMac && offer.resolving" class="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground" :title="t('capture.automationHint')">{{ t('capture.automationHint') }}</p>
-        <span v-else class="inline-flex min-w-0 flex-1 items-center gap-1 overflow-hidden whitespace-nowrap text-[11.5px] text-muted-foreground">
+        <span v-else class="inline-flex min-w-max flex-1 items-center gap-1 whitespace-nowrap text-[11.5px] text-muted-foreground">
           <Kbd>{{ escKey }}</Kbd>{{ t('capture.escCloses') }}
         </span>
         <CaptureFailActions v-if="offer.failed && !editing" :reason="failure" :busy="acting" @act="onFail" />

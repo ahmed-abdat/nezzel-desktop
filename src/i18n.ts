@@ -99,6 +99,13 @@ export const i18n = createI18n<[MessageSchema], Locale, false>({
   legacy: false,
   globalInjection: false,
   fallbackLocale: 'en',
+  pluralRules: {
+    ar: (count, choicesLength, original) => {
+      if (choicesLength !== 6) return original?.(count, choicesLength) ?? 0;
+      const mod = Math.abs(count) % 100;
+      return count === 0 ? 0 : count === 1 ? 1 : count === 2 ? 2 : mod >= 3 && mod <= 10 ? 3 : mod >= 11 ? 4 : 5;
+    },
+  },
   messages: {
     en,
     es,

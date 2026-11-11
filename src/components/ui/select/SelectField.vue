@@ -22,6 +22,7 @@ const props = defineProps<{
   name?: string;
   class?: HTMLAttributes['class'];
   contentClass?: HTMLAttributes['class'];
+  valueDir?: 'ltr' | 'rtl';
 }>();
 const model = defineModel<T | null | undefined>();
 
@@ -42,11 +43,14 @@ const items = computed(() => props.options.map(o => ({ ...o, inner: toInner(o.va
 <template>
   <SelectRoot v-model="inner" :disabled="disabled" :name="name">
     <SelectTrigger :id="id" v-bind="$attrs" :class="props.class">
-      <SelectValue :placeholder="placeholder" />
+      <SelectValue v-if="$slots.value" :placeholder="placeholder" :dir="valueDir">
+        <slot name="value" />
+      </SelectValue>
+      <SelectValue v-else :placeholder="placeholder" :dir="valueDir" />
     </SelectTrigger>
     <SelectContent :class="contentClass">
-      <SelectItem v-for="option in items" :key="String(option.inner)" :value="option.inner" :disabled="option.disabled">
-        {{ option.label }}
+      <SelectItem v-for="option in items" :key="String(option.inner)" :value="option.inner" :disabled="option.disabled" :text-value="option.label">
+        <slot name="option" :option="option">{{ option.label }}</slot>
       </SelectItem>
     </SelectContent>
   </SelectRoot>

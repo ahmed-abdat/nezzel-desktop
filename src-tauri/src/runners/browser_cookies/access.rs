@@ -54,32 +54,33 @@ impl CookieAccess {
   ) -> Result<Self, &'static str> {
     use crate::extract::deadline::{remaining_budget, FETCH_TIMEOUT};
     use std::{io::Write, time::Duration};
-    let browser = match CookieSource::select(settings, browser)? {
-      CookieSource::Anonymous => {
-        return Ok(Self {
-          args: vec![],
-          has_session: false,
-          _jar: None,
-        })
-      }
-      CookieSource::File(file) => {
-        return Ok(Self {
-          has_session: scoped_rows(
-            std::path::Path::new(&file),
-            &reqwest::Url::parse(source)
-              .ok()
-              .and_then(|url| url.host_str().map(str::to_owned))
-              .ok_or(COOKIE_READ_ERROR)?,
-            &mut std::io::sink(),
-          )
-          .map_err(|_| COOKIE_READ_ERROR)?
-            > 0,
-          args: vec!["--cookies".into(), file],
-          _jar: None,
-        })
-      }
-      CookieSource::Browser(browser) => browser,
-    };
+    let host = reqwest::Url::parse(source)
+      .ok()
+      .and_then(|url| url.host_str().map(str::to_owned));
+    let browser =
+      match CookieSource::for_site(settings, browser, host.as_deref().unwrap_or_default())? {
+        CookieSource::Anonymous => {
+          return Ok(Self {
+            args: vec![],
+            has_session: false,
+            _jar: None,
+          })
+        }
+        CookieSource::File(file) => {
+          return Ok(Self {
+            has_session: scoped_rows(
+              std::path::Path::new(&file),
+              host.as_deref().ok_or(COOKIE_READ_ERROR)?,
+              &mut std::io::sink(),
+            )
+            .map_err(|_| COOKIE_READ_ERROR)?
+              > 0,
+            args: vec!["--cookies".into(), file],
+            _jar: None,
+          })
+        }
+        CookieSource::Browser(browser) => browser,
+      };
     if !*cancel.borrow() {
       return Err("cancelled");
     }
@@ -87,10 +88,7 @@ impl CookieAccess {
     if budget.is_zero() {
       return Err(FETCH_TIMEOUT);
     }
-    let host = reqwest::Url::parse(source)
-      .ok()
-      .and_then(|url| url.host_str().map(str::to_owned))
-      .ok_or(COOKIE_READ_ERROR)?;
+    let host = host.ok_or(COOKIE_READ_ERROR)?;
     std::fs::create_dir_all(context.directory.parent().ok_or(COOKIE_READ_ERROR)?)
       .map_err(|_| COOKIE_READ_ERROR)?;
     private_directory(&context.directory).map_err(|_| COOKIE_READ_ERROR)?;

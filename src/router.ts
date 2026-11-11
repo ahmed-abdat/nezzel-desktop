@@ -15,6 +15,7 @@ import TheOutputPreferences from './components/media-view/TheOutputPreferences.v
 import TheSubtitlePreferences from './components/media-view/TheSubtitlePreferences.vue';
 import SettingsGeneralTab from './views/app/settings/SettingsGeneralTab.vue';
 import SettingsLoginsTab from './views/app/settings/SettingsLoginsTab.vue';
+import SettingsAboutTab from './views/app/settings/SettingsAboutTab.vue';
 import SettingsAdvancedTab from './views/app/settings/SettingsAdvancedTab.vue';
 
 const routes = [
@@ -65,6 +66,7 @@ const routes = [
             component: SettingsLoginsTab,
             meta: { index: 1 },
           },
+          { path: 'about', name: 'settings.about', component: SettingsAboutTab, meta: { index: 1 } },
           {
             path: 'advanced',
             name: 'settings.advanced',

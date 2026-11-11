@@ -216,6 +216,11 @@ export const seeds: Record<string, () => unknown> = {
     addRow(done({ title: title(3) }));
   },
 
+  'list-needs-you': () => {
+    addRow({ title: title(0), state: MediaState.configure, height: 1080 });
+    loginRequest(loginRow(MediaState.fetching));
+    addRow({ title: title(1), state: MediaState.downloading, percent: 42 });
+  },
   'row-reading': () => addRow({ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', state: MediaState.fetching, thumbnail: null }),
   'row-reading-slow': () => addRow({ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', state: MediaState.fetching, thumbnail: null }),
   'row-ready': () => addRow({ title: title(0), state: MediaState.configure, height: 1080 }),
@@ -314,7 +319,7 @@ export const seeds: Record<string, () => unknown> = {
     return router().push({ name: 'settings.logins' });
   },
   'settings-accounts': () => router().push({ name: 'settings.logins' }),
-  'settings-about': () => router().push({ name: 'settings.advanced' }),
+  'settings-about': () => router().push({ name: 'settings.about' }),
 
   'updater-available': () => {
     useUpdaterStore().checkResult = { available: true, currentVersion: '1.0.0', availableVersion: '1.1.0' };

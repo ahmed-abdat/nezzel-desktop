@@ -76,7 +76,7 @@ pub fn main() {
 fn start() -> Result<(), Box<dyn Error>> {
   let args: Vec<_> = std::env::args().skip(1).collect();
   if args.iter().any(|arg| arg == "--help") {
-    println!("cargo run --features link-matrix --example link_matrix -- --links A.tsv [--links B.tsv] --out DIR [--jobs 1|2] [--only site[,site]] [--login browser[:profile]] (login is local-only; refused with CI=1)");
+    println!("cargo run --features link-matrix --example link_matrix -- --links A.tsv [--links B.tsv] --out DIR [--jobs 1|2] [--only site[,site]] [--login browser[:profile] | --cookies PATH] (both auth modes are local-only; refused with CI=1)");
     return Ok(());
   }
   let ci = std::env::var("CI").ok();
@@ -131,6 +131,8 @@ fn start() -> Result<(), Box<dyn Error>> {
     bin_dir.clone(),
   ));
   let mut config = Config::default();
+  // Same manual-file setting as Settings > Logins > Advanced; production selects the source.
+  config.auth.cookie_file = options.cookies.clone();
   // Discovery remains disabled unless a local browser was explicitly consented to.
   config.auth.cookie_browser = if options.login.is_some() {
     "automatic"
@@ -217,17 +219,12 @@ async fn run_all(
   events: Events,
 ) -> Result<(), String> {
   let total = links.len();
-  let mut pending = stream::iter(links.into_iter().enumerate().map(|(index, link)| {
-    run_one(
-      app,
-      index,
-      link,
-      &run_dir,
-      &bins,
-      &events,
-      options.login.as_deref(),
-    )
-  }))
+  let mut pending = stream::iter(
+    links
+      .into_iter()
+      .enumerate()
+      .map(|(index, link)| run_one(app, index, link, &run_dir, &bins, &events, &options)),
+  )
   .buffer_unordered(options.jobs);
   let mut results = Vec::new();
   while let Some(row) = pending.next().await {
@@ -254,7 +251,7 @@ async fn run_one(
   run_dir: &Path,
   bins: &Path,
   events: &Events,
-  login: Option<&str>,
+  options: &Options,
 ) -> ResultRow {
   let started = Instant::now();
   let group = format!("matrix-{}", uuid::Uuid::new_v4());
@@ -286,7 +283,15 @@ async fn run_one(
   let outcome = GALLERY_ERRORS
     .scope(RefCell::new(Vec::new()), async {
       let (item_count, mut discovered) = tokio::sync::watch::channel(1usize);
-      let work = pipeline(app, &row.link, &group, &folder, bins, &item_count, login);
+      let work = pipeline(
+        app,
+        &row.link,
+        &group,
+        &folder,
+        bins,
+        &item_count,
+        options.login.as_deref(),
+      );
       tokio::pin!(work);
       let deadline = tokio::time::sleep(Duration::from_secs(180));
       tokio::pin!(deadline);
@@ -430,7 +435,7 @@ async fn run_one(
     }
     .into();
   }
-  if login.is_some() {
+  if options.authenticated() {
     row.engine.clear();
     row.reason = crate::parsers::ytdlp_error::redact_diagnostic(&row.reason);
   }
@@ -438,8 +443,8 @@ async fn run_one(
   for (_, value) in &mut captured {
     scrub(value);
   }
-  let mut evidence = json!({"login":if login.is_some() { "yes" } else { "no" },"url":row.link.url,"expected":row.link.expected,"note":row.link.note,"explicit_photo_or_slide_count":row.link.count,"count_includes_video":row.link.count_is_total,"events":captured,"gallery_stderr":outcome.1,"ytdlp_log":log.lines().map(safe_line).collect::<Vec<_>>(),"reason":row.reason,"seconds":row.seconds});
-  prepare_evidence(&mut evidence, login.is_some());
+  let mut evidence = json!({"login":if options.login.is_some() { "yes" } else { "no" },"auth_mode":options.auth_mode(),"url":row.link.url,"expected":row.link.expected,"note":row.link.note,"explicit_photo_or_slide_count":row.link.count,"count_includes_video":row.link.count_is_total,"events":captured,"gallery_stderr":outcome.1,"ytdlp_log":log.lines().map(safe_line).collect::<Vec<_>>(),"reason":row.reason,"seconds":row.seconds});
+  prepare_evidence(&mut evidence, options.authenticated());
   if let Err(error) = fs::write(
     folder.join("evidence.json"),
     serde_json::to_vec_pretty(&evidence).unwrap(),
@@ -804,12 +809,13 @@ fn write_reports(
     "url",
     "seconds",
     "login",
+    "auth_mode",
     "stages",
     "winner",
     "final_code",
   ];
   let mut tsv = format!("{}\n", headers.join("\t"));
-  let mut md = format!("# Link matrix\n\nCompleted {}/{} rows. Run files: `{}`.\n\nProduction: gallery::run_media_info (including resolve readers), DownloadItem→DownloadEntry, gallery::run_media_download→gallery/yt-dlp, default argument builders, error parser and login consent. Stand-ins: windowless real Tauri host; isolated default state; direct scheduler worker calls (queue/UI selection omitted); clipboard normalization plus HTTP URL validation; all playlist entries selected; first 15s AV section and output folder override. {} No saved credentials/vault loaded. Images decode with app ffmpeg, streams checked with app ffprobe.\n\nInputs: {}\n\n", rows.len(), total, run_dir.display(), if options.login.is_some() { "Explicit local browser login consent supplied; raw engine output omitted." } else { "No login consent accepted." }, options.inputs.iter().map(|p| format!("`{}`", p.display())).collect::<Vec<_>>().join(", "));
+  let mut md = format!("# Link matrix\n\nCompleted {}/{} rows. Run files: `{}`.\n\nProduction: gallery::run_media_info (including resolve readers), DownloadItem→DownloadEntry, gallery::run_media_download→gallery/yt-dlp, default argument builders, error parser and login consent. Stand-ins: windowless real Tauri host; isolated default state; direct scheduler worker calls (queue/UI selection omitted); clipboard normalization plus HTTP URL validation; all playlist entries selected; first 15s AV section and output folder override. {} No saved credentials/vault loaded. Images decode with app ffmpeg, streams checked with app ffprobe.\n\nInputs: {}\n\n", rows.len(), total, run_dir.display(), if options.authenticated() { "Explicit local authentication supplied; raw engine output omitted." } else { "No login consent accepted." }, options.inputs.iter().map(|p| format!("`{}`", p.display())).collect::<Vec<_>>().join(", "));
   let mut counts = BTreeMap::<&str, usize>::new();
   let mut groups = BTreeMap::<&str, usize>::new();
   for row in rows {
@@ -849,6 +855,7 @@ fn write_reports(
       &row.link.url,
       &format!("{:.1}", row.seconds),
       &if options.login.is_some() { "yes" } else { "no" }.into(),
+      &options.auth_mode(),
       &row.attempts.stages,
       &row.attempts.winner,
       &row.attempts.final_code,

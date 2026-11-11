@@ -1,15 +1,8 @@
 <template>
   <settings-section :title="t('about.title')">
-    <settings-row>
-      <template #label>
-        <a href="https://nezzel.hululsoft.mr" class="text-primary hover:underline" target="_blank" rel="noopener">{{ t('about.links.website') }}</a>
-      </template>
-    </settings-row>
-    <settings-row>
-      <template #label>
-        <a href="https://github.com/ahmed-abdat/nezzel-desktop" class="text-primary hover:underline" target="_blank" rel="noopener">{{ t('about.links.github') }}</a>
-      </template>
-    </settings-row>
+    <a v-for="link in links" :key="link.href" :href="link.href" class="group flex min-h-[52px] items-center justify-between gap-8 border-b border-hairline py-3 text-[13px] hover:text-primary" target="_blank" rel="noopener">
+      <span>{{ link.label }}</span><ExternalLink class="size-4 shrink-0 text-muted-foreground group-hover:text-primary" aria-hidden="true" />
+    </a>
     <settings-row :label="t('report.title')" :help="t('report.aboutHelp')">
       <Button variant="outline" data-testid="about-report" @click="report.openReport()">
         <MessageSquareWarning aria-hidden="true" />{{ t('report.open') }}
@@ -30,7 +23,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { LoaderCircle, MessageSquareWarning } from '@lucide/vue';
+import { ExternalLink, LoaderCircle, MessageSquareWarning } from '@lucide/vue';
 import { useReportStore } from '../../../stores/report';
 import { useUpdaterStore } from '../../../stores/updater';
 import { Button } from '@/components/ui/button';
@@ -43,6 +36,10 @@ defineOptions({
 });
 
 const { t } = useI18n();
+const links = computed(() => [
+  { href: 'https://nezzel.hululsoft.mr', label: t('about.links.website') },
+  { href: 'https://github.com/ahmed-abdat/nezzel-desktop', label: t('about.links.github') },
+]);
 const { openInternalPath } = useOpener();
 const appVersion = typeof __APP_VERSION__ === 'undefined' ? '' : __APP_VERSION__;
 

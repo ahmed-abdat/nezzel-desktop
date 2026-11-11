@@ -17,13 +17,8 @@ export type PlaylistSelectionRow = PlaylistSelectionSingleRow | PlaylistSelectio
 
 export interface PlaylistSelection {
   rows: PlaylistSelectionRow[];
-}
-
-export function createPlaylistSelectionRow(type: PlaylistSelectionRow['type']): PlaylistSelectionRow {
-  const id = createRowId();
-  return type === 'single'
-    ? { id, type, index: null }
-    : { id, type, start: null, end: null };
+  /** Explicit checklist positions; an empty list selects nothing. */
+  positions?: number[];
 }
 
 export function clonePlaylistSelection(value: PlaylistSelection | undefined): PlaylistSelection {
@@ -56,7 +51,21 @@ export function getPlaylistSelectionRowError(row: PlaylistSelectionRow): string 
   return null;
 }
 
-export function buildPlaylistItemsSpec(selection: PlaylistSelection): string | null {
+export function buildPlaylistItemsSpec(selection: PlaylistSelection, entries: EntryItem[]): string | null {
+  if (selection.positions) {
+    const selected = applyPlaylistSelectionToEntries(entries, selection);
+    if (selected.length === entries.length) return null;
+    // Flat reads omit unavailable entries but retain their original zero-based playlist indices.
+    const indices = selected.map(entry => entry.index + 1).sort((a, b) => a - b);
+    const ranges: string[] = [];
+    for (let position = 0; position < indices.length; position++) {
+      const start = indices[position];
+      let end = start;
+      while (indices[position + 1] === end + 1) end = indices[++position];
+      ranges.push(start === end ? `${start}` : `${start}:${end}`);
+    }
+    return ranges.join(',') || null;
+  }
   const specs = normalizePlaylistSelection(selection).rows
     .map(row => buildPlaylistRowSpec(row))
     .filter((value): value is string => value !== null);
@@ -68,6 +77,10 @@ export function applyPlaylistSelectionToEntries(
   entries: EntryItem[],
   selection: PlaylistSelection,
 ): EntryItem[] {
+  if (selection.positions) {
+    const selected = new Set(selection.positions);
+    return entries.filter((_, position) => selected.has(position));
+  }
   const normalized = normalizePlaylistSelection(selection);
   if (normalized.rows.length === 0) {
     return [...entries];

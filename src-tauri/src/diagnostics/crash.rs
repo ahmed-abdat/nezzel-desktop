@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static WRITTEN_THIS_RUN: AtomicBool = AtomicBool::new(false);
 
 pub const CRASH_FILE: &str = "crash-report.txt";
+pub const NONFATAL_FILE: &str = "background-panic.txt";
 const MAX_FRAMES: usize = 30;
 
 pub fn install(dir: PathBuf, version: String, os: String) {
@@ -54,22 +55,29 @@ pub fn read(dir: &Path) -> Option<String> {
     .filter(|text| !text.trim().is_empty())
 }
 
-/// A clean exit means the app did not close unexpectedly: a panic in a background task
-/// stays in the log, not in a "closed unexpectedly" prompt.
+/// Remove an unexpected-close report after it was sent or staged.
 pub fn clear(dir: &Path) {
   let _ = std::fs::remove_file(dir.join(CRASH_FILE));
 }
 
-/// A clean exit: a crash this run wrote (a panic in a background task) was not an unexpected close. A file
-/// from an earlier run stays until it is sent or staged.
+/// Keep this run's background panic separately, so it can be reported without an unexpected-close prompt.
+/// A file from an earlier run stays until it is sent or staged.
 pub fn clear_on_clean_exit(dir: &Path) {
   clear_if_written(dir, &WRITTEN_THIS_RUN);
 }
 
 fn clear_if_written(dir: &Path, written: &AtomicBool) {
   if written.load(Ordering::SeqCst) {
-    clear(dir);
+    let _ = std::fs::rename(dir.join(CRASH_FILE), dir.join(NONFATAL_FILE));
   }
+}
+
+/// Background panics are consumed once, including when reports are off.
+pub fn take_nonfatal(dir: &Path) -> Option<String> {
+  let path = dir.join(NONFATAL_FILE);
+  let text = std::fs::read_to_string(&path).ok();
+  let _ = std::fs::remove_file(path);
+  text.filter(|text| !text.trim().is_empty())
 }
 
 pub fn format_crash(
@@ -210,16 +218,21 @@ mod tests {
   }
 
   #[test]
-  fn a_clean_exit_clears_only_this_runs_crash() {
+  fn a_clean_exit_preserves_only_this_runs_crash_as_nonfatal() {
     let dir = std::env::temp_dir().join(format!("nezzel-exit-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(CRASH_FILE), "earlier run").unwrap();
     let written = AtomicBool::new(false);
     clear_if_written(&dir, &written);
     assert_eq!(read(&dir).as_deref(), Some("earlier run"));
+    std::fs::write(dir.join(CRASH_FILE), "background panic").unwrap();
     written.store(true, Ordering::SeqCst);
     clear_if_written(&dir, &written);
     assert_eq!(read(&dir), None);
+    assert_eq!(
+      std::fs::read_to_string(dir.join("background-panic.txt")).unwrap(),
+      "background panic"
+    );
     let _ = std::fs::remove_dir_all(dir);
   }
 

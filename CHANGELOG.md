@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0-beta.3
+
+- Playlists: every way of saving a playlist opens a checklist first (select all or none, Space, Ctrl/Cmd+A, one quality for all, "Download N videos"); nothing starts until you choose. The options sheet no longer closes on its own.
+- New "Needs you" section for downloads waiting on your choice or a login.
+- Logins: one choice, Ask / Never / Always, plus the browser to use; cookies.txt stays under Advanced. With a fixed browser, cookies are read only for sites that need a login.
+- New About page in Settings with Report a problem, version and update check. The window opens 880 px wide so the sidebar shows its labels.
+- Paste several links at once; after dropping links, "Download all"; unsupported sites offer "Open in browser" and no pointless Retry.
+- Clearer tool repair: the real cause of a failed tool download, an offline notice, and an honest "continue without tools".
+- Arabic: sizes and speeds in Latin MB and MB/s, natural "time left", login labels read right to left; on macOS the window buttons no longer cover the Continue button or the sheet close button.
+- Fixed: the app could crash on quit while reading the clipboard (beta.1); a crash in a background task is now reported at the next start (when reports are on).
+- Privacy text now says plainly that crash reports and anonymous usage counts are on by default and can be turned off.
+
 ## 0.1.0-beta.2
 
 Reliability release.

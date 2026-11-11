@@ -2,7 +2,7 @@ import { expect } from '@playwright/test';
 import { test } from './utils/fixtures';
 import { MAIN_PANE_ID } from '../../src/helpers/domIds';
 
-test.use({ mockData: { preferences: { onboarding: { welcomeDone: false, closeNoteDone: false } } } });
+test.use({ mockData: { preferences: { onboarding: { welcomeDone: false, closeNoteDone: false } }, settings: { output: { downloadDir: '/home/user/Downloads/Nezzel' } } } });
 
 test('fresh profile: welcome, Get started, then the main list', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -15,6 +15,7 @@ test('fresh profile: welcome, Get started, then the main list', async ({ page, c
   await expect(welcome.getByRole('switch', { name: 'Show a card when I copy a link' })).toBeChecked();
   await expect(welcome.getByRole('switch', { name: 'Start with my computer' })).toBeChecked();
   await expect(welcome.getByTestId('welcome-shortcut')).toContainText('Copy a link anywhere, then press');
+  await expect(welcome.getByTestId('welcome-folder')).toHaveText('/home/user/Downloads/Nezzel');
 
   // Try it writes the sample link; it never reads the clipboard.
   await welcome.getByTestId('welcome-copy').click();
@@ -28,6 +29,7 @@ test('fresh profile: welcome, Get started, then the main list', async ({ page, c
   await page.getByTestId('welcome-start-button').click();
   await expect(welcome).toBeHidden();
   await expect(page.locator('#queue-url-input')).toBeVisible();
+  await expect(page.getByText('Paste or drop a link. To add links from a file, open the … menu.')).toBeVisible();
 });
 
 test('keyboard: Tab goes through the switches to Get started, with a visible focus ring', async ({ page }) => {

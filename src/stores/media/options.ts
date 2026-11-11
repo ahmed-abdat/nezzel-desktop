@@ -9,6 +9,7 @@ export const useMediaOptionsStore = defineStore('media-options', () => {
   const groupEncodings = ref<Record<string, EncodingOptions>>({});
   const groupTracks = ref<Record<string, TrackOptions>>({});
   const groupOverrides = ref<Record<string, DownloadOverrides>>({});
+  const groupPlaylistSelections = ref<Record<string, { signature: string; positions: number[] }>>({});
   const groupAttachmentSelections = ref<Record<string, string[]>>({});
   const globalOptions = ref<DownloadOptions>();
   const globalEncodings = ref<EncodingOptions>();
@@ -42,6 +43,25 @@ export const useMediaOptionsStore = defineStore('media-options', () => {
   const setOptions = (groupId: string, options: DownloadOptions) => setGroupValue(groupOptions, groupId, options);
   const getOptions = (groupId: string): DownloadOptions | undefined => getGroupValue(groupOptions, groupId);
   const getGlobalOptions = (): DownloadOptions | undefined => globalOptions.value;
+
+  function playlistSignature(group: Group): string {
+    return JSON.stringify((group.entries ?? []).map(entry => [entry.index, entry.videoUrl]));
+  }
+
+  function getPlaylistSelection(group: Group): number[] {
+    const stored = groupPlaylistSelections.value[group.id];
+    return stored?.signature === playlistSignature(group)
+      ? stored.positions
+      : (group.entries ?? []).map((_, position) => position);
+  }
+
+  function setPlaylistSelection(group: Group, positions: number[]) {
+    const wanted = new Set(positions);
+    groupPlaylistSelections.value[group.id] = {
+      signature: playlistSignature(group),
+      positions: (group.entries ?? []).map((_, position) => position).filter(position => wanted.has(position)),
+    };
+  }
 
   function attachmentIds(groupId: string): string[] {
     return [...new Set((groupStore.findGroupById(groupId)?.attachments ?? []).map(attachment => attachment.id))];
@@ -78,6 +98,7 @@ export const useMediaOptionsStore = defineStore('media-options', () => {
     removeGroupValue(groupTracks, groupId);
     removeGroupValue(groupOverrides, groupId);
     removeGroupValue(groupAttachmentSelections, groupId);
+    removeGroupValue(groupPlaylistSelections, groupId);
   };
 
   const removeEncodings = (groupId: string) => removeGroupValue(groupEncodings, groupId);
@@ -129,6 +150,9 @@ export const useMediaOptionsStore = defineStore('media-options', () => {
     groupTracks,
     groupOverrides,
     groupAttachmentSelections,
+    groupPlaylistSelections,
+    getPlaylistSelection,
+    setPlaylistSelection,
     globalOptions,
     globalEncodings,
     globalTracks,

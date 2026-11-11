@@ -5,6 +5,7 @@ import { IN_APP_SHORTCUT_DEFAULTS } from '../helpers/shortcut';
 /** Small UI-only preferences kept in the webview (no engine meaning). */
 const skipOptionsSheet = persistedRef('nezzel.skipOptionsSheet', flagCodec, false);
 const defaultChoice = persistedRef<QuickChoice>('nezzel.defaultChoice', choiceCodec<QuickChoice>(['best', 'audio', 'small']), 'best');
+const rememberNoticeShown = persistedRef('nezzel.rememberNoticeShown', flagCodec, false);
 
 const compactRows = persistedRef('nezzel.view.compact', flagCodec, false);
 const showThumbnails = persistedRef('nezzel.view.thumbnails', flagCodec, true);
@@ -17,5 +18,5 @@ const inAppShortcuts = {
 };
 
 export function useUiPrefs() {
-  return { skipOptionsSheet, defaultChoice, compactRows, showThumbnails, sidebarCollapsed, inAppShortcuts };
+  return { skipOptionsSheet, defaultChoice, rememberNoticeShown, compactRows, showThumbnails, sidebarCollapsed, inAppShortcuts };
 }

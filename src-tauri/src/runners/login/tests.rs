@@ -1283,6 +1283,51 @@ fn opted_in_refusal_tries_each_profile_once_and_success_remembers_the_host() {
   );
 }
 #[test]
+fn fixed_browser_exports_only_for_known_sites_or_a_login_retry() {
+  use RetryAction::{Browser, Stop};
+  for (mode, host, retry, export) in [
+    ("firefox", "instagram.com", None, true),
+    ("firefox", "instagram.com", Some(Stop), true),
+    ("firefox", "example.com", None, false),
+    ("firefox", "example.com", Some(Browser), true),
+    ("none", "instagram.com", None, false),
+    ("none", "instagram.com", Some(Stop), false),
+    ("none", "example.com", None, false),
+    ("none", "example.com", Some(Stop), false),
+  ] {
+    let mut session = LoginSession::from_auth(
+      AuthSettings {
+        cookie_browser: mode.into(),
+        ..Default::default()
+      },
+      &format!("https://{host}/video"),
+      None,
+    );
+    if let Some(action) = retry {
+      assert_eq!(
+        session
+          .decide(Some("signInRequired"), false, false, |_| panic!(
+            "fixed mode must not discover browsers"
+          ))
+          .0,
+        action
+      );
+      if action == Browser {
+        assert_eq!(
+          session
+            .decide(Some("signInRequired"), false, false, |_| panic!(
+              "no discovery"
+            ))
+            .0,
+          Stop
+        );
+      }
+    }
+    assert_eq!(session.uses_cookies(), export, "{mode} {host}");
+  }
+}
+
+#[test]
 fn explicit_browser_and_file_overrides_do_not_trigger_automatic_probes() {
   for auth in [
     AuthSettings {
@@ -1294,7 +1339,7 @@ fn explicit_browser_and_file_overrides_do_not_trigger_automatic_probes() {
       ..Default::default()
     },
   ] {
-    let mut session = LoginSession::from_auth(auth, "https://example.com/", None);
+    let mut session = LoginSession::from_auth(auth, "https://instagram.com/", None);
     assert_eq!(
       session
         .decide(Some("signInRequired"), false, false, |_| panic!(

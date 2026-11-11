@@ -61,6 +61,31 @@ fn domains(path: &Path) -> Vec<String> {
 }
 
 #[tokio::test]
+async fn fixed_browser_skips_export_for_an_unrecognized_site() {
+  let root = Staging::new().unwrap();
+  let settings = AuthSettings {
+    cookie_browser: firefox_fixture(&root.path),
+    ..Default::default()
+  };
+  let context = context(&root.path);
+  let (_tx, cancel) = watch::channel(true);
+  let access = CookieAccess::prepare(
+    &settings,
+    None,
+    "https://example.com/video",
+    &context,
+    cancel,
+  )
+  .await
+  .unwrap();
+  assert!(access.args.is_empty());
+  assert!(
+    !context.directory.exists(),
+    "no browser export should be created"
+  );
+}
+
+#[tokio::test]
 async fn scoped_cookie_files_restrict_both_engines_and_are_removed_after_use() {
   let root = Staging::new().unwrap();
   let browser = firefox_fixture(&root.path);

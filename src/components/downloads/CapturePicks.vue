@@ -8,7 +8,7 @@
     data-testid="capture-picks"
     @keydown="onArrow"
   >
-    <div class="grid h-8 w-[272px] shrink-0 grid-cols-2 gap-2">
+    <div class="grid min-h-8 min-w-[272px] shrink-0 grid-cols-[auto_auto] gap-2">
       <div v-if="loading" class="col-span-2 grid grid-cols-2 gap-2" role="status" :aria-label="t('capture.loading')" data-testid="capture-choices-loading">
         <Skeleton v-for="slot in 2" :key="slot" class="h-8 w-full" />
       </div>
@@ -25,7 +25,7 @@
         >
           <Music v-if="pick.key === 'audio'" aria-hidden="true" />
           <bdi class="shrink-0">{{ label(pick) }}</bdi>
-          <bdi v-if="!compact && pick.size" class="tnum min-w-0 truncate font-normal text-muted-foreground">{{ formatSize(pick.size) }}</bdi>
+          <bdi v-if="!compact && pick.size" dir="ltr" class="tnum shrink-0 whitespace-nowrap font-normal text-muted-foreground">{{ formatSize(pick.size) }}</bdi>
         </Button>
       </tooltip>
     </div>

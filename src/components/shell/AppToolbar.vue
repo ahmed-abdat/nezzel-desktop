@@ -1,10 +1,11 @@
 <template>
   <header
-    class="relative flex h-[52px] shrink-0 items-center gap-3 border-b border-hairline px-4"
+    class="relative flex shrink-0 items-center gap-3 px-4"
+    :class="isSettings ? 'h-3 overflow-hidden' : 'h-[52px] border-b border-hairline'"
     :style="lightsInset ? { paddingLeft: `${lightsInset}px` } : undefined"
     data-tauri-drag-region
   >
-    <sidebar-toggle v-if="showToggle" :collapsed="collapsed" @toggle="emit('toggleSidebar')" />
+    <sidebar-toggle v-if="showToggle && !isSettings" :collapsed="collapsed" @toggle="emit('toggleSidebar')" />
     <!-- The sidebar already names the view (and Settings has its own page heading): the title is for screen readers. -->
     <h1 class="sr-only">{{ title }}</h1>
     <!-- v-show, not v-if: the field owns clipboard watching, which must keep running on Settings. -->

@@ -35,6 +35,7 @@
           <bdi class="truncate">{{ detail(row) }}</bdi>
         </span>
         <bdi
+          :dir="row.size ? 'ltr' : undefined"
           class="tnum text-end text-[12px] whitespace-nowrap text-muted-foreground"
           :class="!row.size && 'opacity-60'"
           :title="!row.size && !row.upTo && row.choice.kind !== 'best' ? t('capture.formats.sizeUnknown') : undefined"

@@ -41,6 +41,8 @@ function releaseClock() {
 export function useDownloadRow(group: Ref<Group>) {
   const i18n = useI18n();
   const { t } = i18n;
+  // These strings also appear inside translated metadata parts rendered by a single <bdi>.
+  const isolate = (text: string) => i18n.locale.value.startsWith('ar') ? `\u2066${text}\u2069` : text;
   const { percent: formatPct, size: formatSizeLocal, speed: formatSpeedLocal, count: formatCount } = useLocaleNumber();
   const stateStore = useMediaStateStore();
   const progressStore = useMediaProgressStore();
@@ -118,7 +120,7 @@ export function useDownloadRow(group: Ref<Group>) {
   const choiceLabel = computed(() => {
     if (fileKind.value) {
       const category = t(`files.category.${fileKind.value}`);
-      return group.value.filesize ? t('files.withSize', { category, size: formatSizeLocal(group.value.filesize) }) : category;
+      return group.value.filesize ? t('files.withSize', { category, size: isolate(formatSizeLocal(group.value.filesize)) }) : category;
     }
     if (photoLabel.value) return photoLabel.value;
     const opts = optionsStore.getOptions(group.value.id);
@@ -169,7 +171,7 @@ export function useDownloadRow(group: Ref<Group>) {
         else {
           parts.push(isList.value ? `${list.value?.done ?? 0}/${list.value?.total ?? group.value.total}` : formatPct(percent.value));
           if (speed.value) parts.push(speed.value);
-          if (eta.value) parts.push(t('downloads.row.left', { eta: eta.value }));
+          if (eta.value) parts.push(t('downloads.row.left', { eta: isolate(eta.value) }));
         }
         break;
       case 'paused':

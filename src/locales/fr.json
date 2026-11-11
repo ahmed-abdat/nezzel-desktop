@@ -904,11 +904,11 @@
     },
     "subtitle": {
       "installing": "Préparation en cours…",
-      "failed": "Certains téléchargements risquent de ne pas marcher. Réessayez ou signalez le problème",
+      "failed": "Ces outils sont nécessaires pour télécharger. Réessayez ou réparez-les depuis la barre d’état de l’application.",
       "installed": "Prêt à télécharger"
     },
     "stay": "Rester ici",
-    "continueWithout": "Continuer sans les outils"
+    "continueWithout": "Continuer — téléchargements indisponibles"
   },
   "components": {
     "base": {
@@ -1351,6 +1351,10 @@
       }
     },
     "playlistSelection": {
+      "selectAll": "Tout sélectionner",
+      "selectNone": "Tout désélectionner",
+      "itemFallback": "Élément {n}",
+      "checkedCount": "Aucun élément sélectionné | {count} élément sélectionné sur {total} | {count} éléments sélectionnés sur {total}",
       "title": "Choisir les éléments de la playlist",
       "description": "Sélectionnez les éléments à télécharger",
       "selectionSummary": "{count} élément sélectionné sur {total} | {count} éléments sélectionnés sur {total}",
@@ -1363,8 +1367,8 @@
       "advancedEmpty": "Aucune sélection avancée n’est encore configurée",
       "addSingle": "Ajouter un élément",
       "addRange": "Ajouter une plage",
-      "applyFull": "Télécharger tous les éléments",
-      "applySelection": "Télécharger les éléments sélectionnés",
+      "applyFull": "Tout télécharger ({count})",
+      "applySelection": "Télécharger {count} vidéos | Télécharger {count} vidéo | Télécharger {count} vidéos",
       "useAdvanced": "Utiliser la sélection avancée",
       "noMatches": "Cette plage ne correspond à aucun élément de la playlist",
       "row": {
@@ -1442,7 +1446,7 @@
     "title": "Téléchargements",
     "field": {
       "label": "Lien à télécharger",
-      "placeholder": "Collez un lien",
+      "placeholder": "Collez un ou plusieurs liens",
       "submit": "Télécharger",
       "more": "Autres façons d'ajouter des liens",
       "importFile": "Ajouter des liens depuis un fichier…",
@@ -1455,12 +1459,16 @@
       "watchHint": "Affiche une petite carte quand vous copiez un lien, même par-dessus les autres apps",
       "watchOnTip": "Carte des liens copiés : activée",
       "watchOffTip": "Carte des liens copiés : désactivée",
+      "clipboardTip": "{state}. {keys}",
       "filtersHint": "Ignorer des vidéos selon la taille, la date ou le titre",
       "filtersOn": "Actifs : certaines vidéos seront ignorées",
-      "pasteFirst": "Collez d’abord un lien"
+      "pasteFirst": "Collez d’abord un lien",
+      "captureSettings": "Configurez le téléchargement rapide dans Paramètres → Raccourcis clavier",
+      "captureShortcut": "Téléchargement rapide depuis toute application : {shortcut}"
     },
     "drop": "Déposez pour télécharger",
     "sections": {
+      "needsYou": "À vous de jouer",
       "active": "En cours",
       "finished": "Terminés",
       "failed": "Échoués"
@@ -1468,7 +1476,8 @@
     "seeAll": "Tout voir ({n})",
     "summary": {
       "ready": "Aucun lien prêt | 1 lien prêt | {n} liens prêts",
-      "downloadAll": "Tout télécharger"
+      "downloadAll": "Tout télécharger",
+      "playlistsNeedSelection": "{n} playlist nécessite de choisir des éléments | {n} playlists nécessitent de choisir des éléments"
     },
     "empty": {
       "title": "Enregistrez vidéos, audio, photos et fichiers depuis un lien",
@@ -1476,7 +1485,7 @@
       "cta": "Coller un lien",
       "tip": "Astuce : copiez un lien n’importe où et appuyez sur Télécharger, ou déposez un lien sur cette fenêtre",
       "filtered": "Rien ici pour l’instant",
-      "hintPaste": "Collez ou déposez un lien n’importe où dans cette fenêtre",
+      "hintPaste": "Collez ou déposez un lien. Pour ajouter les liens d’un fichier, ouvrez le menu ….",
       "hintQuick": "Téléchargez vite depuis n’importe quelle app, même le navigateur",
       "hintCopied": "Copiez un lien et {brand} vous le propose aussitôt"
     },
@@ -1504,6 +1513,7 @@
       "details": "Détails",
       "more": "Plus d'actions",
       "openPage": "Ouvrir la page",
+      "openBrowser": "Ouvrir dans le navigateur",
       "perDownload": "Réglages de ce téléchargement",
       "saved": "Enregistré",
       "items": "1 élément | {n} éléments",
@@ -1562,6 +1572,7 @@
       "turnedOff": "{site} nécessite une connexion. Les connexions du navigateur sont désactivées dans les réglages de connexion",
       "thisSite": "ce site",
       "signedIn": "connecté à {host}",
+      "profileStatus": "{profile} · {status}",
       "usingProfile": "Avec {profile}",
       "changeProfile": "Changer de profil",
       "windowsAppBound": "Edge et Chrome sous Windows ne permettent pas aux autres applications d’utiliser leurs connexions. Connectez-vous à ce site dans Firefox, ou ajoutez un fichier de cookies dans les paramètres de connexion",
@@ -1645,16 +1656,21 @@
     "audioHint": "Meilleur son",
     "small": "Fichier plus léger",
     "smallHint": "Vidéo · {height}p",
+    "smallAudioOnly": "Ce lien contient uniquement du son, sans vidéo à redimensionner",
+    "smallUnavailable": "Aucun format plus petit n’est disponible pour ce lien",
+    "smallLabel": "Fichier plus petit ({height}p)",
     "custom": "Format personnalisé",
     "advanced": "Tous les formats et options",
     "advancedHint": "Choisissez un format, un codec ou une piste précis",
     "moreOptions": "Codecs et pistes audio…",
     "perDownload": "Dossier, sous-titres et plus pour ce téléchargement",
     "remember": "Toujours utiliser ce choix et passer cette étape",
+    "rememberHint": "Choix enregistré par défaut. Pour annuler, activez « {setting} » dans Paramètres → Général.",
     "cancel": "Pas maintenant",
     "download": "Télécharger",
     "reading": "Lecture du lien…",
     "size": "Environ {size}",
+    "choiceSize": "{hint} · environ {size}",
     "format": "Format",
     "saveTo": "Enregistrer dans",
     "waitingFormats": "En attente des formats…"
@@ -1698,6 +1714,10 @@
       "choose": "Choisir…"
     },
     "logins": {
+      "policy": "Connexions du navigateur",
+      "askChoice": "Demander",
+      "neverChoice": "Jamais",
+      "alwaysChoice": "Toujours",
       "note": "Quand un site exige une connexion, Nezzel utilise un profil de navigateur connecté à ce site. Votre connexion n'est jamais conservée ni envoyée ailleurs qu'à ce site",
       "browser": "Utiliser les connexions de",
       "browserHint": "Le mode automatique trouve un profil connecté quand un site refuse. Changez de profil depuis un téléchargement, ou choisissez un navigateur pour tous les sites",
@@ -2115,7 +2135,7 @@
       "linuxKde": "la boîte à miniatures",
       "linuxOther": "la zone de notification"
     },
-    "privacy": "Aucun compte ni publicité. Vous pouvez désactiver les rapports à tout moment",
+    "privacy": "Gratuit, libre et sans publicité. Vous pouvez désactiver les rapports à tout moment",
     "getStarted": "Commencer",
     "later": "Modifiable ensuite dans les Réglages",
     "steps": {
@@ -2197,5 +2217,10 @@
       "text": "Les rapports de plantage et d'erreur sont désormais activés. Ils nous aident à corriger les bugs et n'incluent jamais vos fichiers ni vos comptes",
       "action": "Réglages"
     }
+  },
+  "toolsRepair": {
+    "offline": "Vous êtes hors ligne. Connectez-vous à Internet, puis réessayez de réparer les outils.",
+    "unavailable": "Les téléchargements ne fonctionneront qu’après la réparation des outils",
+    "action": "Réparer les outils de téléchargement"
   }
 }

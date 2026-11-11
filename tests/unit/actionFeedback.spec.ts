@@ -31,6 +31,18 @@ afterEach(() => {
 });
 
 describe('action failure feedback', () => {
+  it('keeps a repair action in the app after continuing without tools', async () => {
+    const tools = useBinariesStore();
+    tools.tools = { 'yt-dlp': { percent: 0, received: 0, total: 0, error: 'DNS lookup failed' } };
+    const router = await routerAt();
+    const wrapper = mount(AppStatusBar, { global: { plugins: [router, i18n] } });
+    try {
+      expect(wrapper.text()).toContain('Downloads won’t work');
+      await wrapper.get('a[href="/install"]').trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.path).toBe('/install');
+    } finally { wrapper.unmount(); }
+  });
   it.each(['en', 'ar', 'fr'] as const)('shows one quiet stale-tools notice and retries immediately in %s', async (locale) => {
     i18n.global.locale.value = locale;
     const store = useBinariesStore();

@@ -1,4 +1,4 @@
-use std::{error::Error, path::PathBuf};
+use std::{error::Error, fs, path::PathBuf};
 
 pub(crate) struct Options {
   pub inputs: Vec<PathBuf>,
@@ -6,6 +6,7 @@ pub(crate) struct Options {
   pub only: Option<Vec<String>>,
   pub jobs: usize,
   pub login: Option<String>,
+  pub cookies: Option<String>,
 }
 
 impl Options {
@@ -19,6 +20,7 @@ impl Options {
     let mut only = None;
     let mut jobs = 2;
     let mut login = None;
+    let mut cookies = None;
     while let Some(arg) = args.next() {
       let value = args
         .next()
@@ -57,11 +59,18 @@ impl Options {
           }
           login = Some(value);
         }
+        "--cookies" => cookies = Some(value),
         _ => return Err("unknown argument (use --help)".into()),
       }
     }
-    if login.is_some() && ci == Some("1") {
-      return Err("--login is local-only and cannot run with CI=1".into());
+    if login.is_some() && cookies.is_some() {
+      return Err("--login and --cookies are mutually exclusive".into());
+    }
+    if (login.is_some() || cookies.is_some()) && ci == Some("1") {
+      return Err("--login and --cookies are local-only and cannot run with CI=1".into());
+    }
+    if let Some(path) = &cookies {
+      validate_cookies_file(path)?;
     }
     if inputs.is_empty() || !(1..=2).contains(&jobs) {
       return Err("supply --links and use --jobs 1 or 2".into());
@@ -72,6 +81,7 @@ impl Options {
       only,
       jobs,
       login,
+      cookies,
     })
   }
 
@@ -81,6 +91,47 @@ impl Options {
       .as_ref()
       .is_none_or(|sites| sites.iter().any(|s| s == site))
   }
+
+  pub fn authenticated(&self) -> bool {
+    self.login.is_some() || self.cookies.is_some()
+  }
+
+  pub fn auth_mode(&self) -> String {
+    if self.cookies.is_some() {
+      "cookies-file".into()
+    } else if let Some(login) = &self.login {
+      let browser = login.split(':').next().unwrap_or_default();
+      format!("login:{browser}")
+    } else {
+      "anonymous".into()
+    }
+  }
+}
+
+fn validate_cookies_file(path: &str) -> Result<(), Box<dyn Error>> {
+  // Fixed errors never echo a local path, a cookie record, or its values.
+  let unreadable = "--cookies requires an existing readable regular file";
+  if !fs::metadata(path).map_err(|_| unreadable)?.is_file() {
+    return Err(unreadable.into());
+  }
+  let contents = fs::read_to_string(path).map_err(|_| unreadable)?;
+  if contents.starts_with("# Netscape HTTP Cookie File") {
+    return Ok(());
+  }
+  let mut has_record = false;
+  for line in contents.lines() {
+    if line.trim().is_empty() || (line.starts_with('#') && !line.starts_with("#HttpOnly_")) {
+      continue;
+    }
+    if line.split('\t').count() != 7 {
+      return Err("--cookies requires a Netscape header or seven-column cookie records".into());
+    }
+    has_record = true;
+  }
+  if !has_record {
+    return Err("--cookies requires a Netscape header or seven-column cookie records".into());
+  }
+  Ok(())
 }
 
 #[derive(Clone, Default, Debug, PartialEq)]
@@ -126,8 +177,8 @@ impl AttemptsColumns {
   }
 }
 
-pub(crate) fn prepare_evidence(evidence: &mut serde_json::Value, login: bool) {
-  if !login {
+pub(crate) fn prepare_evidence(evidence: &mut serde_json::Value, authenticated: bool) {
+  if !authenticated {
     return;
   }
   if let Some(fields) = evidence.as_object_mut() {
@@ -186,6 +237,92 @@ mod tests {
     assert!(options(&["--login", "firefox"], Some("1")).is_err());
     assert!(options(&[], Some("1")).is_ok());
     assert!(options(&["--login", "firefox"], Some("0")).is_ok());
+  }
+
+  #[test]
+  fn cookies_file_options_validate_files_and_local_consent() {
+    struct FixtureDir(PathBuf);
+    impl Drop for FixtureDir {
+      fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+      }
+    }
+    let root = FixtureDir(std::env::temp_dir().join(format!("matrix-{}", uuid::Uuid::new_v4())));
+    std::fs::create_dir(&root.0).unwrap();
+    let header = root.0.join("header.txt");
+    let records = root.0.join("records.txt");
+    let invalid = root.0.join("invalid.txt");
+    let empty = root.0.join("empty.txt");
+    let missing = root.0.join("missing.txt");
+    std::fs::write(&header, "# Netscape HTTP Cookie File\n").unwrap();
+    std::fs::write(
+      &records,
+      "# an export without a header\n#HttpOnly_.example.com\tTRUE\t/\tTRUE\t0\tsession\tsecret-cookie-value\n",
+    )
+    .unwrap();
+    std::fs::write(&invalid, "example.com\tTRUE\t/\tsecret-cookie-value\n").unwrap();
+    std::fs::write(&empty, "# ordinary comment\n").unwrap();
+    let header = header.to_str().unwrap();
+    let records = records.to_str().unwrap();
+    let invalid = invalid.to_str().unwrap();
+    let empty = empty.to_str().unwrap();
+    let missing = missing.to_str().unwrap();
+    let directory = root.0.to_str().unwrap();
+    for (args, ci, expected_error) in [
+      (vec!["--cookies", header], None, None),
+      (vec!["--cookies", records], Some("0"), None),
+      (vec!["--cookies", missing], None, Some("readable")),
+      (vec!["--cookies", directory], None, Some("readable")),
+      (vec!["--cookies", invalid], None, Some("Netscape")),
+      (vec!["--cookies", empty], None, Some("Netscape")),
+      (vec!["--cookies"], None, Some("value")),
+      (vec!["--cookies", "--login", "firefox"], None, Some("value")),
+      (
+        vec!["--cookies", header, "--login", "firefox"],
+        None,
+        Some("mutually exclusive"),
+      ),
+      (
+        vec!["--login", "firefox", "--cookies", header],
+        None,
+        Some("mutually exclusive"),
+      ),
+      (vec!["--cookies", header], Some("1"), Some("CI=1")),
+      (vec!["--cookies", missing], Some("1"), Some("CI=1")),
+    ] {
+      match (options(&args, ci), expected_error) {
+        (Ok(parsed), None) => {
+          assert_eq!(parsed.cookies.as_deref(), Some(args[1]));
+          assert_eq!(parsed.auth_mode(), "cookies-file");
+          assert!(parsed.authenticated());
+        }
+        (Err(error), Some(expected)) => {
+          let message = error.to_string();
+          assert!(message.contains(expected), "expected {expected}: {message}");
+          assert!(!message.contains(directory));
+          assert!(!message.contains("secret-cookie-value"));
+        }
+        (Err(error), None) => panic!("valid cookie file rejected: {error}"),
+        (Ok(_), Some(expected)) => panic!("expected {expected}"),
+      }
+    }
+  }
+
+  #[test]
+  fn auth_modes_distinguish_runs_without_exposing_browser_profiles() {
+    for (args, expected, authenticated) in [
+      (vec![], "anonymous", false),
+      (vec!["--login", "firefox"], "login:firefox", true),
+      (
+        vec!["--login", "chrome:/private/profile"],
+        "login:chrome",
+        true,
+      ),
+    ] {
+      let parsed = options(&args, None).unwrap();
+      assert_eq!(parsed.auth_mode(), expected);
+      assert_eq!(parsed.authenticated(), authenticated);
+    }
   }
 
   #[test]

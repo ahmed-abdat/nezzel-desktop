@@ -40,6 +40,11 @@ pub struct YtdlpThumbnail {
 
 #[derive(Debug, Deserialize)]
 pub struct YtdlpEntry {
+  pub filesize: Option<i64>,
+  pub title: Option<String>,
+  pub duration: Option<f64>,
+  pub thumbnail: Option<String>,
+  pub thumbnails: Option<Vec<YtdlpThumbnail>>,
   pub url: Option<String>,
   pub webpage_url: Option<String>,
 }

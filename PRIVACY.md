@@ -1,6 +1,6 @@
 # Privacy
 
-Nezzel Desktop has no ads and no account. Everything you save is processed on your computer. Crash and error reports and anonymous usage counts are on by default (see below).
+Nezzel Desktop is free and open source, with no ads. Everything you save is processed on your computer. Crash and error reports and anonymous usage counts are on by default (see below).
 
 ## What goes over the network
 

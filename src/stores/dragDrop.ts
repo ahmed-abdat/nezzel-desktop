@@ -56,9 +56,10 @@ export const useDragDropStore = defineStore('dragDrop', () => {
       ...parsedFiles,
     ]);
 
+    let addedIds: string[] = [];
     if (result.urls.length > 0) {
       clearSearch();
-      await mediaStore.addUrlBatch(result.urls);
+      addedIds = await mediaStore.addUrlBatch(result.urls);
     } else if (unreadable || unsupported) {
       const toast = unreadable ? getUrlImportReadErrorToast() : getUrlImportUnsupportedToast();
       toastStore.showToast(toast.message, { style: toast.style });
@@ -66,7 +67,24 @@ export const useDragDropStore = defineStore('dragDrop', () => {
     }
 
     const toast = getUrlImportToast(result);
-    toastStore.showToast(toast.message, { style: toast.style });
+    toastStore.showToast(toast.message, {
+      style: toast.style,
+      ...(addedIds.length > 1
+        ? {
+            duration: 8000,
+            action: { label: i18n.global.t('downloads.summary.downloadAll'), run: async () => {
+              const results = await Promise.allSettled(addedIds.map(id => mediaStore.downloadPreparedGroup(id)));
+              if (results.some(result => result.status === 'rejected')) {
+                toastStore.showToast(i18n.global.t('feedback.downloadFailed'), { style: 'error' });
+              }
+              const playlists = results.filter(result => result.status === 'fulfilled' && result.value === 'playlist').length;
+              if (playlists > 0) {
+                toastStore.showToast(i18n.global.t('downloads.summary.playlistsNeedSelection', { n: playlists }, playlists), { style: 'info' });
+              }
+            } },
+          }
+        : {}),
+    });
   }
 
   return {
