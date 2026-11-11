@@ -1,13 +1,14 @@
 import { computed, ref } from 'vue';
 import { useDownloadBuckets } from './useDownloadBuckets';
+import { useLoginStore } from '../stores/login';
 import { useMediaKind } from './useMediaKind';
 import { useListVisibilityStore } from '../stores/listVisibility';
 import { useMediaDestinationStore } from '../stores/media/destination';
 import { groupSite, kindFilterOf } from '../helpers/groupView';
-import { countView, filterRows, statusOf, type ListRow, type ListView, type TypeFilter } from '../helpers/listFilter';
+import { needsAttention, countView, filterRows, statusOf, type ListRow, type ListView, type TypeFilter } from '../helpers/listFilter';
 import type { Group } from '../tauri/types/group';
 
-export type GroupRow = ListRow & { id: string; group: Group };
+export type GroupRow = ListRow & { id: string; group: Group; needsAttention: boolean };
 
 /** Search text is shared by the field and the list (one list on screen at a time). */
 export const downloadSearchQuery = ref('');
@@ -22,6 +23,7 @@ export const clearSearch = () => {
 export function useDownloadList() {
   const { withState } = useDownloadBuckets();
   const { kindOf } = useMediaKind();
+  const loginStore = useLoginStore();
   const cleared = useListVisibilityStore();
   const destinationStore = useMediaDestinationStore();
 
@@ -30,6 +32,7 @@ export function useDownloadList() {
     id: group.id,
     group,
     status: statusOf(state),
+    needsAttention: needsAttention(state, loginStore.cardFor(group.id)?.kind === 'needed'),
     cleared: statusOf(state) === 'done' && cleared.isCleared(pathsOf(group.id)),
     kind: kindFilterOf(kindOf(group)),
     title: group.title ?? group.url ?? '',

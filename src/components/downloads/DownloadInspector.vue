@@ -1,6 +1,6 @@
 <template>
   <div ref="panel" class="flex h-full w-full flex-col bg-card text-foreground outline-none" role="dialog" :aria-modal="modal ? 'true' : undefined" :aria-labelledby="titleId" tabindex="-1">
-    <header class="flex h-[52px] shrink-0 items-center justify-between border-b border-hairline ps-4 pe-2">
+    <header :style="{ paddingLeft: rtlInset ? `${rtlInset}px` : undefined }" class="flex h-[52px] shrink-0 items-center justify-between border-b border-hairline ps-4 pe-2">
       <h2 :id="titleId" class="text-[13px] font-semibold">{{ t('sheet.title') }}</h2>
       <tooltip :content="t('sheet.close')">
         <Button size="icon-xs" variant="ghost" :aria-label="t('sheet.close')" @click="sheet.close()">
@@ -27,7 +27,7 @@
             </span>
           </p>
           <LoginProfile :group-id="group.id" :disabled="loginBusy" class="mt-1" />
-          <p v-if="sizeLabel && !isFile" class="mt-0.5 text-[12px] text-muted-foreground">{{ t('sheet.size', { size: sizeLabel }) }}</p>
+          <i18n-t v-if="sizeLabel && !isFile" keypath="sheet.size" tag="p" scope="global" class="mt-0.5 text-[12px] text-muted-foreground"><template #size><bdi dir="ltr">{{ sizeLabel }}</bdi></template></i18n-t>
         </div>
       </div>
 
@@ -38,8 +38,8 @@
         </template>
       </dl>
 
-      <div v-if="isPlaylistSelection" class="p-4">
-        <PlaylistSelectionStep :group="group" id-prefix="inspector-playlist-selection" />
+      <div v-if="isPlaylistSelection || playlistPicker?.isApplying" class="p-4">
+        <PlaylistSelectionStep ref="playlistPicker" :group="group" id-prefix="inspector-playlist-selection" :show-action="false" />
       </div>
       <MediaAttachmentPicker v-if="(group.attachments?.length ?? 0) > 1" :group="group" />
 
@@ -48,7 +48,8 @@
         <RadioGroupItem v-for="tile in tiles" :key="tile.value" :value="tile.value" :disabled="tile.disabled" class="px-4 py-2 hover:bg-accent/70">
           <span class="min-w-0 flex-1">
             <span class="block text-[13px] font-medium">{{ tile.label }}</span>
-            <span class="block text-[12px] text-muted-foreground">{{ tile.hint }}</span>
+            <i18n-t v-if="tile.size" keypath="sheet.choiceSize" tag="span" scope="global" class="block text-[12px] text-muted-foreground"><template #hint>{{ tile.hint }}</template><template #size><bdi dir="ltr">{{ tile.size }}</bdi></template></i18n-t>
+            <span v-else class="block text-[12px] text-muted-foreground">{{ tile.hint }}</span>
           </span>
         </RadioGroupItem>
       </RadioGroup>
@@ -97,13 +98,14 @@
       <div class="flex items-center justify-end gap-2">
         <p v-if="isReading" class="me-auto text-[12px] text-muted-foreground" role="status">{{ t('sheet.waitingFormats') }}</p>
         <Button variant="outline" @click="sheet.close()">{{ t('sheet.cancel') }}</Button>
-        <Button class="px-4" :disabled="!canDownload" @click="confirm">{{ t('sheet.download') }}</Button>
+        <Button class="px-4" :disabled="!canDownload" @click="confirm">{{ isPlaylistSelection ? playlistActionLabel : t('sheet.download') }}</Button>
       </div>
     </footer>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useTrafficLightsInset } from '../../composables/useTrafficLightsInset';
 import PlaylistSelectionStep from '../media-card/steps/PlaylistSelectionStep.vue';
 import LoginProfile from './LoginProfile.vue';
 import FileTypeIcon from './FileTypeIcon.vue';
@@ -141,10 +143,11 @@ import { useDialog } from '../../composables/useDialog';
 import { shortFolderPath } from '../../helpers/folderPath';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import type { DownloadOptions } from '../../tauri/types/media';
-import { FILES_FOLDER } from '@/generated/contract';
+import { FILES_FOLDER, SMALL_MAX_HEIGHT } from '@/generated/contract';
 
 defineProps<{ modal?: boolean }>();
 
+const { rtlInset } = useTrafficLightsInset();
 const { t } = useI18n();
 const { openPathDialog } = useDialog();
 const sheet = useDownloadSheetStore();
@@ -154,7 +157,7 @@ const optionsStore = useMediaOptionsStore();
 const mediaStore = useMediaStore();
 const sizeStore = useMediaSizeStore();
 const settingsStore = useSettingsStore();
-const { skipOptionsSheet, defaultChoice } = useUiPrefs();
+const { skipOptionsSheet, defaultChoice, rememberNoticeShown } = useUiPrefs();
 const { size: formatSizeLocal } = useLocaleNumber();
 
 const titleId = useId();
@@ -162,6 +165,7 @@ const formatId = useId();
 const advancedId = useId();
 const rememberId = useId();
 const panel = ref<HTMLElement | null>(null);
+const playlistPicker = ref<{ applySelection: () => Promise<boolean>; isApplying: boolean } | null>(null);
 
 const group = computed(() => (sheet.groupId ? groupStore.findGroupById(sheet.groupId) : undefined));
 const { clipped: titleClipped, measure: measureTitle } = useOverflowTip();
@@ -185,7 +189,7 @@ const fileDetails = computed(() => {
   const host = hostOf(group.value.url);
   return [
     { key: 'type', label: t('files.type'), value: t(`files.category.${fileKind.value}`), ltr: false },
-    group.value.filesize ? { key: 'size', label: t('files.size'), value: formatSizeLocal(group.value.filesize), ltr: false } : undefined,
+    group.value.filesize ? { key: 'size', label: t('files.size'), value: formatSizeLocal(group.value.filesize), ltr: true } : undefined,
     savedPath.value ? { key: 'path', label: t('files.savedTo'), value: savedPath.value, ltr: true } : undefined,
     host ? { key: 'source', label: t('files.source'), value: host, ltr: true } : undefined,
   ].filter((row): row is NonNullable<typeof row> => !!row);
@@ -251,7 +255,7 @@ function setChoice(value: QuickChoice) {
 // The inspector only makes sense while the link is being read or is ready; anything else closes it.
 watch([group, state], ([g, s]) => {
   if (!sheet.open) return;
-  if (!g || (s && s !== MediaState.fetching && s !== MediaState.fetchingList && s !== MediaState.configure)) {
+  if (!g || (s && s !== MediaState.fetching && s !== MediaState.fetchingList && s !== MediaState.configure && s !== MediaState.playlistSelection)) {
     sheet.close();
   }
 });
@@ -298,10 +302,21 @@ const tiles = computed(() => {
   const small = choiceHeight('small', formats.value);
   const audioOnly = !isReading.value && !!group.value && hasAudio(group.value) && formats.value.length > 0 && best === undefined
     && group.value?.mediaKind !== 'video' && group.value?.mediaKind !== 'mixed';
+  const hintWithSize = (pick: QuickChoice, hint: string) => {
+    const g = group.value;
+    const size = g && !g.isCombined ? sizeStore.getSizeForGroup(g.id, optionsForChoice(pick, formats.value, g.mediaKind))?.size : undefined;
+    return { hint, size: size ? formatSizeLocal(size) : undefined };
+  };
+  const smallDisabled = audioOnly || (small !== undefined && small === best);
+  const smallHint = audioOnly
+    ? t('sheet.smallAudioOnly')
+    : smallDisabled
+      ? t('sheet.smallUnavailable')
+      : t('sheet.smallHint', { height: small ?? SMALL_MAX_HEIGHT });
   return [
-    { value: 'best', label: t('sheet.best'), hint: best ? t('sheet.bestHint', { height: best }) : t('sheet.bestHintPlain'), disabled: audioOnly },
-    ...(group.value && hasAudio(group.value) ? [{ value: 'audio', label: t('sheet.audio'), hint: t('sheet.audioHint'), disabled: false }] : []),
-    { value: 'small', label: t('sheet.small'), hint: small ? t('sheet.smallHint', { height: small }) : t('sheet.bestHintPlain'), disabled: audioOnly || (small !== undefined && small === best) },
+    { value: 'best', label: t('sheet.best'), ...hintWithSize('best', best ? t('sheet.bestHint', { height: best }) : t('sheet.bestHintPlain')), disabled: audioOnly },
+    ...(group.value && hasAudio(group.value) ? [{ value: 'audio', label: t('sheet.audio'), ...hintWithSize('audio', t('sheet.audioHint')), disabled: false }] : []),
+    { value: 'small', label: t('sheet.smallLabel', { height: small ?? SMALL_MAX_HEIGHT }), ...(smallDisabled ? { hint: smallHint, size: undefined } : hintWithSize('small', smallHint)), disabled: smallDisabled },
   ];
 });
 
@@ -314,7 +329,7 @@ const sizeLabel = computed(() => {
 
 watch(currentOptions, (options) => {
   const g = group.value;
-  if (!sheet.open || !g || hasAttachments.value || isFile.value || !options || g.isCombined || !settingsStore.settings.performance.autoLoadSize) return;
+  if (!sheet.open || !g || g.entries || hasAttachments.value || isFile.value || !options || g.isCombined || !settingsStore.settings.performance.autoLoadSize) return;
   const existing = sizeStore.getSizeForGroup(g.id, options);
   if (existing) return;
   const firstItem = g.items[Object.keys(g.items)[0]];
@@ -326,9 +341,16 @@ const metaParts = computed(() => [
   isReading.value ? t('sheet.reading') : (group.value?.duration ? duration.value : undefined),
 ].filter((part): part is string => !!part));
 
-const canDownload = computed(() => !!group.value && state.value === MediaState.configure
-  && (!(hasAttachments.value || isImageOnly.value || group.value.mediaKind === 'mixed')
-    || optionsStore.getAttachmentSelection(group.value.id).length > 0));
+const playlistCount = computed(() => group.value ? optionsStore.getPlaylistSelection(group.value).length : 0);
+const playlistActionLabel = computed(() => t(
+  'inputFilters.playlistSelection.applySelection',
+  { count: playlistCount.value }, playlistCount.value,
+));
+const canDownload = computed(() => !!group.value && (isPlaylistSelection.value
+  ? playlistCount.value > 0 && !playlistPicker.value?.isApplying
+  : state.value === MediaState.configure
+    && (!(hasAttachments.value || isImageOnly.value || group.value.mediaKind === 'mixed')
+      || optionsStore.getAttachmentSelection(group.value.id).length > 0)));
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.defaultPrevented || !sheet.open) return;
@@ -340,11 +362,21 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 function confirm() {
   const g = group.value;
   if (!g || !canDownload.value) return;
+  if (isPlaylistSelection.value) {
+    void playlistPicker.value?.applySelection().then((queued) => {
+      if (queued && sheet.groupId === g.id) sheet.close();
+    });
+    return;
+  }
   const options = currentOptions.value ?? optionsForChoice(choice.value ?? 'best', formats.value, g.mediaKind);
   optionsStore.setOptions(g.id, options);
   if (remember.value) {
     skipOptionsSheet.value = true;
     if (choice.value) defaultChoice.value = choice.value;
+    if (!rememberNoticeShown.value) {
+      rememberNoticeShown.value = true;
+      useToastStore().showToast(t('sheet.rememberHint', { setting: t('prefs.general.askEach') }), { duration: 8000 });
+    }
   }
   sheet.close();
   void mediaStore.downloadGroup(g.id, options);

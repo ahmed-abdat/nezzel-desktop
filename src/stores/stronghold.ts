@@ -30,7 +30,7 @@ export interface StrongholdFields {
 }
 
 export const useStrongholdStore = defineStore('stronghold', () => {
-  const status = ref<StrongholdStatus>(defaultStrongholdStatus);
+  const status = ref<StrongholdStatus>({ ...defaultStrongholdStatus });
   const availableKeys = ref<number[][]>([]);
 
   async function loadStatus(): Promise<StrongholdStatus> {

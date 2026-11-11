@@ -35,6 +35,20 @@ describe('media options store', () => {
     expect(store.getAttachmentSelection('photos')).toEqual(['video-2', 'photo-3']);
   });
 
+  it('isolates playlist checks by group and removes them with the group options', () => {
+    const store = useMediaOptionsStore();
+    const group = {
+      id: 'playlist', url: 'https://example.com/list', total: 2, processed: 0, errored: 0,
+      isCombined: false, audioCodecs: [], formats: [], filesize: 0, items: {},
+      entries: [0, 1].map(index => ({ index, videoUrl: `https://example.com/${index}` })),
+    };
+    store.setPlaylistSelection(group, [0]);
+    expect(store.getPlaylistSelection(group)).toEqual([0]);
+    expect(store.getPlaylistSelection({ ...group, id: 'other' })).toEqual([0, 1]);
+    store.removeOptions(group.id);
+    expect(store.getPlaylistSelection(group)).toEqual([0, 1]);
+  });
+
   it('stores and retrieves options for groups', () => {
     const store = useMediaOptionsStore();
     store.setOptions('g1', { trackType: TrackType.audio });

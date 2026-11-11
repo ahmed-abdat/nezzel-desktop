@@ -1,5 +1,5 @@
 <template>
-  <base-sub-nav :backButton="false">
+  <base-sub-nav :backButton="false" :style="{ paddingLeft: inset ? `${inset}px` : undefined }">
     <template v-slot:default>
       <base-button v-if="installPartialFail" class="btn-primary" @click="ensureBinaries">{{ t('common.retry') }}</base-button>
       <base-button v-if="counting" class="btn-subtle" @click="stopCountdown">{{ t('install.stay') }}</base-button>
@@ -25,8 +25,9 @@
         <h1 v-else-if="installPartialFail">{{ t('install.title.failed') }}</h1>
         <h1 v-else>{{ t('install.title.installed') }}</h1>
         <p v-if="isInstalling">{{ t('install.subtitle.installing') }}</p>
-        <p v-else-if="installPartialFail">{{ t('install.subtitle.failed') }}</p>
+        <p v-else-if="installPartialFail">{{ online ? t('install.subtitle.failed') : t('toolsRepair.offline') }}</p>
         <p v-else>{{ t('install.subtitle.installed') }}</p>
+        <p v-if="installPartialFail && online && binariesStore.lastError" class="mt-2 whitespace-pre-wrap break-words text-destructive" role="alert"><bdi dir="auto">{{ binariesStore.lastError }}</bdi></p>
         <!-- Announces the outcome once; the per-tool bars stay silent. -->
         <span class="sr-only" role="status" aria-live="polite">{{ isInstalling ? '' : installPartialFail ? t('install.title.failed') : t('install.title.installed') }}</span>
       </div>
@@ -40,6 +41,8 @@
 </template>
 
 <script setup lang="ts">
+import { useOnline } from '@vueuse/core';
+import { useTrafficLightsInset } from '../../composables/useTrafficLightsInset';
 import { useBinariesStore } from '../../stores/binaries';
 import { ArrowRight } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
@@ -49,8 +52,10 @@ import { useRoute, useRouter } from 'vue-router';
 import ToolCard from '../../components/tool-card/ToolCard.vue';
 import { useI18n } from 'vue-i18n';
 
+const { inset } = useTrafficLightsInset();
 const { t } = useI18n();
 const binariesStore = useBinariesStore();
+const online = useOnline();
 const router = useRouter();
 
 const checkFailed = ref(useRoute().query.checkFailed === '1');

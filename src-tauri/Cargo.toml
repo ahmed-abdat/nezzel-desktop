@@ -1,6 +1,6 @@
 [package]
 name = "nezzel"
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.3"
 description = "Save videos, audio and photos from links."
 license = "AGPL-3.0-or-later"
 authors = ["Jelle Glebbeek", "Ahmed Abdat"]

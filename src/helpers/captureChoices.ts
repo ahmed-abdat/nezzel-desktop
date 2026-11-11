@@ -95,7 +95,7 @@ export function cardRows(details: CaptureDetails, read: boolean, url = ''): Card
  */
 export function optionsForCaptureChoice(choice: CaptureChoice, formats: MediaFormat[], sourceKind?: SourceMediaKind): DownloadOptions {
   if (choice.kind === 'best' || choice.kind === 'small') return optionsForChoice(choice.kind, formats, sourceKind);
-  if (choice.kind === 'audio') return choice.kbps ? { ...BEST_AUDIO, abr: choice.kbps } : optionsForChoice('audio', formats, sourceKind);
+  if (choice.kind === 'audio') return { ...BEST_AUDIO, ...(choice.kbps ? { abr: choice.kbps } : {}) };
   const { height, fps } = choice;
   const highFps = (f: MediaFormat) => (f.fps ?? 0) >= HIGH_FPS_MIN;
   const sameTier = (f: MediaFormat) => f.height === height

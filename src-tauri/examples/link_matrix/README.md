@@ -18,8 +18,28 @@ The command above runs anonymously. For a local login run, add:
 example. This explicitly consents once for every selected row. Fetches, playlist
 children and downloads pass that choice through the app's normal `LoginSession`
 path. The login run is **local-only** and refuses to start under `CI=1`; never
-put a browser profile or cookie material in a CI job. Use separate output folders
-for anonymous and login comparisons.
+put a browser profile or cookie material in a CI job.
+
+Alternatively, supply a local Netscape cookies.txt export:
+```sh
+--cookies '/absolute/path/to/cookies.txt'
+```
+This uses the same `auth.cookie_file` setting and production cookie-source path as
+Settings > Logins > Advanced. The file must exist, be readable, and start with
+the Netscape cookie header or contain tab-separated seven-column cookie records.
+`--cookies` and `--login` are mutually exclusive; both refuse to run with `CI=1`.
+Cookie contents and the cookie-file path are never included in reports/evidence.
+Use separate output folders for anonymous, browser-login and cookie-file comparisons.
+
+Before a release, run anonymous + one logged-in mode against the same link matrix:
+```sh
+cargo run --features link-matrix --example link_matrix -j 4 -- \
+  --links <path>/links.tsv --out <path>/release-anonymous
+cargo run --features link-matrix --example link_matrix -j 4 -- \
+  --links <path>/links.tsv --out <path>/release-cookies --cookies <path>/cookies.txt
+# Or replace --cookies <path>/cookies.txt with --login firefox.
+```
+Compare verdicts and attempt traces; investigate failures before releasing.
 
 `--only linkedin` filters one site; `--only reddit,linkedin` selects either site
 by an exact match on the input's `site` column, for nightly local per-site runs.
@@ -53,7 +73,8 @@ There is no GUI, dispatcher queue, clipboard watcher, tray, Sentry client, vault
 updater, or persisted owner configuration. Default snapshots use isolated stores.
 Anonymous runs set browser cookies to `none` to prevent profile discovery.
 Login runs set automatic mode and supply the explicitly accepted browser on each
-fetch/download entry. No saved owner credentials or vault are loaded. Harness
+fetch/download entry. Cookie-file runs set only the manual cookie-file setting;
+browser discovery stays disabled. No saved owner credentials or vault are loaded. Harness
 settings remain in memory after login success; settings edits never save browser
 choices or invoke OS settings callbacks. Dummy scheduler channels exist only for
 the production login cleanup API. Direct worker calls retain real production routing, but do not exercise GUI events, queue fairness, or frontend
@@ -77,13 +98,14 @@ Each run gets a fresh UUID folder, with one numbered directory per input URL.
 `evidence.json` contains app diagnostic/fatal events, sanitized engine output,
 input annotations, and timing. Last engine lines and the app's actual code and
 `errors.runner.<code>.message` key appear separately. Cookie-related engine
-lines are suppressed. In login runs, raw engine stderr/logs are omitted entirely;
+lines are suppressed. In browser-login and cookie-file runs, raw engine stderr/logs are omitted entirely;
 app diagnostic codes and redacted messages remain. Cookie material and browser
 profile paths are never written to reports/evidence. Reports contain public
 source URLs and final downloaded file paths.
 
-Both reports include `login` (`yes` for a `--login` run, otherwise `no`), `stages`,
-`winner`, and `final_code`. Each `stages` entry is
+Both reports include `auth_mode` (`anonymous`, `login:<browser>` without the profile,
+or `cookies-file`), the existing `login` (`yes` for a `--login` run, otherwise `no`),
+`stages`, `winner`, and `final_code`. Each `stages` entry is
 `stage/login/outcome/code/ms`, joined with ` > ` in production event order;
 `login` within an attempt is `yes`/`no`, and a missing attempt code is `-`.
 The winner stage and final code come from `media_attempts` (the fetch coordinator,

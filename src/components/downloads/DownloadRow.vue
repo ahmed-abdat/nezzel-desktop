@@ -96,14 +96,15 @@
           <LoginProfile :group-id="group.id" :show-picker="false" :tone="loginCard?.kind === 'needed' ? 'amber' : phase === 'error' ? 'error' : 'muted'" :disabled="phase === 'reading' || phase === 'downloading' || loginCard?.kind === 'needed'" class="mt-0.5" />
 
           <div v-if="phase === 'playlist'" class="mt-2">
-            <playlist-selection-step :group="group" />
+            <span class="text-[12px] text-muted-foreground" role="status">{{ playlistSummary }}</span>
+            <Button v-if="!sheet.open || sheet.groupId !== group.id" variant="outline" class="ms-2" @click="sheet.show(group.id)">{{ t('downloads.row.options') }}</Button>
           </div>
         </div>
 
         <!-- Finder-style columns when the list is wide (labels in HomeView). Unknown yet: a skeleton while
              reading, a dash after, never a blank hole. -->
         <span v-for="cell in cells" :key="cell.key" :class="[colCls, cell.cls]">
-          <span v-if="cell.value"><bdi :class="cell.num && 'tnum'">{{ cell.value }}</bdi></span>
+          <span v-if="cell.value"><bdi :dir="cell.num ? 'ltr' : undefined" :class="cell.num && 'tnum'">{{ cell.value }}</bdi></span>
           <span v-else-if="phase === 'reading'" class="inline-block h-2.5 w-10 rounded-full bg-foreground/[0.12] align-middle animate-pulse motion-reduce:animate-none" aria-hidden="true" />
           <span v-else class="text-muted-foreground/45" aria-hidden="true">{{ EMPTY_CELL }}</span>
         </span>
@@ -116,8 +117,8 @@
           </template>
           <template v-else-if="phase === 'error' && !loginOwnsAction">
             <Button v-if="errorIsFilter" variant="ghost" @click="router.push({ name: 'input-filters' })">{{ t('media.steps.error.filters') }}</Button>
-            <!-- A permanent refusal (removed, protected, region…) keeps Try again, but quiet: retrying rarely helps. -->
-            <Button :variant="errorIsPermanent ? 'ghost' : 'outline'" @click="recover"><Film v-if="recoveryIsSwitch" /><rotate-cw v-else />{{ recoveryLabel }}</Button>
+            <Button v-if="errorIsUnsupported" variant="outline" @click="openPage"><ExternalLink />{{ t('downloads.row.openBrowser') }}</Button>
+            <Button v-if="!errorIsPermanent" variant="outline" @click="recover"><Film v-if="recoveryIsSwitch" /><rotate-cw v-else />{{ recoveryLabel }}</Button>
           </template>
           <template v-else-if="phase === 'downloading' || phase === 'paused'">
             <tooltip v-if="!processing && loginCard?.kind !== 'needed'" :content="phase === 'paused' ? t('downloads.row.resume') : t('downloads.row.pause')">
@@ -246,12 +247,12 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { useUiPrefs } from '../../composables/useUiPrefs';
 import LoginNeeded from './LoginNeeded.vue';
 import { Collapsible, CollapsibleTrigger } from '@/components/ui/collapsible';
-import PlaylistSelectionStep from '../media-card/steps/PlaylistSelectionStep.vue';
 import { useDownloadRow } from '../../composables/useDownloadRow';
 import { useDownloadActions } from '../../composables/useDownloadActions';
 import { usePlatform } from '../../composables/usePlatform';
 import { useDownloadSelection } from '../../composables/useDownloadSelection';
 import { useDiagnostic } from '../../composables/useDiagnostic';
+import { useMediaOptionsStore } from '../../stores/media/options';
 import { useDownloadSheetStore } from '../../stores/downloadSheet';
 import { useLoginStore, type LoginCard } from '../../stores/login';
 import { useReportStore } from '../../stores/report';
@@ -267,6 +268,11 @@ const group = toRef(props, 'group');
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
 const sheet = useDownloadSheetStore();
+const optionsStore = useMediaOptionsStore();
+const playlistSummary = computed(() => {
+  const count = optionsStore.getPlaylistSelection(group.value).length;
+  return t('inputFilters.playlistSelection.checkedCount', { count, total: group.value.entries?.length ?? 0 }, count);
+});
 const colCls = 'hidden shrink-0 self-center truncate text-[12.5px] text-muted-foreground @min-[1040px]/list:block';
 const { phase, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, fileKind, readingStuck, processing } = useDownloadRow(group);
 /** Not known (yet): a typographic placeholder, not copy, so it needs no translation. */
@@ -314,6 +320,7 @@ const errorDetails = computed(() => (diagnostic.value.raw && diagnostic.value.ra
 const detailsOpen = ref(false);
 const errorIsFilter = computed(() => diagnostic.value.code === 'rejectedByFilter');
 const errorIsPermanent = computed(() => isPermanentError(diagnostic.value.code));
+const errorIsUnsupported = computed(() => ['urlNotSupported', 'unknownUrlType'].includes(diagnostic.value.code));
 
 interface RowAction { key: string; label: string; icon: unknown; run: () => unknown; danger?: boolean; disabled?: boolean }
 const go = (to: RouteLocationRaw) => () => router.push(to);
@@ -326,7 +333,7 @@ const menuGroups = computed<RowAction[][]>(() => {
   }
   if (phase.value === 'downloading' && !processing.value) primary.push({ key: 'pause', label: t('downloads.row.pause'), icon: Pause, run: pause });
   if (phase.value === 'paused') primary.push({ key: 'resume', label: t('downloads.row.resume'), icon: Play, run: download });
-  if (phase.value === 'error') primary.push({ key: 'retry', label: recoveryLabel.value, icon: recoveryIsSwitch.value ? Film : RotateCw, run: recover });
+  if (phase.value === 'error' && !errorIsPermanent.value && !loginOwnsAction.value) primary.push({ key: 'retry', label: recoveryLabel.value, icon: recoveryIsSwitch.value ? Film : RotateCw, run: recover });
   const more: RowAction[] = [
     { key: 'copy', label: t('downloads.row.copyLink'), icon: Copy, run: copyLink, disabled: !group.value.url },
     { key: 'page', label: t('downloads.row.openPage'), icon: ExternalLink, run: openPage, disabled: !group.value.url },
@@ -351,7 +358,7 @@ function reportProblem() {
   });
 }
 
-const tint = computed(() => (selected.value ? 'bg-primary-soft' : loginCard.value?.kind === 'needed' ? 'bg-amber-soft' : phase.value === 'error' ? 'bg-destructive-soft' : 'hover:bg-foreground/[0.025] focus-visible:bg-primary-soft'));
+const tint = computed(() => (selected.value ? 'bg-primary-soft' : (loginCard.value?.kind === 'needed' || phase.value === 'ready' || phase.value === 'playlist') ? 'bg-amber-soft' : phase.value === 'error' ? 'bg-destructive-soft' : 'hover:bg-foreground/[0.025] focus-visible:bg-primary-soft'));
 
 /** Native list keys: ↑/↓ move between rows, Enter opens (done) or starts (ready), Delete removes, Space pauses/resumes. */
 function onKey(event: KeyboardEvent) {
@@ -364,6 +371,7 @@ function onKey(event: KeyboardEvent) {
   } else if (event.key === 'Enter') {
     if (canOpen.value) openFromRow();
     else if (phase.value === 'ready') void download();
+    else if (phase.value === 'playlist') sheet.show(group.value.id);
   } else if (event.key === 'Delete' || event.key === 'Backspace') {
     event.preventDefault();
     // Keep the keyboard in the list: focus moves to the next row (or the previous one at the end).

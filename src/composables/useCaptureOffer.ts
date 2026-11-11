@@ -59,28 +59,28 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
 
   /** "Best: 1080p MP4 · ~120 MB": what one click on Download gets you, as separate parts so each stays in
    * order inside Arabic. Computed once; the bar shows the parts, the card's facts line reuses them. */
-  const bestParts = computed<string[]>(() => {
+  const bestParts = computed<{ text: string; ltr?: boolean; estimate?: boolean }[]>(() => {
     const { bestHeight, bestExt, size, photos } = details.value;
     if (fileKind.value) {
       const category = t(`files.category.${fileKind.value}`);
-      return size ? [category, formatSize(size)] : [category];
+      return [{ text: category }, ...(size ? [{ text: formatSize(size), ltr: true }] : [])];
     }
-    if (isPhotos.value && photos) return [t('capture.photos', { n: photos }, photos)];
+    if (isPhotos.value && photos) return [{ text: t('capture.photos', { n: photos }, photos) }];
     const kind = bestHeight ? `${bestHeight}p` : bestExt ? t('capture.audio') : '';
     if (!kind) return [];
     const quality = [kind, bestExt.toUpperCase()].filter(Boolean).join(' ');
-    return [t('capture.best', { quality }), size ? t('sheet.size', { size: formatSize(size) }) : ''].filter(Boolean);
+    return [{ text: t('capture.best', { quality }) }, ...(size ? [{ text: formatSize(size), ltr: true, estimate: true }] : [])];
   });
   /** The card's one facts line: duration, then what Download best gets ("12:34 · 1080p · MP4 · 120 MB"). */
-  const facts = computed<{ text: string; strong?: boolean }[]>(() => {
+  const facts = computed<{ text: string; strong?: boolean; ltr?: boolean }[]>(() => {
     const { bestHeight, bestExt, size, photos, duration } = details.value;
-    if (fileKind.value || (isPhotos.value && photos)) return bestParts.value.length ? [{ text: bestParts.value.join(' · ') }] : [];
+    if (fileKind.value || (isPhotos.value && photos)) return bestParts.value;
     return [
-      duration ? { text: formatDuration(duration, { pad: true }) } : null,
+      duration ? { text: formatDuration(duration, { pad: true }), ltr: true } : null,
       bestHeight ? { text: t('capture.formats.height', { n: bestHeight }), strong: true } : bestExt ? { text: t('capture.audio'), strong: true } : null,
-      bestExt ? { text: bestExt.toUpperCase() } : null,
-      size ? { text: formatSize(size) } : null,
-    ].filter((part): part is { text: string; strong?: boolean } => !!part);
+      bestExt ? { text: bestExt.toUpperCase(), ltr: true } : null,
+      size ? { text: formatSize(size), ltr: true } : null,
+    ].filter((part): part is NonNullable<typeof part> => !!part);
   });
 
   async function syncAppearance() {
@@ -117,7 +117,6 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
     if (action === 'download' && offer.value.failed) return;
     if (action === 'download' && isPlaylist.value) {
       action = 'options';
-      choice = undefined;
     }
     if (action !== 'dismiss' && action !== 'report' && (!offer.value.url || offer.value.resolving || editing.value || acting.value)) return;
     if (action !== 'dismiss') acting.value = true;

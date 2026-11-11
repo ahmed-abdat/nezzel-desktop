@@ -6,7 +6,7 @@ import {
   BinaryProgress,
   BinaryCheckPayload, BinaryDownloadErrorPayload,
 } from '../tauri/types/binaries';
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useToastStore } from './toast';
 import { i18n } from '../i18n';
@@ -16,6 +16,9 @@ export const useBinariesStore = defineStore('binaries', () => {
   const tools = ref<Record<string, BinaryProgress>>({});
   const settingsStore = useSettingsStore();
   const toastStore = useToastStore();
+  const repairFailed = ref(false);
+  const lastError = ref('');
+  const needsRepair = computed(() => repairFailed.value || Object.values(tools.value).some(tool => tool.error || tool.percent < 100));
   let updateStale = false;
   let updateNoticeShown = false;
   let updateToastId: number | undefined;
@@ -50,17 +53,34 @@ export const useBinariesStore = defineStore('binaries', () => {
 
   async function check(): Promise<string[]> {
     if (!settingsStore.settings.update.updateBinaries) return [];
-    const result = await invoke<BinaryCheckPayload>('binaries_check');
-    processUpdateStale(await invoke<boolean>('binaries_update_status'));
-    tools.value = {};
-    for (const tool of result.tools) {
-      tools.value[tool] = { total: 0, percent: 0, received: 0 };
+    try {
+      const result = await invoke<BinaryCheckPayload>('binaries_check');
+      processUpdateStale(await invoke<boolean>('binaries_update_status'));
+      tools.value = {};
+      for (const tool of result.tools) {
+        tools.value[tool] = { total: 0, percent: 0, received: 0 };
+      }
+      repairFailed.value = false;
+      lastError.value = '';
+      return result.tools;
+    } catch (error) {
+      repairFailed.value = true;
+      lastError.value = String(error);
+      throw error;
     }
-    return result.tools;
   }
 
   async function ensure(toEnsure?: string[]) {
-    await invoke<void>('binaries_ensure', { tools: toEnsure ?? Object.keys(tools.value) });
+    try {
+      if (!navigator.onLine) throw new Error(i18n.global.t('toolsRepair.offline'));
+      await invoke<void>('binaries_ensure', { tools: toEnsure ?? Object.keys(tools.value) });
+      repairFailed.value = false;
+      lastError.value = '';
+    } catch (error) {
+      repairFailed.value = true;
+      lastError.value = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
   }
 
   function processBinaryDownloadStart(payload: BinaryDownloadStartPayload) {
@@ -81,6 +101,7 @@ export const useBinariesStore = defineStore('binaries', () => {
     if (!tool) return;
     tool.received = tool.total;
     tool.percent = 100;
+    delete tool.error;
   }
 
   function processBinaryDownloadError(payload: BinaryDownloadErrorPayload) {
@@ -89,5 +110,5 @@ export const useBinariesStore = defineStore('binaries', () => {
     tool.error = `[${payload.stage}] ${payload.error}`;
   }
 
-  return { processUpdateStale, refreshUpdateNotice, tools, check, ensure, processBinaryDownloadStart, processBinaryDownloadProgress, processBinaryDownloadError, processBinaryDownloadComplete };
+  return { processUpdateStale, refreshUpdateNotice, tools, needsRepair, lastError, check, ensure, processBinaryDownloadStart, processBinaryDownloadProgress, processBinaryDownloadError, processBinaryDownloadComplete };
 });

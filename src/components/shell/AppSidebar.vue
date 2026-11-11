@@ -9,7 +9,8 @@
     <!-- Title-bar strip. macOS LTR: traffic lights (and the sidebar toggle, placed by the layout). Elsewhere, and in macOS RTL
          where the lights sit over the toolbar instead, the brand. -->
     <div class="flex h-[52px] shrink-0 items-center gap-2 px-4" data-tauri-drag-region>
-      <template v-if="showBrand">
+      <slot v-if="$slots['title-start']" name="title-start" />
+      <template v-else-if="showBrand">
         <img :src="nezzelMark" alt="" class="size-6 shrink-0" />
         <span v-if="!collapsed" class="text-[14px] font-semibold tracking-tight">{{ t('shell.brand') }}</span>
       </template>

@@ -107,3 +107,8 @@ export function countView(rows: Pick<ListRow, 'status' | 'kind' | 'cleared'>[], 
 export function finishedIds<T extends { id: string; status: RowStatus; cleared?: boolean }>(rows: T[]): string[] {
   return rows.filter(row => row.status === 'done' && !row.cleared).map(row => row.id);
 }
+
+/** A choice or a live consent prompt needs the user, even while the engine waits. */
+export function needsAttention(state: MediaState, loginNeeded: boolean): boolean {
+  return loginNeeded || ['ready', 'playlist'].includes(phaseOf(state));
+}

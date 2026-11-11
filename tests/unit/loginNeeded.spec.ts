@@ -9,6 +9,26 @@ import { Platform } from '../../src/tauri/types/app';
 import { installTauriMock } from '../utils/tauriMock';
 
 describe('login picker profile metadata', () => {
+  it.each(['en', 'ar', 'fr'] as const)('uses the locale direction around LTR browser and host runs in %s', async (locale) => {
+    const oldLocale = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const store = useLoginStore();
+    store.receive({ requestId: 'direction', id: 'item', groupId: 'direction', host: 'www.instagram.com', reason: 'signInRequired', status: 'needed', candidates: [
+      { id: 'chrome-token', browser: 'chrome', profile: 'Person 1', signedIn: true },
+      { id: 'firefox-token', browser: 'firefox', profile: 'Default', signedIn: false },
+    ] });
+    const wrapper = mount(LoginNeeded, { props: { card: store.cardFor('direction')! }, global: { plugins: [i18n], stubs: { RouterLink: true } } });
+    try {
+      await flushPromises();
+      const value = wrapper.get('[role=combobox] > span');
+      expect(value.attributes('dir')).toBe(locale === 'ar' ? 'rtl' : 'ltr');
+      expect(value.findAll('bdi[dir=ltr]').map(run => run.text())).toEqual(['Chrome (Person 1)', 'www.instagram.com']);
+    } finally {
+      wrapper.unmount();
+      store.forgetGroup('direction');
+      i18n.global.locale.value = oldLocale;
+    }
+  });
   it.each(['en', 'ar', 'fr'] as const)('keeps the login reason and engine Details reachable in %s', async (locale) => {
     const oldLocale = i18n.global.locale.value;
     i18n.global.locale.value = locale;
@@ -83,7 +103,7 @@ describe('login picker profile metadata', () => {
     store.receiveUsing({ id: 'item', groupId: 'used', host: 'instagram.com', candidate: { id: 'chrome:/private/Default', browser: 'chrome', profile: 'Ahmed', signedIn: true } });
     const wrapper = mount(LoginProfile, { props: { groupId: 'used' }, global: { plugins: [i18n], stubs: { RouterLink: true } } });
     await flushPromises();
-    expect(wrapper.find('bdi').text()).toBe('Chrome · Ahmed');
+    expect(wrapper.get('bdi[dir=ltr]').text()).toBe('Chrome · Ahmed');
     expect(wrapper.text()).toContain(i18n.global.t('downloads.login.usingProfile', { profile: 'Chrome · Ahmed' }));
     expect(wrapper.find('button').text()).toBe(i18n.global.t('downloads.login.changeProfile'));
     expect(wrapper.text()).not.toContain('/private');

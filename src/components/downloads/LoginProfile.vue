@@ -37,7 +37,7 @@ async function change() {
   <LoginNeeded v-if="showPicker && card?.kind === 'needed' && card.request.changeOnly" :card="card" />
   <div v-else-if="used && card?.kind !== 'needed'" :class="cn('flex flex-wrap items-center gap-1 text-[length:var(--nz-fs-caption)]', tone === 'error' ? 'text-destructive-foreground' : tone === 'amber' ? 'text-amber-foreground' : 'text-muted-foreground')">
     <i18n-t keypath="downloads.login.usingProfile" tag="span">
-      <template #profile><bdi>{{ profile }}</bdi></template>
+      <template #profile><bdi dir="ltr">{{ profile }}</bdi></template>
     </i18n-t>
     <Button size="xs" variant="ghost" :disabled="disabled || busy" :aria-busy="busy || undefined" @click="change">
       <loader-circle v-if="busy" class="animate-spin" aria-hidden="true" />{{ busy ? t('downloads.login.lookingForProfiles') : t('downloads.login.changeProfile') }}

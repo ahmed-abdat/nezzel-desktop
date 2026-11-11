@@ -228,7 +228,7 @@ fn capture(out: Outgoing) -> sentry::types::Uuid {
   )
 }
 
-fn crash_event(report: &Report, crash: &ScrubbedText) -> Outgoing {
+fn crash_event(report: &Report, crash: &ScrubbedText, fatal: bool) -> Outgoing {
   // Line 3 of a crash file is the panic message (see `crash::format_crash`).
   let message = crash
     .lines()
@@ -236,7 +236,7 @@ fn crash_event(report: &Report, crash: &ScrubbedText) -> Outgoing {
     .map_or_else(|| EventText::from("crash"), |line| EventText::from(&line));
   Outgoing {
     source: "crash",
-    level: Level::Fatal,
+    level: if fatal { Level::Fatal } else { Level::Error },
     message,
     tags: vec![],
     fingerprint: vec![],
@@ -306,12 +306,12 @@ fn manual_event(report: &Report) -> Outgoing {
   }
 }
 
-/// Previous run's crash. Returns whether it was sent.
-pub fn send_crash(app: &AppHandle, report: &Report, crash: &ScrubbedText) -> bool {
+/// Previous run's panic; fatal only after an unexpected close. Returns whether it was sent.
+pub fn send_crash(app: &AppHandle, report: &Report, crash: &ScrubbedText, fatal: bool) -> bool {
   if !enabled(app) {
     return false;
   }
-  capture(crash_event(report, crash));
+  capture(crash_event(report, crash, fatal));
   true
 }
 
@@ -528,16 +528,19 @@ mod tests {
       ..Draft::default()
     });
     let crash = input.crash.as_ref().expect("the crash");
-    let (json, body) = wire(crash_event(&report, crash));
-    assert_no_leaks(&json, &body);
-    assert_eq!(json["level"], "fatal");
-    assert!(
-      json["message"]
-        .as_str()
-        .is_some_and(|message| message.starts_with("no such file ")),
-      "{json}"
-    );
-    assert!(body.contains("panicked at src/lib.rs:1:1"), "{body}");
+    for (fatal, level) in [(true, Level::Fatal), (false, Level::Error)] {
+      let event = crash_event(&report, crash, fatal);
+      assert_eq!(event.level, level);
+      let (json, body) = wire(event);
+      assert_no_leaks(&json, &body);
+      assert!(
+        json["message"]
+          .as_str()
+          .is_some_and(|message| message.starts_with("no such file ")),
+        "{json}"
+      );
+      assert!(body.contains("panicked at src/lib.rs:1:1"), "{body}");
+    }
   }
 
   #[test]

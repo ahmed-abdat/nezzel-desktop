@@ -134,28 +134,34 @@ export const useMediaStore = defineStore('media', () => {
     }
   }
 
-  const pendingReadyGroups = new Map<string, PendingReadyGroup>();
+  const pendingReadyGroups = new Map<string, PendingReadyGroup[]>();
   const recentCaptures = new Map<string, { groupId: string; createdAt: number }>();
 
-  function resolvePendingReadyGroup(groupId: string, resolvedIds: string[]) {
-    const pending = pendingReadyGroups.get(groupId);
-    if (!pending) return;
-    pending.resolve(resolvedIds);
-    pendingReadyGroups.delete(groupId);
+  function resolvePendingReadyGroup(groupId: string, resolvedIds: string[], playlistOnly = false) {
+    const pending = pendingReadyGroups.get(groupId) ?? [];
+    const remaining = pending.filter(waiter => playlistOnly && !waiter.stopAtPlaylist);
+    if (remaining.length) pendingReadyGroups.set(groupId, remaining);
+    else pendingReadyGroups.delete(groupId);
+    for (const waiter of pending) {
+      if (!playlistOnly || waiter.stopAtPlaylist) waiter.resolve(resolvedIds);
+    }
   }
 
   function rejectPendingReadyGroup(groupId: string, reason?: unknown) {
-    const pending = pendingReadyGroups.get(groupId);
-    if (!pending) return;
-    pending.reject(reason);
+    const pending = pendingReadyGroups.get(groupId) ?? [];
     pendingReadyGroups.delete(groupId);
+    for (const waiter of pending) waiter.reject(reason);
   }
 
   function finalizePlaylistGroup(group: Group) {
     const splitThreshold = settingsStore.settings.performance.splitPlaylistThreshold;
     const overrides = optionsStore.getOverrides(group.id);
     if (group.total < splitThreshold) {
+      const selectedOptions = optionsStore.getOptions(group.id);
       const newGroups = groupStore.splitGroup(group);
+      if (selectedOptions) {
+        for (const next of newGroups) optionsStore.setOptions(next.id, { ...selectedOptions });
+      }
       // splitGroup removed the playlist row: its pending login card goes with it.
       useLoginStore().forgetGroup(group.id);
       migrateOverrides(group.id, newGroups.map(newGroup => newGroup.id), overrides);
@@ -198,10 +204,10 @@ export const useMediaStore = defineStore('media', () => {
       Object.assign(group, meta);
       group.total = total;
       group.processed = 0;
-      if (pendingReadyGroups.get(groupId)?.stopAtPlaylist) {
+      if (pendingReadyGroups.get(groupId)?.some(waiter => waiter.stopAtPlaylist)) {
         group.skipPlaylistSelection = false;
         stateStore.setState(item.id, MediaState.playlistSelection);
-        resolvePendingReadyGroup(groupId, [groupId]);
+        resolvePendingReadyGroup(groupId, [groupId], true);
       } else if (group.skipPlaylistSelection) {
         void expandPlaylistGroup(groupId, { rows: [] }).catch((error) => {
           console.error(error);
@@ -259,8 +265,10 @@ export const useMediaStore = defineStore('media', () => {
     if (selectedEntries.length === 0) {
       throw new Error('No playlist entries match the selected range.');
     }
-    const spec = buildPlaylistItemsSpec(selection);
+    const spec = buildPlaylistItemsSpec(selection, entries);
     const previousOverrides = optionsStore.getOverrides(groupId);
+    const previousTotal = group.total;
+    const previousProcessed = group.processed;
     const nextOverrides = cloneDownloadOverrides(previousOverrides) ?? {};
 
     if (spec) {
@@ -287,11 +295,33 @@ export const useMediaStore = defineStore('media', () => {
     group.processed = 0;
     stateStore.setGroupState(groupId, MediaState.fetchingList);
 
-    await invoke<string>('media_playlist_expand', {
-      groupId,
-      entries: selectedEntries,
-      overrides: cloneDownloadOverrides(optionsStore.getOverrides(groupId)),
+    try {
+      await invoke<string>('media_playlist_expand', {
+        groupId,
+        entries: selectedEntries,
+        overrides: cloneDownloadOverrides(optionsStore.getOverrides(groupId)),
+      });
+    } catch (error) {
+      group.entries = entries;
+      leader.entries = entries;
+      group.total = previousTotal;
+      group.processed = previousProcessed;
+      if (previousOverrides) optionsStore.setOverrides(groupId, previousOverrides);
+      else optionsStore.removeOverrides(groupId);
+      stateStore.setGroupState(groupId, MediaState.playlistSelection);
+      throw error;
+    }
+  }
+
+  /** Selection is the user's download confirmation; read only those entries, then queue them. */
+  async function downloadPlaylistSelection(groupId: string, selection: PlaylistSelection) {
+    const ready = waitForGroupReady(groupId);
+    const expansion = expandPlaylistGroup(groupId, selection).catch((error) => {
+      rejectPendingReadyGroup(groupId, error);
+      throw error;
     });
+    const [, ids] = await Promise.all([expansion, ready]);
+    await Promise.all(ids.map(id => downloadGroup(id, getDownloadOptions(id), ids.length > 1 ? 'batch' : undefined)));
   }
 
   function createMediaInfoGroup(
@@ -441,8 +471,11 @@ export const useMediaStore = defineStore('media', () => {
       return Promise.resolve([groupId]);
     }
 
+    if (!group || state === MediaState.error) return Promise.reject(new Error('Download is unavailable'));
     return new Promise<string[]>((resolve, reject) => {
-      pendingReadyGroups.set(groupId, { resolve, reject, stopAtPlaylist });
+      const pending = pendingReadyGroups.get(groupId) ?? [];
+      pending.push({ resolve, reject, stopAtPlaylist });
+      pendingReadyGroups.set(groupId, pending);
     });
   }
 
@@ -485,20 +518,25 @@ export const useMediaStore = defineStore('media', () => {
     return readyGroupIds;
   }
 
+  /** Reuse the capture read, stopping before playlist expansion for every capture choice. */
+  async function prepareCaptureGroup(groupId: string, choice?: CaptureChoice) {
+    const ready = await waitForGroupReady(groupId, true);
+    for (const id of ready) {
+      const group = groupStore.findGroupById(id);
+      if (!group) continue;
+      const sourceKind = group.entries ? 'video' : group.mediaKind;
+      optionsStore.setOptions(id, choice
+        ? optionsForCaptureChoice(choice, group.formats ?? [], sourceKind)
+        : defaultDownloadOptions({ ...group, mediaKind: sourceKind }, optionsStore.getOptions(id), defaultChoice.value));
+    }
+    return ready;
+  }
+
   /** `choice`: a quick pick or a copied-link card format row; none = the user's default. */
   async function downloadPreparedGroup(groupId: string, choice?: CaptureChoice) {
-    const ready = await waitForGroupReady(groupId, true);
-    // An early Download cannot commit every item when the read turns out to be a playlist.
+    const ready = await prepareCaptureGroup(groupId, choice);
     if (stateStore.getGroupState(groupId) === MediaState.playlistSelection) return 'playlist';
-    await Promise.all(ready.map((id) => {
-      const group = groupStore.findGroupById(id);
-      if (group) {
-        optionsStore.setOptions(id, choice
-          ? optionsForCaptureChoice(choice, group.formats ?? [], group.mediaKind)
-          : defaultDownloadOptions(group, optionsStore.getOptions(id), defaultChoice.value));
-      }
-      return downloadGroup(id, getDownloadOptions(id));
-    }));
+    await Promise.all(ready.map(id => downloadGroup(id, getDownloadOptions(id))));
     return 'downloaded';
   }
 
@@ -705,6 +743,7 @@ export const useMediaStore = defineStore('media', () => {
   }
 
   function deleteGroup(id: string, removeHistory = true) {
+    rejectPendingReadyGroup(id, new Error('Download was removed'));
     // Even when the row is already gone, a login card may still wait for it.
     useLoginStore().forgetGroup(id);
     const group = groupStore.findGroupById(id);
@@ -757,11 +796,13 @@ export const useMediaStore = defineStore('media', () => {
     fetchMediaInfoForGroup,
     retryGroup,
     expandPlaylistGroup,
+    downloadPlaylistSelection,
     rejectPendingReadyGroup,
     addAndDownload,
     addUrlBatch,
     addUrlBatchAndDownload,
     downloadPreparedGroup,
+    prepareCaptureGroup,
     downloadGroup,
     downloadAllGroups,
     pauseAllGroups,

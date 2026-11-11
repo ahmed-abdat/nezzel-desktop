@@ -31,7 +31,7 @@
     <template v-else-if="offer.read && !offer.failed">
       <p class="line-clamp-2 text-start text-[13px] leading-[1.4] font-medium rtl:leading-[1.5]"><bdi dir="auto">{{ offer.title || offer.site }}</bdi></p>
       <p v-if="facts.length" class="tnum mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12px] whitespace-nowrap text-muted-foreground" data-testid="capture-best">
-        <template v-for="(part, index) in facts" :key="index"><span v-if="index > 0" class="nz-sep" aria-hidden="true" /><bdi :class="part.strong && 'font-medium text-foreground'">{{ part.text }}</bdi></template>
+        <template v-for="(part, index) in facts" :key="index"><span v-if="index > 0" class="nz-sep" aria-hidden="true" /><bdi :dir="part.ltr ? 'ltr' : undefined" :class="part.strong && 'font-medium text-foreground'">{{ part.text }}</bdi></template>
       </p>
     </template>
     <CaptureFailure v-else-if="offer.failed" :reason="failure" :site="offer.site" />

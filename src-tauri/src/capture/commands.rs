@@ -224,7 +224,7 @@ pub async fn capture_action(
   // The rows this offer actually showed; a card row it did not show falls back to the default choice.
   let offered = state.offers.lock().unwrap().shown_choices(window, id);
   let mut payload = claim_action(&state, window, id, action)?;
-  if action == Action::Download {
+  if matches!(action, Action::Download | Action::Options) {
     payload.choice = quick_choice(choice, &offered);
   }
   for key in super::usage_keys::action_keys(window.label(), action, payload.choice) {

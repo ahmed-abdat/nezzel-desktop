@@ -312,11 +312,36 @@ fn settle_crash(
   Some(CrashNotice { sent })
 }
 
+fn settle_nonfatal_crash(dir: &std::path::Path, enabled: bool, send: impl FnOnce(String)) {
+  if let Some(crash) = crash::take_nonfatal(dir) {
+    if enabled {
+      send(crash);
+    }
+  }
+}
+
 /// The previous run's crash, handled once: sent automatically when reports are on, or staged for one
 /// "Send report" click. The file is deleted only after one of those worked ([`settle_crash`]).
 #[tauri::command]
 pub fn diagnostics_crash_check(app: AppHandle, auto: Option<bool>) -> Option<CrashNotice> {
   let paths = app.try_state::<PathsManager>()?;
+  // Never stage a background panic or return a notice for it. Honour welcome-screen consent too.
+  settle_nonfatal_crash(
+    paths.app_dir(),
+    auto.unwrap_or(true) && app.state::<SharedConfig>().load().privacy.send_reports,
+    |crash| {
+      let input = report_input(
+        &app,
+        Draft {
+          crash: Some(crash),
+          ..Draft::default()
+        },
+      );
+      if let Some(crash) = &input.crash {
+        send::send_crash(&app, &report::build(&input), crash, false);
+      }
+    },
+  );
   // Already scrubbed at write time; scrubbed again (in `Draft::into_input`) in case the file came from an older build.
   let crash = crash::read(paths.app_dir())?;
   let draft = |with_log| Draft {
@@ -332,7 +357,7 @@ pub fn diagnostics_crash_check(app: AppHandle, auto: Option<bool>) -> Option<Cra
       && input
         .crash
         .as_ref()
-        .is_some_and(|crash| send::send_crash(&app, &report, crash))
+        .is_some_and(|crash| send::send_crash(&app, &report, crash, true))
   };
   settle_crash(paths.app_dir(), send::configured(), send, || {
     // Sent only on the user's click: include the log tail like any manual report.
@@ -418,6 +443,40 @@ mod tests {
       .into_input(ReportInput::default(), &names())
       .download
       .expect("a row stays a row")
+  }
+
+  #[test]
+  fn nonfatal_crashes_are_sent_once_when_enabled_and_dropped_when_disabled() {
+    for enabled in [true, false] {
+      let dir = std::env::temp_dir().join(format!("nezzel-nonfatal-{}", uuid::Uuid::new_v4()));
+      std::fs::create_dir_all(&dir).unwrap();
+      std::fs::write(dir.join(crash::NONFATAL_FILE), "background panic").unwrap();
+      let mut sent = Vec::new();
+      settle_nonfatal_crash(&dir, enabled, |text| sent.push(text));
+      settle_nonfatal_crash(&dir, enabled, |_| panic!("sent twice"));
+      assert_eq!(
+        sent,
+        if enabled {
+          vec!["background panic"]
+        } else {
+          vec![]
+        }
+      );
+      assert!(!dir.join(crash::NONFATAL_FILE).exists());
+      assert!(crash::read(&dir).is_none(), "no unexpected-close prompt");
+      std::fs::remove_dir_all(dir).unwrap();
+    }
+  }
+
+  #[test]
+  fn consuming_a_background_panic_leaves_an_unexpected_close_for_the_prompt() {
+    let dir = std::env::temp_dir().join(format!("nezzel-both-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(crash::NONFATAL_FILE), "background panic").unwrap();
+    std::fs::write(dir.join(crash::CRASH_FILE), "fatal panic").unwrap();
+    settle_nonfatal_crash(&dir, false, |_| panic!("reports off"));
+    assert_eq!(crash::read(&dir).as_deref(), Some("fatal panic"));
+    std::fs::remove_dir_all(dir).unwrap();
   }
 
   #[test]

@@ -51,6 +51,13 @@
               <Switch id="wl-reports" class="wl-sw" :model-value="reports" aria-labelledby="wl-reports-l" aria-describedby="wl-reports-d" data-testid="welcome-reports" @update:model-value="setReports" />
             </div>
             <welcome-shortcut :mac="os === 'mac'" />
+            <div class="wl-row">
+              <FolderOpen class="wl-ic" aria-hidden="true" />
+              <span class="min-w-0 flex-1">
+                <span class="wl-label">{{ t('sheet.saveTo') }}</span>
+                <bdi dir="ltr" class="wl-help block [overflow-wrap:anywhere]" data-testid="welcome-folder">{{ settings.settings.output?.downloadDir || folder }}</bdi>
+              </span>
+            </div>
           </div>
 
           <p class="wl-priv">
@@ -96,7 +103,7 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ConfigProvider } from 'reka-ui';
 import { invoke } from '@tauri-apps/api/core';
-import { Check, ClipboardCheck, Copy, Download, LifeBuoy, Link as LinkIcon, PictureInPicture2, Power, ShieldCheck } from '@lucide/vue';
+import { Check, ClipboardCheck, Copy, Download, FolderOpen, LifeBuoy, Link as LinkIcon, PictureInPicture2, Power, ShieldCheck } from '@lucide/vue';
 import nezzelMark from '../../assets/brand/nezzel-mark.svg';
 import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';

@@ -19,6 +19,7 @@ import { useUiPrefs } from './useUiPrefs';
 import { currentPlatform } from './usePlatform';
 import { Platform } from '../tauri/types/app';
 import type { Group } from '../tauri/types/group';
+import { isValidUrl } from '../helpers/url';
 
 export type TrashResult = 'ok' | 'missing' | 'notOurs' | 'changed' | 'trashFailed';
 
@@ -183,7 +184,9 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
   }
 
   function openPage() {
-    if (group.value.url) void openUrl(group.value.url);
+    // Only web links; the row's URL came from user input or a clipboard watcher.
+    const url = group.value.url;
+    if (url && /^https?:\/\//i.test(url) && isValidUrl(url)) void openUrl(url);
   }
 
   /** Native write, so the clipboard watcher knows this copy came from us and doesn't offer it back. */

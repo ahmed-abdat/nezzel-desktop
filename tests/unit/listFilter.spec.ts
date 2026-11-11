@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countView, filterRows, finishedIds, matchesSearch, parseListView, statusOf, viewQuery, type ListRow, type ListView } from '../../src/helpers/listFilter';
+import { needsAttention, countView, filterRows, finishedIds, matchesSearch, parseListView, statusOf, viewQuery, type ListRow, type ListView } from '../../src/helpers/listFilter';
 import { kindFilterOf } from '../../src/helpers/groupView';
 import { MediaState } from '../../src/stores/media/state';
 
@@ -112,5 +112,21 @@ describe('rows removed from the list', () => {
     const { types, statuses } = countView(list, 'all');
     expect(types.all).toBe(5);
     expect(statuses).toEqual({ all: 5, active: 1, failed: 1, done: 4 });
+  });
+});
+
+describe('needsAttention', () => {
+  it.each([
+    [MediaState.configure, false, true],
+    [MediaState.playlistSelection, false, true],
+    [MediaState.fetching, true, true],
+    [MediaState.error, true, true],
+    [MediaState.fetching, false, false],
+    [MediaState.downloading, false, false],
+    [MediaState.paused, false, false],
+    [MediaState.done, false, false],
+    [MediaState.error, false, false],
+  ] as const)('state %s, login %s → %s', (state, login, expected) => {
+    expect(needsAttention(state, login)).toBe(expected);
   });
 });

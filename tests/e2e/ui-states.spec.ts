@@ -29,8 +29,8 @@ const FRAGMENTS = path.join(OUT, '.index');
 
 const LOCALES = (process.env.NZ_LOCALES ? process.env.NZ_LOCALES.split(',') : ['en', 'ar']) as Locale[];
 const THEMES = ['light', 'dark'] as const;
-/** tauri.conf.json: default 800x900, minimum 750x650. */
-const SIZES = { default: { width: 800, height: 900 }, min: { width: 750, height: 650 } } as const;
+/** tauri.conf.json: default 880x900, minimum 750x650. */
+const SIZES = { default: { width: 880, height: 900 }, min: { width: 750, height: 650 } } as const;
 /** Wide windows (owner shots were 2000 px full screen): list columns and the Settings start anchor only show there. */
 const WIDE_SIZES = { mid: { width: 1100, height: 720 }, wide: { width: 2000, height: 1100 } } as const;
 const WIDE_STATES = new Set(['list-empty', 'list-filter-all', 'row-reading', 'row-downloading', 'row-done-video', 'long-titles', 'rows-100',
@@ -106,19 +106,23 @@ const drawTrafficLights = (page: Page) => page.evaluate(() => {
   document.body.append(box);
 });
 const VIDEO_OFFER = {
+  read: true,
   url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', site: 'youtube.com', title: 'How to make bread at home — full recipe',
   details: { thumbnail: '/src/assets/placeholder.png', mediaKind: 'video', photos: null, duration: 754, uploader: 'Nezzel Kitchen', views: 120_000, bestHeight: 1080, bestExt: 'mp4', size: 120_000_000, hasAudio: true, audioSize: 4_200_000, smallHeight: 720, smallSize: 48_000_000 },
 };
 const PHOTO_OFFER = {
+  read: true,
   url: 'https://www.instagram.com/p/abc123/', site: 'instagram.com', title: 'صور من حفل التخرج',
   details: { thumbnail: null, mediaKind: 'carousel', photos: 4, duration: null, uploader: '@nezzel', views: null, bestHeight: null, bestExt: '', size: null, hasAudio: false, audioSize: null, smallHeight: null, smallSize: null },
 };
 const FILE_OFFER = {
+  read: true,
   url: 'https://example.com/annual-report-2026.pdf', site: 'example.com', title: 'annual-report-2026.pdf',
   details: { thumbnail: null, mediaKind: 'file', photos: null, duration: null, uploader: '', views: null, bestHeight: null, bestExt: '', size: 2_400_000, hasAudio: false, audioSize: null, smallHeight: null, smallSize: null },
 };
 const SINGLE_OFFER = { ...VIDEO_OFFER, title: 'A short clip in one quality', details: { ...VIDEO_OFFER.details, bestHeight: 720, smallHeight: null, smallSize: null } };
 const AUDIO_OFFER = {
+  read: true,
   url: 'https://soundcloud.com/nezzel/episode-12', site: 'soundcloud.com', title: 'الحلقة ١٢: كيف نحفظ الصوت',
   details: { ...VIDEO_OFFER.details, thumbnail: null, mediaKind: 'audio', bestHeight: null, bestExt: 'm4a', size: 18_000_000, audioSize: 18_000_000, smallHeight: null, smallSize: null },
 };
@@ -153,6 +157,8 @@ const ALL_STATES: GalleryState[] = [
   } },
 
   // Download options sheet
+  { name: 'sheet-macos', seed: 'sheet-video', mockData: { platform: 'macos' } },
+  { name: 'list-needs-you' },
   ...seedsOnly(['sheet-video', 'sheet-audio', 'sheet-playlist', 'sheet-waiting']),
 
   // Settings
@@ -170,6 +176,7 @@ const ALL_STATES: GalleryState[] = [
   } },
 
   // First-run tools
+  { name: 'install-macos', seed: false, mockData: { platform: 'macos', binaries: { check: ['yt-dlp', 'ffmpeg'], ensure: true } }, advanceMs: 4_200 },
   { name: 'install-progress', seed: false, mockData: { binaries: { check: ['yt-dlp', 'ffmpeg'], ensure: true } }, advanceMs: 1_200 },
   { name: 'install-failed', seed: false, mockData: { binaries: { check: ['yt-dlp', 'ffmpeg'], fail: true } } },
   { name: 'install-done', seed: false, mockData: { binaries: { check: ['yt-dlp', 'ffmpeg'], ensure: true } }, advanceMs: 4_200 },
@@ -226,7 +233,67 @@ async function shoot(page: Page, state: GalleryState, locale: Locale, entries: I
         const overflow = await page.evaluate(() => document.scrollingElement!.scrollHeight - window.innerHeight);
         expect(overflow, `${state.name} ${size}: page scrolls`).toBeLessThanOrEqual(0);
       }
-      if (CHROME === 'macos' && !state.window) await drawTrafficLights(page);
+      if ((CHROME === 'macos' || state.name.endsWith('-macos')) && !state.window) await drawTrafficLights(page);
+      if (state.name === 'sheet-macos' && locale === 'ar') {
+        const close = page.getByRole('dialog').locator('header button');
+        expect((await close.boundingBox())!.x).toBeGreaterThanOrEqual(84);
+      }
+      if (state.name === 'install-macos') {
+        // Traffic lights occupy x18–70 near y26, regardless of document direction.
+        expect((await page.locator('nav a[href="/"]').boundingBox())!.x).toBeGreaterThanOrEqual(84);
+      }
+      if (state.name === 'list-needs-you') {
+        const needs = page.locator('section[aria-labelledby="ledger-needs-you"]');
+        const active = page.locator('section[aria-labelledby="ledger-active"]');
+        await expect(needs.locator('li.row')).toHaveCount(2);
+        await expect(active.locator('li.row')).toHaveCount(1);
+        expect((await needs.boundingBox())!.y).toBeLessThan((await active.boundingBox())!.y);
+      }
+      if (state.name === 'list-empty' && size === 'default') {
+        await expect(page.locator('aside[data-state]')).toHaveAttribute('data-state', 'expanded');
+        await expect(page.locator('#queue-url-input')).toBeVisible();
+        await expect(page.locator('button[type=submit]')).toBeVisible();
+        await expect(page.locator(`#${MAIN_PANE_ID} button`)).toHaveCount(0);
+      }
+      if (state.name.endsWith('ready-long')) {
+        await expect(page.getByTestId('capture-best')).toBeVisible();
+        await expect(page.getByTestId('capture-choices-loading')).toHaveCount(0);
+        await expect(page.locator('[role=status]')).toHaveCount(0);
+        await expect(page.locator('section.capture-panel')).toContainText(LONG_OFFER.title);
+      }
+      if (state.name === 'settings-general') {
+        // No blank 52px band; a thin strip stays so the window can still be dragged on Settings.
+        const mainTop = (await page.locator(`#${MAIN_PANE_ID}`).boundingBox())!.y;
+        expect(mainTop).toBeLessThanOrEqual(12);
+        await expect(page.locator('header[data-tauri-drag-region]')).toHaveCount(1);
+      }
+      if (state.name === 'settings-logins-auto') {
+        await expect(page.locator('#pref-login-policy')).toBeVisible();
+        await expect(page.locator('#pref-cookie-browser')).toBeVisible();
+        await expect(page.locator('#pref-cookie-never')).toHaveCount(0);
+        await expect(page.locator('#pref-always-browser')).toHaveCount(0);
+      }
+      if (state.name === 'settings-about-idle') {
+        await expect(page).toHaveURL(/settings\/about/);
+        await expect(page.getByTestId('about-report')).toBeVisible();
+        const external = page.locator('a[target=_blank]');
+        await expect(external).toHaveCount(2);
+        for (const link of await external.all()) {
+          await expect(link.locator('svg')).toBeVisible();
+          expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(52);
+        }
+      }
+      if (state.name === 'marketing-bar') {
+        const fits = await page.locator('[data-testid="capture-picks"]').evaluate((el) => {
+          const panel = el.closest('section')!;
+          const numbers = [...el.querySelectorAll('bdi.tnum')];
+          const hint = panel.querySelector('span:has(> kbd)');
+          return numbers.every(n => n.scrollWidth <= n.clientWidth)
+            && (!hint || hint.scrollWidth <= hint.clientWidth)
+            && panel.scrollWidth <= panel.clientWidth;
+        });
+        expect(fits, `${locale}: complete size and Escape hint fit`).toBe(true);
+      }
       const file = `${state.name}-${locale}-${theme}-${size}.png`;
       await page.screenshot({ path: path.join(OUT, file), animations: 'disabled', caret: 'hide' });
       entries.push({ state: state.name, locale, theme, size, file });

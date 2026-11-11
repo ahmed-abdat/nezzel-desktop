@@ -15,4 +15,4 @@ pub use progress::{
   MediaDestination, MediaProgress, MediaProgressComplete, MediaProgressStage, ProgressCategory,
   ProgressEvent, ProgressStage,
 };
-pub use ytdlp::YtdlpInfo;
+pub use ytdlp::{YtdlpEntry, YtdlpInfo};

@@ -50,7 +50,7 @@
       </template>
       <template v-else>
       <!-- The reason, one plain line; the full log stays behind the disclosure. -->
-      <p v-if="reason" class="mt-0.5 line-clamp-2 break-words text-nz-caption" data-testid="tool-error-reason"><bdi dir="auto">{{ reason }}</bdi></p>
+      <p v-if="reason" class="mt-0.5 break-words text-nz-caption" data-testid="tool-error-reason"><bdi dir="auto">{{ offline ? t('toolsRepair.offline') : reason }}</bdi></p>
       <Collapsible class="group" :unmount-on-hide="false">
         <CollapsibleTrigger class="flex w-fit cursor-pointer items-center gap-1 rounded-[6px] text-nz-caption outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]">
           {{ t('components.base.toolCard.failed') }}
@@ -72,8 +72,10 @@ import { computed, PropType } from 'vue';
 import { BinaryProgress } from '../../tauri/types/binaries';
 import { useI18n } from 'vue-i18n';
 import { Progress } from '../ui/progress';
+import { useOnline } from '@vueuse/core';
 
 const { t } = useI18n();
+const online = useOnline();
 
 const { tool } = defineProps({
   name: {
@@ -87,7 +89,8 @@ const { tool } = defineProps({
 });
 
 const hasError = computed(() => !!tool.error);
-const reason = computed(() => tool.error?.split('\n').map(line => line.trim()).find(Boolean) ?? '');
+const offline = computed(() => !online.value || /network is unreachable|no route to host|not connected to (?:the )?internet|offline/i.test(tool.error ?? ''));
+const reason = computed(() => tool.error?.split('\n').map(line => line.trim()).filter(line => line && line !== 'Caused by:' && !/^at\s/.test(line)).at(-1) ?? '');
 const clampedPercent = computed(() => Math.round(Math.min(Math.max(tool.percent, 0), 100)));
 const state = computed(() => (hasError.value ? 'error' : clampedPercent.value >= 100 ? 'done' : 'progress'));
 </script>

@@ -4,6 +4,7 @@ import { clearMocks } from '@tauri-apps/api/mocks';
 import { installTauriMock } from '../utils/tauriMock.ts';
 import { useMediaStore } from '../../src/stores/media/media';
 import { useMediaGroupStore } from '../../src/stores/media/group';
+import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
 import { useMediaDestinationStore } from '../../src/stores/media/destination';
 import { useMediaOptionsStore } from '../../src/stores/media/options';
 import { useMediaProgressStore } from '../../src/stores/media/progress';
@@ -555,7 +556,7 @@ describe('media store', () => {
       },
     });
 
-    await mediaStore.expandPlaylistGroup('group-1', { rows: [] });
+    await mediaStore.expandPlaylistGroup('group-1', { rows: [], positions: [0, 1] });
 
     expect(optionsStore.getOverrides('group-1')).toBeUndefined();
     expect(group.entries).toHaveLength(2);
@@ -621,6 +622,84 @@ describe('media store', () => {
 
     consoleError.mockRestore();
   });
+  it('downloads exactly the checked entries with their selected quality after expansion', async () => {
+    const expand = vi.fn();
+    const download = vi.fn();
+    installTauriMock({ media_playlist_expand: expand, media_download: download });
+    const media = useMediaStore();
+    const group = createPlaylistGroup('checklist', 3);
+    group.entries![2].index = 8;
+    useMediaGroupStore().createGroup(group);
+    useMediaStateStore().setGroupState(group.id, MediaState.playlistSelection);
+    const options = { trackType: TrackType.both, height: 720, id: 'best', audioCodecs: [], videoCodecs: [] };
+    useMediaOptionsStore().setOptions(group.id, options);
+    const entries = [...group.entries!];
+    const queued = media.downloadPlaylistSelection(group.id, { rows: [], positions: [0, 2] });
+    expect(expand).toHaveBeenCalledExactlyOnceWith('media_playlist_expand', expect.objectContaining({ entries: [entries[0], entries[2]], overrides: { inputFilters: { playlistItems: '1,9' } } }));
+    expect(download).not.toHaveBeenCalled();
+    for (const [position, entry] of [entries[0], entries[2]].entries()) {
+      media.processMediaAddPayload({ groupId: group.id, total: 2, item: {
+        id: `checked-${position}`, url: entry.videoUrl, formats: [], audioCodecs: [], filesize: 0,
+      } });
+    }
+    const children = useMediaGroupStore().orderedGroups;
+    expect(children).toHaveLength(2);
+    for (const child of children) expect(useMediaOptionsStore().getOptions(child.id)).toEqual(options);
+    await queued;
+    expect(download).toHaveBeenCalledTimes(2);
+    for (const [, args] of download.mock.calls) expect(args).toMatchObject({ items: [{ format: options }] });
+  });
+
+  it('keeps the complete checklist and selection available after expansion is rejected', async () => {
+    const expand = vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue('retry');
+    installTauriMock({ media_playlist_expand: expand });
+    const group = createPlaylistGroup('retry', 3);
+    useMediaGroupStore().createGroup(group);
+    useMediaStateStore().setGroupState(group.id, MediaState.playlistSelection);
+    useMediaOptionsStore().setPlaylistSelection(group, [0, 2]);
+    const entries = [...group.entries!];
+    await expect(useMediaStore().downloadPlaylistSelection(group.id, { rows: [], positions: [0, 2] })).rejects.toThrow('unavailable');
+    expect(useMediaGroupStore().findGroupById(group.id)?.entries).toEqual(entries);
+    expect(useMediaStateStore().getGroupState(group.id)).toBe(MediaState.playlistSelection);
+    expect(useMediaOptionsStore().getPlaylistSelection(group)).toEqual([0, 2]);
+    await useMediaStore().expandPlaylistGroup(group.id, { rows: [], positions: [0, 2] });
+    expect(expand).toHaveBeenLastCalledWith('media_playlist_expand', expect.objectContaining({ entries: [entries[0], entries[2]] }));
+  });
+
+  it('settles every capture waiter when playlist metadata arrives', async () => {
+    const media = useMediaStore();
+    media.createCaptureGroup('waiting', 'https://example.com/list');
+    const settled = vi.fn();
+    const first = media.prepareCaptureGroup('waiting').then(settled);
+    const second = media.prepareCaptureGroup('waiting').then(settled);
+    const group = createPlaylistGroup('waiting', 2);
+    media.processMediaAddPayload({ groupId: group.id, total: 2, item: group.items.leader });
+    await flushPromises();
+    expect(settled).toHaveBeenCalledTimes(2);
+    await Promise.all([first, second]);
+  });
+  it.each(['read failure', 'fatal read', 'delete'] as const)('rejects and cleans all capture waiters on %s', async (failure) => {
+    installTauriMock({ media_info: () => {
+      throw new Error('Read failed');
+    } });
+    const media = useMediaStore();
+    media.createCaptureGroup('waiting', 'https://example.com/list');
+    const rejected = vi.fn();
+    void media.prepareCaptureGroup('waiting').catch(rejected);
+    void media.prepareCaptureGroup('waiting').catch(rejected);
+    if (failure === 'read failure') await media.fetchMediaInfoForGroup('waiting').catch(() => {});
+    else if (failure === 'fatal read') {
+      const group = useMediaGroupStore().findGroupById('waiting')!;
+      useMediaDiagnosticsStore().processMediaFatalPayload({ id: Object.keys(group.items)[0], groupId: 'waiting', message: 'Read failed', exitCode: 1, internal: true, details: null, timestamp: 0 });
+    } else await media.deleteGroup('waiting');
+    await flushPromises();
+    expect(rejected).toHaveBeenCalledTimes(2);
+    // A later wait must reject immediately, rather than leaking behind a completed failure/delete.
+    void media.prepareCaptureGroup('waiting').catch(rejected);
+    await flushPromises();
+    expect(rejected).toHaveBeenCalledTimes(3);
+  });
+
   it('downloads all photos from cached capture metadata without refetching or stopping capture', async () => {
     const writes: unknown[] = [];
     installTauriMock({

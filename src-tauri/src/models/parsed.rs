@@ -157,6 +157,14 @@ pub struct ParsedPlaylist {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaylistEntry {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub filesize: Option<u64>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub title: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub duration: Option<f64>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub thumbnail: Option<String>,
   pub video_url: String,
   pub index: usize,
 }

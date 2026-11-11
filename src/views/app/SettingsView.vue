@@ -42,7 +42,7 @@
 import { computed, onBeforeUnmount, ref, toRaw, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
-import { Check, KeyRound, Settings2, SlidersHorizontal } from '@lucide/vue';
+import { Check, Info, KeyRound, Settings2, SlidersHorizontal } from '@lucide/vue';
 import { useSettingsStore } from '../../stores/settings';
 import { useToastStore } from '../../stores/toast';
 import { useTheme } from '../../composables/useTheme.ts';
@@ -59,6 +59,7 @@ const tabs = computed(() => [
   { icon: Settings2, label: t('prefs.tabs.general'), to: { name: 'settings.general' }, active: route.name === 'settings.general' },
   { icon: KeyRound, label: t('prefs.tabs.logins'), to: { name: 'settings.logins' }, active: route.name === 'settings.logins' },
   { icon: SlidersHorizontal, label: t('prefs.tabs.advanced'), to: { name: 'settings.advanced' }, active: route.name === 'settings.advanced' },
+  { icon: Info, label: t('about.title'), to: { name: 'settings.about' }, active: route.name === 'settings.about' },
 ]);
 
 const draft = ref<Settings>(structuredClone<Settings>(toRaw(settingsStore.settings)));

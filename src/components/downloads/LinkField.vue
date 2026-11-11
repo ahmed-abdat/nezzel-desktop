@@ -22,8 +22,8 @@
         @paste="onNativePaste" />
       <Kbd v-if="!url" class="hidden sm:inline-flex">{{ isMac ? t('shell.keys.pasteMac') : t('shell.keys.paste') }}</Kbd>
       <!-- Clipboard state as a small indicator, not placeholder text. -->
-      <tooltip :content="watchClipboard.enabled ? t('downloads.field.watchOnTip') : t('downloads.field.watchOffTip')">
-        <span class="inline-flex size-5 shrink-0 items-center justify-center" :aria-label="watchClipboard.enabled ? t('downloads.field.watchOnTip') : t('downloads.field.watchOffTip')" role="img">
+      <tooltip :content="clipboardTip">
+        <span class="inline-flex size-5 shrink-0 items-center justify-center" :aria-label="clipboardTip" role="img">
           <ClipboardCheck v-if="watchClipboard.enabled" class="size-3.5 text-primary" aria-hidden="true" />
           <ClipboardX v-else class="size-3.5 text-muted-foreground/60" aria-hidden="true" />
         </span>
@@ -92,7 +92,7 @@
 <script setup lang="ts">
 import { Input, type InputApi } from '../ui/input';
 import { readClipboardText } from '../../tauri/clipboard';
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { ClipboardCheck, ClipboardX, Ellipsis, FileUp, Filter, Link } from '@lucide/vue';
@@ -103,11 +103,26 @@ import Kbd from '@/components/ui/kbd/Kbd.vue';
 import { usePlatform } from '../../composables/usePlatform';
 import { useToastStore } from '../../stores/toast';
 import { useLinkIntake } from '../../composables/useLinkIntake';
+import { useCaptureShortcut } from '../../composables/useCaptureShortcut';
+import { useSettingsStore } from '../../stores/settings';
+import { shortcutLabel } from '../../helpers/shortcut';
 
 const { t } = useI18n();
 const router = useRouter();
 const { url, placeholder, canSubmit, submit, importFile, hasActiveInputFilters, watchClipboard } = useLinkIntake();
 const { isMac } = usePlatform();
+const capture = useCaptureShortcut();
+const settings = useSettingsStore();
+const clipboardTip = computed(() => {
+  const state = watchClipboard.enabled ? t('downloads.field.watchOnTip') : t('downloads.field.watchOffTip');
+  const shortcut = settings.settings.input.globalShortcuts && !capture.failed && capture.active;
+  return t('downloads.field.clipboardTip', {
+    state,
+    keys: shortcut
+      ? t('downloads.field.captureShortcut', { shortcut: shortcutLabel(shortcut, isMac.value) })
+      : t('downloads.field.captureSettings'),
+  });
+});
 
 const input = ref<InputApi | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -204,16 +219,26 @@ function onDocumentClick(event: MouseEvent) {
 async function paste() {
   input.value?.focus();
   const text = await readClipboardText();
-  if (text != null) url.value = text;
+  if (text != null) url.value = text.replace(/[\r\n]+/g, ' ');
   else useToastStore().showToast(t('feedback.clipboardFailed'), { style: 'error' });
 }
 
 /** WebKitGTK on some Wayland desktops hands the field an empty paste; read the clipboard ourselves then. */
 function onNativePaste(event: ClipboardEvent) {
-  if (event.clipboardData?.getData('text/plain')) return;
+  const text = event.clipboardData?.getData('text/plain');
+  if (text) {
+    if (/[\r\n]/.test(text)) {
+      event.preventDefault();
+      const field = event.target as HTMLInputElement;
+      const start = field.selectionStart ?? url.value.length;
+      const end = field.selectionEnd ?? start;
+      url.value = url.value.slice(0, start) + text.replace(/[\r\n]+/g, ' ') + url.value.slice(end);
+    }
+    return;
+  }
   event.preventDefault();
   void readClipboardText().then((text) => {
-    if (text) url.value = text;
+    if (text) url.value = text.replace(/[\r\n]+/g, ' ');
   });
 }
 

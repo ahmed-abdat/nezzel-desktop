@@ -17,6 +17,9 @@ const dispatchMediaInfoFetch = vi.fn();
 const addUrlBatch = vi.fn();
 const hasRecentCapture = vi.fn(() => false);
 const addUrlBatchAndDownload = vi.fn();
+const downloadPreparedGroup = vi.fn();
+const captureShortcut = reactive({ active: 'CommandOrControl+Alt+K' as string | null, failed: false });
+vi.mock('../../src/composables/useCaptureShortcut', () => ({ useCaptureShortcut: () => captureShortcut }));
 const showToast = vi.fn();
 const toggleClipboard = vi.fn();
 const markSeen = vi.fn();
@@ -29,6 +32,7 @@ const settingsState = reactive({
   input: {
     autoFillClipboard: false,
     preferVideoInMixedLinks: false,
+    globalShortcuts: true,
   },
   inputFilters: createDefaultInputFilterSettings(),
 });
@@ -39,6 +43,7 @@ vi.mock('../../src/stores/media/media', () => ({
     addUrlBatch,
     hasRecentCapture,
     addUrlBatchAndDownload,
+    downloadPreparedGroup,
   }),
 }));
 
@@ -86,6 +91,9 @@ describe('LinkField', () => {
     hasRecentCapture.mockReset().mockReturnValue(false);
     addUrlBatch.mockResolvedValue([]);
     addUrlBatchAndDownload.mockReset();
+    downloadPreparedGroup.mockReset().mockResolvedValue('downloaded');
+    captureShortcut.active = 'CommandOrControl+Alt+K';
+    captureShortcut.failed = false;
     showToast.mockReset();
     toggleClipboard.mockReset();
     markSeen.mockReset();
@@ -160,6 +168,76 @@ describe('LinkField', () => {
     const sheet = useDownloadSheetStore();
     expect(sheet.open).toBe(true);
     expect(sheet.groupId).toBe('group-1');
+  });
+
+  it.each(['native', 'backend'])('preserves all links in a multiline %s paste', async (source) => {
+    const text = 'https://example.com/a\r\nhttps://example.com/b';
+    const { wrapper } = await mountField();
+    if (source === 'native') await wrapper.get('#queue-url-input').trigger('paste', { clipboardData: { getData: () => text } });
+    else {
+      invoke.mockResolvedValue(text);
+      await (wrapper.vm as unknown as { paste: () => Promise<void> }).paste();
+    }
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+    expect(addUrlBatch).toHaveBeenCalledWith(['https://example.com/a', 'https://example.com/b']);
+    wrapper.unmount();
+  });
+
+  it.each([
+    ['en', 'Copied-link card: off. Quick download from any app: Ctrl+Alt+K', 'Copied-link card: on. Set up quick download in Settings → Keyboard shortcuts'],
+    ['ar', 'بطاقة الروابط المنسوخة: معطّلة؛ تنزيل سريع من أي تطبيق: Ctrl+Alt+K', 'بطاقة الروابط المنسوخة: مفعّلة؛ اضبط التنزيل السريع في الإعدادات ← اختصارات لوحة المفاتيح'],
+  ] as const)('localizes the clipboard state and shortcut sentence together in %s', async (locale, active, failed) => {
+    const oldLocale = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const { wrapper } = await mountField();
+    try {
+      const indicator = () => wrapper.get('[role="img"]').attributes('aria-label');
+      expect(indicator()).toBe(active);
+      captureShortcut.failed = true;
+      watchClipboardState.enabled = true;
+      await flushPromises();
+      expect(indicator()).toBe(failed);
+    } finally {
+      wrapper.unmount();
+      i18n.global.locale.value = oldLocale;
+    }
+  });
+
+  it('offers to download only the dropped batch', async () => {
+    addUrlBatch.mockResolvedValue(['drop-a', 'drop-b']);
+    await useDragDropStore().handleDrop({ urls: ['https://example.com/a', 'https://example.com/b'], files: [] });
+    const options = showToast.mock.calls.at(-1)?.[1];
+    expect(options.action?.label).toBe('Download all');
+    await options.action.run();
+    expect(downloadPreparedGroup.mock.calls.map(call => call[0])).toEqual(['drop-a', 'drop-b']);
+  });
+
+  it.each([
+    ['en', 1, '1 playlist needs you to pick items'],
+    ['en', 2, '2 playlists need you to pick items'],
+    ['ar', 1, 'قائمة تشغيل واحدة تحتاج إلى اختيار عناصرها'],
+    ['ar', 2, 'قائمتا تشغيل تحتاجان إلى اختيار عناصرهما'],
+    ['fr', 1, '1 playlist nécessite de choisir des éléments'],
+    ['fr', 2, '2 playlists nécessitent de choisir des éléments'],
+  ] as const)('reports pending playlist selection in %s (%i)', async (locale, count, message) => {
+    const oldLocale = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    try {
+      const playlists = Array.from({ length: count }, (_, i) => `playlist-${i}`);
+      addUrlBatch.mockResolvedValue(['video', ...playlists, 'failed']);
+      downloadPreparedGroup.mockImplementation(async (id: string) => {
+        if (id === 'failed') throw new Error('download failed');
+        return id === 'video' ? 'downloaded' : 'playlist';
+      });
+      await useDragDropStore().handleDrop({ urls: ['https://example.com/a', 'https://example.com/b'], files: [] });
+      await showToast.mock.calls.at(-1)![1].action.run();
+      expect(downloadPreparedGroup).toHaveBeenCalledTimes(count + 2);
+      expect(showToast).toHaveBeenCalledWith(i18n.global.t('feedback.downloadFailed'), { style: 'error' });
+      expect(showToast).toHaveBeenCalledWith(message, { style: 'info' });
+    } finally {
+      i18n.global.locale.value = oldLocale;
+    }
   });
 
   it.each([

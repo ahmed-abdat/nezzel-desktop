@@ -327,6 +327,22 @@ pub enum CookieSource {
 }
 
 impl CookieSource {
+  /// A fixed Settings browser is implicit: export only for known login sites. An explicit row
+  /// choice (including a login retry) and a manual cookie file retain their existing consent.
+  pub fn for_site(
+    auth: &AuthSettings,
+    browser: Option<&str>,
+    host: &str,
+  ) -> Result<Self, &'static str> {
+    if browser.is_none()
+      && manual_file(auth).is_none()
+      && !super::browser_cookies::known_login_host(host)
+    {
+      return Ok(Self::Anonymous);
+    }
+    Self::select(auth, browser)
+  }
+
   /// The row's login (`browser`, consented) wins, then a manual file, then a browser picked in Settings.
   /// `Err` when the browser is one yt-dlp cannot read.
   pub fn select(auth: &AuthSettings, browser: Option<&str>) -> Result<Self, &'static str> {

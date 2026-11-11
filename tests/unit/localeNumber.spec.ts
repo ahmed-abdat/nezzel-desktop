@@ -29,7 +29,9 @@ describe('UI numbers use Latin digits in every locale', () => {
     ['en', 412_000_000, /^412 MB$/],
     ['en', 1_900_000_000, /^1\.9 GB$/],
     ['en', 900, /^900 byte/],
-    ['ar', 412_000_000, /^412\s?ميغابايت$/],
+    ['ar', 412_000_000, /^412 MB$/],
+    ['ar-MR', 1_900_000_000, /^1\.9 GB$/],
+    ['fr', 412_000_000, /^412\sMo$/],
   ])('%s size %d', (locale, bytes, expected) => {
     const text = formatSize(bytes, locale);
     expect(text).toMatch(expected);
@@ -38,6 +40,6 @@ describe('UI numbers use Latin digits in every locale', () => {
 
   it('speed reads per second and keeps Latin digits in Arabic', () => {
     expect(formatSpeed(21_400_000, 'en')).toBe('21.4 MB/s');
-    expect(formatSpeed(21_400_000, 'ar')).toMatch(/^21[.٫]4\s?ميغابايت\/ث$/);
+    expect(formatSpeed(3_400_000, 'ar')).toBe('3.4 MB/s');
   });
 });

@@ -8,7 +8,6 @@
     <settings-performance v-model="settings" />
     <settings-sponsor-block v-model="settings" />
     <settings-app v-model="settings" />
-    <settings-about-tab />
     <settings-developer v-model="settings" />
 
     <div class="mt-10 mb-4">
@@ -21,7 +20,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import { Button } from '@/components/ui/button';
-import SettingsAboutTab from './SettingsAboutTab.vue';
 import SettingsApp from '../../../components/settings/SettingsApp.vue';
 import SettingsDeveloper from '../../../components/settings/SettingsDeveloper.vue';
 import SettingsNetwork from '../../../components/settings/SettingsNetwork.vue';

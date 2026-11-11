@@ -1,18 +1,21 @@
 <template>
-  <footer class="flex h-7 shrink-0 items-center gap-3 border-t border-hairline bg-sidebar px-4 text-[11.5px] text-muted-foreground" :aria-label="t('shell.status.label')">
+  <footer class="flex min-h-7 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-hairline bg-sidebar px-4 py-1 text-[11.5px] text-muted-foreground" :aria-label="t('shell.status.label')">
     <!-- Start: live state. One polite region so screen readers hear "2 downloading" without the speed ticking. -->
     <span class="inline-flex min-w-0 items-center gap-1.5" role="status">
       <span class="size-1.5 shrink-0 rounded-full" :class="dotCls" aria-hidden="true" />
       <span class="tnum truncate">{{ stateText }}</span>
       <template v-if="downloading.length && totalSpeed">
         <span class="nz-sep" aria-hidden="true" />
-        <bdi class="tnum" aria-hidden="true">{{ speed(totalSpeed) }}</bdi>
+        <bdi dir="ltr" class="tnum" aria-hidden="true">{{ speed(totalSpeed) }}</bdi>
       </template>
       <template v-if="downloading.length && failed.length">
         <span class="nz-sep" aria-hidden="true" />
         <span class="tnum text-destructive">{{ t('shell.status.failed', { n: n(failed.length) }, failed.length) }}</span>
       </template>
     </span>
+    <Button v-if="binaries.needsRepair" as-child variant="outline" size="sm">
+      <RouterLink to="/install"><Wrench />{{ t('toolsRepair.action') }}</RouterLink>
+    </Button>
 
     <!-- End: where files go. Click opens it in Finder/Explorer; the tooltip shows the full path. -->
     <tooltip v-if="downloadDir" :content="downloadDir" side="top">
@@ -32,7 +35,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { FolderOpen } from '@lucide/vue';
+import { FolderOpen, Wrench } from '@lucide/vue';
+import { RouterLink } from 'vue-router';
+import { Button } from '../ui/button';
+import { useBinariesStore } from '../../stores/binaries';
 import Tooltip from '@/components/ui/tooltip/Tooltip.vue';
 import { useDownloadBuckets } from '../../composables/useDownloadBuckets';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
@@ -47,17 +53,20 @@ const { count: n, speed } = useLocaleNumber();
 const { downloading, failed, reading } = useDownloadBuckets();
 const progressStore = useMediaProgressStore();
 const settingsStore = useSettingsStore();
+const binaries = useBinariesStore();
 const { openPath } = useOpener();
 
 const totalSpeed = computed(() => downloading.value.reduce((sum, group) => sum + (progressStore.findGroupProgress(group.id)?.speedBps ?? 0), 0));
 
 const stateText = computed(() => {
+  if (binaries.needsRepair) return t('toolsRepair.unavailable');
   if (downloading.value.length) return t('shell.status.downloading', { n: n(downloading.value.length) }, downloading.value.length);
   if (reading.value.length) return t('shell.status.reading', { n: n(reading.value.length) }, reading.value.length);
   if (failed.value.length) return t('shell.status.failed', { n: n(failed.value.length) }, failed.value.length);
   return t('shell.status.ready');
 });
 const dotCls = computed(() => {
+  if (binaries.needsRepair) return 'bg-destructive';
   if (downloading.value.length) return 'bg-primary animate-pulse motion-reduce:animate-none';
   if (reading.value.length) return 'bg-primary/60 animate-pulse motion-reduce:animate-none';
   if (failed.value.length) return 'bg-destructive';

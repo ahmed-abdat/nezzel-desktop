@@ -5,7 +5,6 @@
       <img :src="nezzelMark" alt="" class="size-16" />
       <h2 class="mt-5 text-[22px] font-semibold tracking-tight text-balance rtl:tracking-normal">{{ t('downloads.empty.title') }}</h2>
       <p class="mt-1.5 max-w-md text-[13.5px] text-muted-foreground text-balance">{{ t('downloads.empty.body') }}</p>
-      <Button size="lg" class="mt-6" @click="focusField">{{ t('downloads.empty.cta') }}</Button>
       <!-- What Nezzel can do: three ways in, each with its real key. -->
       <!-- Equal columns, top-aligned; icon | text grid so every hint starts at the same inline offset. -->
       <ul class="mt-10 grid w-full max-w-xl grid-cols-1 items-start gap-x-6 gap-y-3 border-t border-hairline pt-5 text-start text-[12.5px] text-muted-foreground sm:grid-cols-3">
@@ -90,14 +89,24 @@
         </ul>
       </section>
 
-      <section v-if="shownActive.length" aria-labelledby="ledger-active">
-        <selection-bar v-if="selectionCount && firstSection === 'active'" :groups="selectedGroups" />
-        <header v-else :class="headCls">
-          <h2 id="ledger-active" class="flex-1">{{ t('downloads.sections.active') }} <span class="tnum ms-1 font-normal">{{ count(shownActive.length) }}</span></h2>
+      <section v-if="shownNeedsYou.length" aria-labelledby="ledger-needs-you">
+        <selection-bar v-if="selectionCount && firstSection === 'needsYou'" :groups="selectedGroups" />
+        <header v-else :class="[headCls, 'bg-amber-soft! text-amber-foreground!']">
+          <h2 id="ledger-needs-you" class="flex-1">{{ t('downloads.sections.needsYou') }} <span class="tnum ms-1 font-normal">{{ count(shownNeedsYou.length) }}</span></h2>
           <template v-if="shownReady.length > 1">
             <span class="font-normal">{{ t('downloads.summary.ready', { n: count(shownReady.length) }, shownReady.length) }}</span>
             <Button variant="ghost" class="-my-1 h-6 px-2 text-primary" :disabled="isStarting" @click="downloadAllReady">{{ t('downloads.summary.downloadAll') }}</Button>
           </template>
+        </header>
+        <ul>
+          <download-row v-for="row in shownNeedsYou" :key="row.id" :group="row.group" />
+        </ul>
+      </section>
+
+      <section v-if="shownActive.length" aria-labelledby="ledger-active">
+        <selection-bar v-if="selectionCount && firstSection === 'active'" :groups="selectedGroups" />
+        <header v-else :class="headCls">
+          <h2 id="ledger-active" class="flex-1">{{ t('downloads.sections.active') }} <span class="tnum ms-1 font-normal">{{ count(shownActive.length) }}</span></h2>
         </header>
         <ul>
           <download-row v-for="row in shownActive" :key="row.id" :group="row.group" />
@@ -185,11 +194,11 @@ const brandName = 'Nezzel';
 const hints = computed(() => {
   const input = settingsStore.settings.input;
   // The OS may have given Quick download the fallback combo; show what actually works.
-  const accelerator = input?.globalShortcuts && !captureShortcut.failed ? (captureShortcut.active ?? input.captureShortcut) : '';
+  const accelerator = input?.globalShortcuts && !captureShortcut.failed ? captureShortcut.active : null;
   const quick = accelerator ? shortcutKeys(accelerator, isMac.value) : [];
   return [
     { key: 'paste', icon: ClipboardPaste, textKey: 'downloads.empty.hintPaste', keys: shortcutKeys('CommandOrControl+V', isMac.value) },
-    { key: 'quick', icon: Zap, textKey: 'downloads.empty.hintQuick', keys: quick },
+    { key: 'quick', icon: Zap, textKey: quick.length ? 'downloads.empty.hintQuick' : 'downloads.field.captureSettings', keys: quick },
     { key: 'copied', icon: ClipboardCheck, textKey: 'downloads.empty.hintCopied', keys: [] as string[] },
   ];
 });
@@ -224,13 +233,14 @@ watch(() => view.value.status !== 'all' && statusCounts.value[view.value.status]
 /** Rows hidden by "Clear finished" still count until the undo window closes, so onboarding doesn't cover the toast. */
 const hasAny = computed(() => active.value.length + finished.value.length + hidden.ids.size > 0);
 const shownRows = computed(() => shown(view.value));
-const shownActive = computed(() => shownRows.value.filter(row => row.status === 'active'));
-const shownFailed = computed(() => shownRows.value.filter(row => row.status === 'failed'));
-const shownFinished = computed(() => shownRows.value.filter(row => row.status === 'done'));
+const shownNeedsYou = computed(() => shownRows.value.filter(row => row.needsAttention));
+const shownActive = computed(() => shownRows.value.filter(row => row.status === 'active' && !row.needsAttention));
+const shownFailed = computed(() => shownRows.value.filter(row => row.status === 'failed' && !row.needsAttention));
+const shownFinished = computed(() => shownRows.value.filter(row => row.status === 'done' && !row.needsAttention));
 const shownCount = computed(() => shownRows.value.length);
 /** "Download all" acts only on the rows the current filter and search show. */
 const shownReady = computed(() => {
-  const ids = new Set(shownActive.value.map(row => row.id));
+  const ids = new Set(shownNeedsYou.value.map(row => row.id));
   return ready.value.filter(group => ids.has(group.id));
 });
 
@@ -254,10 +264,10 @@ function clearSearch() {
 
 const selection = useDownloadSelection();
 const selectionCount = selection.count;
-const visibleOrder = computed(() => [...shownFailed.value, ...shownActive.value, ...shownFinished.value].map(row => row.id));
+const visibleOrder = computed(() => [...shownFailed.value, ...shownNeedsYou.value, ...shownActive.value, ...shownFinished.value].map(row => row.id));
 watch(visibleOrder, ids => selection.setOrder(ids), { immediate: true });
-const selectedGroups = computed(() => [...shownFailed.value, ...shownActive.value, ...shownFinished.value].filter(row => selection.isSelected(row.id)).map(row => row.group));
-const firstSection = computed(() => (shownFailed.value.length ? 'failed' : shownActive.value.length ? 'active' : 'finished'));
+const selectedGroups = computed(() => [...shownFailed.value, ...shownNeedsYou.value, ...shownActive.value, ...shownFinished.value].filter(row => selection.isSelected(row.id)).map(row => row.group));
+const firstSection = computed(() => (shownFailed.value.length ? 'failed' : shownNeedsYou.value.length ? 'needsYou' : shownActive.value.length ? 'active' : 'finished'));
 const inTextField = (el: EventTarget | null) => el instanceof HTMLElement && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
 
 /** Cmd/Ctrl+F jumps to the search field, like a native list. Cmd/Ctrl+A selects all rows, Esc clears. */
@@ -282,10 +292,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onWindowKey);
   selection.clear();
 });
-
-function focusField() {
-  document.getElementById('queue-url-input')?.focus();
-}
 
 async function downloadAllReady() {
   isStarting.value = true;

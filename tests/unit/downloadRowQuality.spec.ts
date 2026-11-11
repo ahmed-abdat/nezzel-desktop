@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils';
+import { mount, flushPromises } from '@vue/test-utils';
 import { defineComponent, ref } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { describe, expect, it, vi } from 'vitest';
@@ -19,10 +19,92 @@ import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaOptionsStore } from '../../src/stores/media/options';
 import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
 import { TrackType, type MediaFormat } from '../../src/tauri/types/media';
+import { useUiPrefs } from '../../src/composables/useUiPrefs';
+import { useToastStore } from '../../src/stores/toast';
+import { useMediaSizeStore } from '../../src/stores/media/size';
 
 const f = (id: string, height: number, fps: number): MediaFormat => ({ id, height, fps, audioCodecs: ['mp4a'], videoCodecs: ['h264'] });
 
+describe('inspector quick choices', () => {
+  async function inspectorAt(heights: number[]) {
+    const formats = heights.map(height => f(`v${height}`, height, 30));
+    const item = { id: 'choice-item', isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats, filesize: 0 };
+    useMediaGroupStore().createGroup({ ...item, id: 'choices', title: 'Clip', mediaKind: 'video', total: 1, processed: 1, errored: 0, isCombined: false, items: { [item.id]: item } });
+    useMediaStateStore().setGroupState('choices', MediaState.configure);
+    useDownloadSheetStore().show('choices');
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const panel = mount(DownloadInspector, { global: { plugins: [router, i18n] } });
+    await flushPromises();
+    return panel;
+  }
+
+  it('names the smaller height and explains when best is already the smallest format', async () => {
+    const panel = await inspectorAt([720]);
+    try {
+      const small = panel.get('[role="radio"][value="small"]');
+      expect(small.text()).toContain('720p');
+      expect(small.text()).toContain('No smaller');
+      expect(small.attributes('disabled')).toBeDefined();
+    } finally { panel.unmount(); }
+  });
+
+  it.each(['en', 'ar', 'fr'] as const)('isolates the reported smaller size beside its choice in %s', async (locale) => {
+    const previousLocale = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const panel = await inspectorAt([1080, 720]);
+    try {
+      useMediaSizeStore().processMediaSizePayload({ item: { id: 'choice-item', filesize: 2097152 }, format: { trackType: TrackType.both, height: 720, fps: 30 } } as never);
+      await nextTick();
+      expect(panel.get('[role="radio"][value="small"] bdi[dir=ltr]').text()).toMatch(locale === 'fr' ? /^2,1\sMo$/ : /^2\.1 MB$/);
+    } finally {
+      panel.unmount();
+      i18n.global.locale.value = previousLocale;
+    }
+  });
+
+  it('explains how to undo remembering a choice only once', async () => {
+    const prefs = useUiPrefs();
+    prefs.skipOptionsSheet.value = false;
+    prefs.rememberNoticeShown.value = false;
+    const panel = await inspectorAt([1080, 720]);
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        useDownloadSheetStore().show('choices');
+        await nextTick();
+        await panel.get('[role="checkbox"]').trigger('click');
+        await panel.findAll('button').find(button => button.text() === 'Download')!.trigger('click');
+        await flushPromises();
+      }
+      expect(useToastStore().toasts.filter(toast => toast.message.includes('Settings'))).toHaveLength(1);
+      expect(prefs.skipOptionsSheet.value).toBe(true);
+    } finally {
+      panel.unmount();
+      prefs.skipOptionsSheet.value = false;
+      prefs.rememberNoticeShown.value = false;
+    }
+  });
+});
+
 describe('row quality label', () => {
+  it.each(['urlNotSupported', 'drmProtected', 'networkNameResolutionFailed'])('offers only useful recovery for %s', async (code) => {
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'refusal', url: 'https://example.com/v', title: 'Clip', mediaKind: 'video', total: 1, processed: 1, errored: 1, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'refusal-item', isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaStateStore().setGroupState('refusal', MediaState.error);
+    useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id: 'refusal-item', groupId: 'refusal', level: 'error', code, component: null, message: '', raw: '', timestamp: 1 });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const row = mount(DownloadRow, { props: { group: groups.findGroupById('refusal')! }, global: { plugins: [router, i18n] } });
+    try {
+      const labels = row.findAll('button').map(button => button.text());
+      expect(labels.some(label => label.includes('Try again'))).toBe(code === 'networkNameResolutionFailed');
+      if (code === 'urlNotSupported') {
+        const open = row.findAll('button').find(button => button.text().includes('Open in browser'));
+        expect(open).toBeDefined();
+      }
+    } finally { row.unmount(); }
+  });
   it.each([
     ['best', { height: 1080, fps: 60 }, '1080p60'],
     ['small', { height: 720, fps: 60 }, '720p60'],
@@ -147,29 +229,70 @@ describe('inspector playlist selection', () => {
   it('lets a captured playlist choose a subset before any download', async () => {
     const expand = vi.fn();
     const download = vi.fn();
-    installTauriMock({ media_playlist_expand: expand, media_download: download });
+    const size = vi.fn();
+    installTauriMock({ media_playlist_expand: expand, media_download: download, media_size: size });
     const entries = [{ index: 0, videoUrl: 'https://example.com/one' }, { index: 1, videoUrl: 'https://example.com/two' }];
     const item = { id: 'playlist-leader', isLeader: true, url: 'https://example.com/list', audioCodecs: [], formats: [], filesize: 0, entries };
     const groups = useMediaGroupStore();
     groups.createGroup({ ...item, id: 'capture-playlist', title: 'Playlist', total: 2, processed: 0, errored: 0, isCombined: false, items: { [item.id]: item } });
-    useMediaStateStore().setGroupState('capture-playlist', MediaState.playlistSelection);
-    useDownloadSheetStore().show('capture-playlist');
+    useMediaStateStore().setGroupState('capture-playlist', MediaState.fetching);
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
     await router.push('/');
+    const row = mount(DownloadRow, { props: { group: groups.findGroupById('capture-playlist')! }, global: { plugins: [router, i18n] } });
+    await flushPromises();
+    useDownloadSheetStore().show('capture-playlist');
     const inspector = mount(DownloadInspector, { global: { plugins: [router, i18n] } });
     try {
-      await inspector.get('#inspector-playlist-selection-start').setValue('1');
-      await inspector.get('#inspector-playlist-selection-end').setValue('1');
-      const apply = inspector.findAll('button').find(button => button.text() === 'Download selected items');
+      await nextTick();
+      useSettingsStore().settings.performance.autoLoadSize = true;
+      useMediaOptionsStore().setOptions('capture-playlist', { trackType: TrackType.both, height: 720 });
+      useMediaStateStore().setGroupState('capture-playlist', MediaState.playlistSelection);
+      await flushPromises();
+      expect(useDownloadSheetStore().open).toBe(true);
+      expect(expand).not.toHaveBeenCalled();
+      expect(download).not.toHaveBeenCalled();
+      expect(size).not.toHaveBeenCalled();
+      await inspector.get('#inspector-playlist-selection-item-1').trigger('click');
+      expect(row.find('[role=region]').exists()).toBe(false);
+      expect(row.text()).toContain('1 of 2 item selected');
+      expect(inspector.get('#inspector-playlist-selection-item-1').attributes('aria-checked')).toBe('false');
+      expect(inspector.findAll('button').filter(button => button.text().startsWith('Download'))).toHaveLength(1);
+      const none = inspector.findAll('button').find(button => button.text() === 'Select none')!;
+      await none.trigger('click');
+      const emptyAction = inspector.findAll('button').find(button => button.text() === 'Download 0 videos')!;
+      expect(emptyAction.attributes('disabled')).toBeDefined();
+      expect(row.text()).toContain('No items selected');
+      await inspector.get('#inspector-playlist-selection-item-0').trigger('click');
+      const apply = inspector.findAll('button').find(button => button.text() === 'Download 1 video');
       await apply!.trigger('click');
       expect(expand).toHaveBeenCalledWith('media_playlist_expand', expect.objectContaining({ groupId: 'capture-playlist', entries: [entries[0]] }));
       expect(download).not.toHaveBeenCalled();
     } finally {
+      row.unmount();
       inspector.unmount();
     }
   });
 });
 describe('row queue label', () => {
+  it('keeps the Arabic remaining-time clock in LTR order beside Latin speed units', async () => {
+    const previousLocale = i18n.global.locale.value;
+    i18n.global.locale.value = 'ar';
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'arabic-progress', url: 'https://example.com/v', total: 1, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'item', isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaStateStore().setGroupState('arabic-progress', MediaState.downloading);
+    useMediaProgressStore().processMediaProgressPayload({ id: 'item', groupId: 'arabic-progress', category: ProgressCategory.video, percentage: 42, speedBps: 3_400_000, etaSecs: 75 });
+    useMediaProgressStore().processMediaProgressStagePayload({ id: 'item', groupId: 'arabic-progress', stage: ProgressStage.downloading });
+    const host = mount(defineComponent({ setup: () => useDownloadRow(ref(groups.findGroupById('arabic-progress')!)), render: () => null }), { global: { plugins: [i18n] } });
+    try {
+      const vm = host.vm as unknown as { metaLine: string[] };
+      expect(vm.metaLine).toContain('3.4 MB/s');
+      expect(vm.metaLine).toContain('\u20661:15\u2069 متبقٍّ');
+    } finally {
+      host.unmount();
+      i18n.global.locale.value = previousLocale;
+    }
+  });
   it.each([[false, 'en', 'Queued', 'Initializing'], [true, 'ar', 'في الانتظار', 'جارٍ التهيئة'], [false, 'fr', 'En attente', 'Initialisation']] as const)('labels a waiting row until a job starts (playlist: %s, locale: %s)', async (combined, locale, queued, initializing) => {
     const previousLocale = i18n.global.locale.value;
     i18n.global.locale.value = locale;

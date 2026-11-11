@@ -246,6 +246,10 @@ export interface MediaItem {
 }
 
 export interface EntryItem {
+  filesize?: number;
+  title?: string;
+  duration?: number;
+  thumbnail?: string;
   index: number;
   videoUrl: string;
 }
