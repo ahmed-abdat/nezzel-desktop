@@ -1,4 +1,11 @@
 {
+  "closeNote": {
+    "title": "Nezzel continua em execução",
+    "bodyMac": "Nezzel e seus downloads continuam ao fechar a janela.",
+    "hintMac": "Reabra o Nezzel pelo Dock, Spotlight ou pelo ícone na barra de menus.",
+    "quit": "Sair do Nezzel",
+    "gotIt": "Entendi"
+  },
   "toolsUpdate": {
     "stale": "O Nezzel não consegue atualizar as ferramentas de download há pelo menos 7 dias. Alguns sites podem não funcionar",
     "tryNow": "Tentar agora",
@@ -1227,5 +1234,21 @@
       "saved": "Filtros de entrada salvos!",
       "error": "Não foi possível salvar os filtros de entrada. {error}"
     }
+  },
+  "downloads": {
+    "list": {
+      "failedNotice": "{n} download com falha | {n} downloads com falha",
+      "viewFailed": "Ver",
+      "reportFailed": "Relatar todos",
+      "clearFailed": "Limpar falhas"
+    },
+    "selection": {
+      "report": "Relatar"
+    }
+  },
+  "report": {
+    "batchTitle": "Relatar {n} download com falha | Relatar {n} downloads com falha",
+    "includeLinks": "Incluir todos os links",
+    "includeLinksHelp": "Os links nos ajudam a reproduzir o problema. Se desmarcado, nenhum link de download será enviado."
   }
 }

@@ -54,6 +54,90 @@ pub const SITE: &str = "site:";
 pub const SITE_IN: &str = "sitein:";
 pub const SITE_FAIL: &str = "sitefail:";
 pub const OPTIONS_SITE: &str = "opt:";
+pub const FAIL_CODE: &str = "failcode:";
+/// Fixed app error types (localized by `errors.runner`), never engine text or a token derived from it.
+/// New codes require an explicit allow-list update here and on the desktop server.
+pub const FAILURE_CODES: &[&str] = &[
+  "browserAppBound",
+  "browserLoginFailed",
+  "fileAddressRefused",
+  "fileBusy",
+  "fileChanged",
+  "fileEmpty",
+  "fileEncoding",
+  "fileIo",
+  "fileNetwork",
+  "fileNotFile",
+  "fileNotPublic",
+  "fileProxy",
+  "fileRateLimited",
+  "fileSpace",
+  "fileState",
+  "accessForbidden403",
+  "accountAccessDenied",
+  "blockedGeneric",
+  "browserCookiesUnreadable",
+  "browserDatabaseLocked",
+  "browserKeychainDenied",
+  "browserProfileMissing",
+  "browserSafariAccessDenied",
+  "cannotAllocateMemory",
+  "channelUnavailable",
+  "copyrightClaimed",
+  "diskFull",
+  "downloadRetryingFragment",
+  "drmProtected",
+  "embedOnly",
+  "facebookVideoUnavailable",
+  "fetchTimeout",
+  "ffmpegFailed",
+  "ffmpegNotFound",
+  "geoBlocked",
+  "imageEngineUnavailable",
+  "imageFileConflict",
+  "imageHeaderAuthUnavailable",
+  "imageImpersonationUnavailable",
+  "imageSelectionChanged",
+  "imageSourceUnavailable",
+  "internal",
+  "livestreamNotStarted",
+  "loginConsentDeclined",
+  "loginConsentTimeout",
+  "mediaNotReady",
+  "mediaUnavailable",
+  "membersOnly",
+  "networkNameResolutionFailed",
+  "networkTimeout",
+  "noAudioTrack",
+  "noMediaFound",
+  "noWritePermission",
+  "notFound404",
+  "notPremieredYet",
+  "nsigExtractionFailed",
+  "outputNameTooLong",
+  "permissionDenied",
+  "photosOnly",
+  "playlistPrivateOrMissing",
+  "rateLimited429",
+  "rejectedByFilter",
+  "requestedFormatUnavailable",
+  "server5xx",
+  "signInRequired",
+  "signInRequiredForBotDetection",
+  "sponsorBlockUnreachable",
+  "sslVerifyFailed",
+  "unableToConnectToProxy",
+  "unableToExtractIdOrInfo",
+  "unableToExtractInitialData",
+  "unknown",
+  "unknownUrlType",
+  "urlNotSupported",
+  "urlUnsupported",
+  "videoNotFoundOrPrivate",
+  "videoPasswordRequired",
+  "windowsFileMissing",
+];
+
 /// Prefixes whose rest is made up from a link (open keys); everything else is fixed.
 pub const OPEN_PREFIXES: [&str; 4] = [SITE, SITE_IN, SITE_FAIL, OPTIONS_SITE];
 
@@ -173,6 +257,9 @@ pub fn allowed(key: &str) -> bool {
   if FIXED.contains(key) {
     return true;
   }
+  if let Some(code) = key.strip_prefix(FAIL_CODE) {
+    return FAILURE_CODES.contains(&code);
+  }
   if let Some(rest) = key.strip_prefix(OPTIONS_SITE) {
     return rest
       .split_once(':')
@@ -181,6 +268,15 @@ pub fn allowed(key: &str) -> bool {
   [SITE, SITE_IN, SITE_FAIL]
     .iter()
     .any(|prefix| key.strip_prefix(prefix).is_some_and(domain_ok))
+}
+
+/// Exact fixed-code lookup: no trimming, tokenizing or copying untrusted text into usage keys.
+pub fn failure_code(raw: Option<&str>) -> &'static str {
+  FAILURE_CODES
+    .iter()
+    .copied()
+    .find(|code| Some(*code) == raw)
+    .unwrap_or("unknown")
 }
 
 /// The open prefix a key belongs to, if any.
@@ -321,6 +417,10 @@ mod tests {
       "site:youtube.com",
       "sitein:music.youtube.com",
       "sitefail:x.com",
+      "failcode:signInRequired",
+      "failcode:accessForbidden403",
+      "failcode:urlNotSupported",
+      "failcode:unknown",
       "opt:t10up:instagram.com",
     ] {
       assert!(allowed(key), "{key}");
@@ -331,6 +431,13 @@ mod tests {
       "sdk:34",
       "brand:samsung",
       "country:MR",
+      "failcode:",
+      "failcode:inventedCode",
+      "failcode:sign-in required",
+      "failcode:https://example.com/private",
+      "failcode:youtube.com",
+      "failcode:/Users/alice/video.mp4",
+      &format!("failcode:{}", "a".repeat(49)),
       "site:",
       "site:localhost",
       "site:192.168.1.10",
@@ -425,6 +532,45 @@ mod tests {
     }
     for key in UI_KEYS {
       assert!(allowed(key), "{key}");
+    }
+  }
+}
+
+#[cfg(test)]
+mod failure_code_coverage {
+  use super::{failure_code, FAILURE_CODES};
+  use crate::files::Error;
+
+  #[test]
+  fn every_file_and_login_failure_code_is_counted_by_name() {
+    let file_errors = [
+      Error::Address,
+      Error::Network,
+      Error::Encoding,
+      Error::State,
+      Error::Busy,
+      Error::Io,
+      Error::Restart,
+      Error::NotFile,
+      Error::Empty,
+      Error::Space,
+      Error::NotPublic,
+      Error::RateLimited,
+      Error::Proxy,
+    ];
+    for error in file_errors {
+      assert_eq!(
+        failure_code(Some(error.code())),
+        error.code(),
+        "{} missing from FAILURE_CODES",
+        error.code()
+      );
+    }
+    for reason in ["browserAppBound", "browserLoginFailed"] {
+      assert!(
+        FAILURE_CODES.contains(&reason),
+        "{reason} missing from FAILURE_CODES"
+      );
     }
   }
 }

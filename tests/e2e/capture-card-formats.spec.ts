@@ -169,10 +169,14 @@ for (const locale of ['en', 'ar'] as const) {
       await expectNoOverflow(page);
     });
 
-    test('reading reserves the choice height with a skeleton and keeps best available', async ({ page }) => {
+    test('reading keeps a disabled green menu half and best available', async ({ page }) => {
       await openCard(page, locale, { url: YOUTUBE.url, site: YOUTUBE.site });
       const loading = page.getByTestId('capture-choices-loading');
       await expect(loading).toBeVisible();
+      await expect(loading).toBeDisabled();
+      const menuStyle = await loading.evaluate(el => ({ background: getComputedStyle(el).backgroundColor, opacity: getComputedStyle(el).opacity }));
+      expect(menuStyle.opacity).toBe('1');
+      expect(menuStyle.background).toBe(await page.locator('[data-pick=best]').evaluate(el => getComputedStyle(el).backgroundColor));
       expect((await loading.boundingBox())!.height).toBe(32);
       await expect(page.getByTestId('capture-formats-toggle')).toHaveCount(0);
       await page.locator('[data-pick=best]').click();

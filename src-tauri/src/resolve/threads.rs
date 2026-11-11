@@ -1,6 +1,6 @@
 //! Port of Android's ThreadsPostIdentity / ThreadsPostParser.
 //! Read only the requested post's TargetQuery; recommendations and replies cannot supply media.
-use super::{html, http, Resolution, Verdict};
+use super::{html, http, Failure, Resolution, Verdict};
 use crate::models::parsed::{
   AttachmentKind, MediaAttachment, MediaKind, ParsedSingleVideo, SubtitleInventory,
 };
@@ -22,6 +22,8 @@ const CAP: usize = 3 * 512 * 1024;
 static POST: LazyLock<Regex> = LazyLock::new(|| {
   Regex::new(r"^/(?:@|%40)([A-Za-z0-9._]{1,30})/post/([A-Za-z0-9_-]{1,32})(?:/media)?/?$").unwrap()
 });
+static SHARE: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"^/share/([A-Za-z0-9_-]{1,64})/?$").unwrap());
 static PRELOADER: LazyLock<Regex> = LazyLock::new(|| {
   Regex::new(r#"adp_BarcelonaPostPageTargetQueryRelayPreloader_[0-9a-fA-F]{1,64}",\{"__bbox":"#)
     .unwrap()
@@ -35,6 +37,7 @@ static VIDEO: LazyLock<Regex> =
 pub(super) struct Identity {
   pub url: Url,
   pub code: String,
+  share: bool,
 }
 pub(super) fn is_host(host: &str) -> bool {
   matches!(
@@ -44,9 +47,18 @@ pub(super) fn is_host(host: &str) -> bool {
 }
 impl Identity {
   pub fn parse(input: &str) -> Option<Self> {
-    let url = http::https_url(input).ok()?;
+    let mut url = http::https_url(input).ok()?;
     if !is_host(url.host_str()?) {
       return None;
+    }
+    if let Some(captures) = SHARE.captures(url.path()) {
+      let code = captures[1].to_owned();
+      url.set_query(None);
+      return Some(Self {
+        url,
+        code,
+        share: true,
+      });
     }
     let captures = POST.captures(url.path())?;
     let user = &captures[1];
@@ -57,19 +69,59 @@ impl Identity {
     Some(Self {
       url: Url::parse(&format!("https://www.threads.com/@{user}/post/{code}")).ok()?,
       code,
+      share: false,
     })
   }
 }
 
 pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Verdict {
-  let Some(identity) = Identity::parse(input) else {
+  let Some(mut identity) = Identity::parse(input) else {
     return Verdict::NoMatch;
   };
-  // Unlike generic pages, Threads never follows a redirect (login and challenge included).
-  let Ok(response) = transport.get(&identity.url, CAP).await else {
-    return Verdict::Unknown;
+  // Only share links may redirect, through admitted Threads identities to a bound post.
+  let mut retried = false;
+  let mut redirects = 0;
+  let mut seen = BTreeSet::new();
+  let response = loop {
+    if !seen.insert(identity.url.clone()) {
+      return Verdict::Unknown;
+    }
+    let response = loop {
+      let failure = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        transport.get(&identity.url, CAP),
+      )
+      .await
+      {
+        Ok(Ok(response)) => break response,
+        Ok(Err(http::FetchError::Network)) => Failure::Network,
+        Err(_) => Failure::Timeout,
+        Ok(Err(_)) => return Verdict::Unknown,
+      };
+      if retried {
+        return Verdict::Failed(failure);
+      }
+      retried = true;
+    };
+    if identity.share && matches!(response.status, 301 | 302 | 303 | 307 | 308) {
+      if redirects == 3 {
+        return Verdict::Unknown;
+      }
+      let next = response
+        .location
+        .as_deref()
+        .and_then(|location| identity.url.join(location).ok())
+        .and_then(|url| Identity::parse(url.as_str()));
+      let Some(next) = next else {
+        return Verdict::Unknown;
+      };
+      identity = next;
+      redirects += 1;
+      continue;
+    }
+    break response;
   };
-  if response.status != 200 || response.body.len() > CAP {
+  if identity.share || response.status != 200 || response.body.len() > CAP {
     return Verdict::Unknown;
   }
   let Ok(body) = std::str::from_utf8(&response.body) else {

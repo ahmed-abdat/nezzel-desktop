@@ -1,4 +1,11 @@
 {
+  "closeNote": {
+    "title": "Nezzel kjører fortsatt",
+    "bodyMac": "Nezzel og nedlastingene fortsetter når du lukker vinduet.",
+    "hintMac": "Åpne Nezzel igjen fra Dock, Spotlight eller ikonet i menylinjen.",
+    "quit": "Avslutt Nezzel",
+    "gotIt": "Forstått"
+  },
   "toolsUpdate": {
     "stale": "Nezzel har ikke kunnet oppdatere nedlastingsverktøyene på minst 7 dager. Noen nettsteder virker kanskje ikke",
     "tryNow": "Prøv nå",
@@ -1227,5 +1234,21 @@
       "saved": "Inndatafiltre lagret!",
       "error": "Kunne ikke lagre inndatafiltre. {error}"
     }
+  },
+  "downloads": {
+    "list": {
+      "failedNotice": "{n} mislykket nedlasting | {n} mislykkede nedlastinger",
+      "viewFailed": "Vis",
+      "reportFailed": "Rapporter alle",
+      "clearFailed": "Fjern mislykkede"
+    },
+    "selection": {
+      "report": "Rapporter"
+    }
+  },
+  "report": {
+    "batchTitle": "Rapporter {n} mislykket nedlasting | Rapporter {n} mislykkede nedlastinger",
+    "includeLinks": "Ta med alle nedlastingslenker",
+    "includeLinksHelp": "Lenkene hjelper oss å gjenskape problemet. Uten avkrysning sendes ingen nedlastingslenker."
   }
 }

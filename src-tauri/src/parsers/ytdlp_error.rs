@@ -786,6 +786,8 @@ ERROR: Unsupported URL: https://hackertube.org/";
       DiagnosticMatcher::from_json(include_str!("../diagnostic_rules.json")).unwrap(),
     );
     for (line, expected) in [
+      ("ERROR: [vimeo] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized (caused by <HTTPError 401: Unauthorized>)", "accessForbidden403"),
+      ("ERROR: [generic] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized", "unknown"),
       ("ERROR: [facebook] 123: Cannot parse data; please report this issue", "facebookVideoUnavailable"),
       ("ERROR: [generic] 123: Cannot parse data", "unknown"),
       (

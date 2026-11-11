@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use store::{End, Origin, State};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Listener, Manager};
 
 const FILE: &str = "usage.json";
 
@@ -39,6 +39,8 @@ pub struct Usage {
   /// Per running job: speed samples (sum, n) and when its link was received. Memory only.
   speeds: Mutex<HashMap<String, (f64, u32)>>,
   links: Mutex<HashMap<String, (Instant, String)>>,
+  /// Active jobs only: fixed app error codes, never diagnostic text.
+  failures: Mutex<HashMap<String, &'static str>>,
 }
 
 fn now_ms() -> u64 {
@@ -76,6 +78,7 @@ impl Usage {
       sending: tokio::sync::Mutex::new(()),
       speeds: Mutex::default(),
       links: Mutex::default(),
+      failures: Mutex::default(),
     }
   }
 
@@ -150,6 +153,66 @@ impl Usage {
     });
   }
 
+  fn start_job(&self, job: &str, kind: Kind, login: bool) {
+    let now = now_ms();
+    self.with_on(|state| {
+      let mut failures = self.failures.lock().unwrap_or_else(|e| e.into_inner());
+      if failures.len() >= store::MAX_JOBS {
+        failures.clear();
+      }
+      failures.insert(job.to_string(), "unknown");
+      if state.started(job) {
+        state.count(&keys::download("started", kind), now);
+        if login {
+          state.count(keys::LOGIN_PROFILE, now);
+        }
+      }
+    });
+  }
+
+  fn note_diagnostic(&self, payload: &str) {
+    // Read only the classified code from the backend row event. Other fields are ignored.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Diagnostic {
+      group_id: String,
+      id: String,
+      level: crate::models::error::DiagnosticLevel,
+      code: String,
+    }
+    let Ok(event) = serde_json::from_str::<Diagnostic>(payload) else {
+      return;
+    };
+    if !matches!(event.level, crate::models::error::DiagnosticLevel::Error) {
+      return;
+    }
+    self.locked_on(|| {
+      let mut failures = self.failures.lock().unwrap_or_else(|e| e.into_inner());
+      if let Some(code) = failures.get_mut(&job_id(&event.group_id, &event.id)) {
+        *code = keys::failure_code(Some(&event.code));
+      }
+    });
+  }
+
+  fn finish_job(&self, job: &str, end: End, kind: Kind, url: &str) {
+    let now = now_ms();
+    self.with_on(|state| {
+      let speed = self
+        .speeds
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(job);
+      let code = self
+        .failures
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(job);
+      for key in ended_keys(state, job, end, kind, url, speed, code) {
+        state.count(&key, now);
+      }
+    });
+  }
+
   pub fn is_on(&self) -> bool {
     self.on.load(Ordering::SeqCst)
   }
@@ -190,6 +253,11 @@ impl Usage {
         .unwrap_or_else(|e| e.into_inner())
         .clear();
       self.links.lock().unwrap_or_else(|e| e.into_inner()).clear();
+      self
+        .failures
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
     }
     self.cancel.notify_waiters();
   }
@@ -219,8 +287,18 @@ pub fn setup(app: &AppHandle, app_dir: &std::path::Path) {
   usage.count_keys(&first);
   usage.count_keys(&[keys::OPEN]);
   app.manage(usage);
+  listen_for_failures(app);
   crate::state::config::listen(app, |app, config| on_config(app, config.privacy.send_usage));
   sender::start(app);
+}
+
+fn listen_for_failures<R: tauri::Runtime>(app: &AppHandle<R>) {
+  let handle = app.clone();
+  app.listen(crate::events::MEDIA_DIAGNOSTIC, move |event| {
+    if let Some(usage) = handle.try_state::<Usage>() {
+      usage.note_diagnostic(event.payload());
+    }
+  });
 }
 
 /// The Settings switch. Our own flag flips here at once, before the config snapshot is swapped, so nothing
@@ -362,16 +440,11 @@ fn entry_kind(entry: &DownloadEntry) -> Kind {
 
 pub fn download_started(app: &AppHandle, entry: &DownloadEntry) {
   let Some(usage) = usage(app) else { return };
-  let now = now_ms();
-  let kind = entry_kind(entry);
-  usage.with_on(|state| {
-    if state.started(&job_id(&entry.group_id, &entry.id)) {
-      state.count(&keys::download("started", kind), now);
-      if entry.login_browser.is_some() {
-        state.count(keys::LOGIN_PROFILE, now);
-      }
-    }
-  });
+  usage.start_job(
+    &job_id(&entry.group_id, &entry.id),
+    entry_kind(entry),
+    entry.login_browser.is_some(),
+  );
 }
 
 pub fn speed_sample(app: &AppHandle, group_id: &str, id: &str, bytes_per_second: Option<f64>) {
@@ -383,22 +456,13 @@ pub fn speed_sample(app: &AppHandle, group_id: &str, id: &str, bytes_per_second:
 }
 
 pub fn download_ended(app: &AppHandle, entry: &DownloadEntry, end: End) {
-  let job = job_id(&entry.group_id, &entry.id);
-  let speed = app.try_state::<Usage>().and_then(|usage| {
-    usage
-      .speeds
-      .lock()
-      .unwrap_or_else(|e| e.into_inner())
-      .remove(&job)
-  });
   let Some(usage) = usage(app) else { return };
-  let now = now_ms();
-  let kind = entry_kind(entry);
-  usage.with_on(|state| {
-    for key in ended_keys(state, &job, end, kind, &entry.url, speed) {
-      state.count(&key, now);
-    }
-  });
+  usage.finish_job(
+    &job_id(&entry.group_id, &entry.id),
+    end,
+    entry_kind(entry),
+    &entry.url,
+  );
 }
 
 fn ended_keys(
@@ -408,6 +472,7 @@ fn ended_keys(
   kind: Kind,
   url: &str,
   speed: Option<(f64, u32)>,
+  code: Option<&str>,
 ) -> Vec<String> {
   let mut out = state.ended(job, end, kind);
   if out.is_empty() || end == End::Cancelled {
@@ -416,6 +481,7 @@ fn ended_keys(
   out.extend(keys::site(keys::SITE, url));
   if end == End::Failed {
     out.extend(keys::site(keys::SITE_FAIL, url));
+    out.push(format!("{}{}", keys::FAIL_CODE, keys::failure_code(code)));
   }
   if let (End::Finished, Some((sum, n))) = (end, speed) {
     if n > 0 {
@@ -543,6 +609,7 @@ mod tests {
               *kind,
               "https://a.com/x",
               Some((speed, 1)),
+              None,
             ));
             state.jobs.retain(|j| j.id != id);
             state.queued(&id, origin);
@@ -596,7 +663,7 @@ mod tests {
     }
     made.insert(keys::SITE_OTHER.into()); // State::count past MAX_SITES (store tests)
     made.insert(keys::USAGE_CAPPED.into()); // State::count past MAX_PER_DAY (store tests)
-    made.retain(|key| keys::open_prefix(key).is_none());
+    made.retain(|key| keys::open_prefix(key).is_none() && !key.starts_with(keys::FAIL_CODE));
 
     let missing: Vec<_> = keys::FIXED.difference(&made).collect();
     assert!(
@@ -690,7 +757,8 @@ mod tests {
         End::Finished,
         video,
         "https://youtu.be/x",
-        Some((6e6, 2))
+        Some((6e6, 2)),
+        Some("signInRequired")
       ),
       vec![
         "dl.finished.video.uhd",
@@ -707,13 +775,15 @@ mod tests {
         End::Failed,
         Kind::Photo,
         "https://x.com/a/status/1",
+        None,
         None
       ),
       vec![
         "dl.failed.photo.any",
         "resume.failed",
         "site:x.com",
-        "sitefail:x.com"
+        "sitefail:x.com",
+        "failcode:unknown"
       ]
     );
     state.queued("g/3", Origin::Tap);
@@ -724,10 +794,77 @@ mod tests {
         End::Cancelled,
         Kind::Photo,
         "https://x.com/a",
-        None
+        None,
+        Some("signInRequired")
       ),
       vec!["dl.cancelled.photo.any"]
     );
+    state.queued("g/4", Origin::Tap);
+    assert_eq!(
+      ended_keys(
+        &mut state,
+        "g/4",
+        End::Failed,
+        Kind::Photo,
+        "file:///private/photo.jpg",
+        None,
+        Some("notClassified")
+      ),
+      vec!["dl.failed.photo.any", "funnel.failed", "failcode:unknown"]
+    );
+  }
+
+  #[test]
+  fn download_failures_count_only_fixed_codes_once() {
+    for (code, expected) in [
+      (Some("signInRequired"), "failcode:signInRequired"),
+      (Some("accessForbidden403"), "failcode:accessForbidden403"),
+      (Some("urlNotSupported"), "failcode:urlNotSupported"),
+      (Some("unknown"), "failcode:unknown"),
+      (Some("unclassifiedEngineText"), "failcode:unknown"),
+      (
+        Some("https://secret.example/watch?v=private"),
+        "failcode:unknown",
+      ),
+      (Some("signInRequired trailing text"), "failcode:unknown"),
+      (None, "failcode:unknown"),
+    ] {
+      let usage = Usage::new(None, Some("https://x.test/u".into()), "0.1.0".into());
+      usage.set_on(true);
+      let app = tauri::test::mock_app();
+      app.manage(usage);
+      listen_for_failures(app.handle());
+      let usage = app.state::<Usage>();
+      usage.start_job("g/1", Kind::Photo, false);
+      if let Some(code) = code {
+        tauri::Emitter::emit(
+          app.handle(),
+          crate::events::MEDIA_DIAGNOSTIC,
+          serde_json::json!({
+            "groupId": "g", "id": "1", "level": "error", "code": code,
+            "message": "private engine text", "raw": "/Users/alice/private.mp4"
+          }),
+        )
+        .unwrap();
+      }
+      // A warning must not replace the failure type.
+      usage.note_diagnostic(r#"{"groupId":"g","id":"1","level":"warning","code":"noAudioTrack"}"#);
+      usage.finish_job("g/1", End::Failed, Kind::Photo, "https://x.com/a/status/1");
+      usage.finish_job("g/1", End::Failed, Kind::Photo, "https://x.com/a/status/1");
+      let state = usage.snapshot_state();
+      assert_eq!(
+        state.counts,
+        [
+          ("dl.started.photo.any".into(), 1),
+          ("dl.failed.photo.any".into(), 1),
+          ("site:x.com".into(), 1),
+          ("sitefail:x.com".into(), 1),
+          (expected.into(), 1),
+        ]
+        .into()
+      );
+      assert!(usage.failures.lock().unwrap().is_empty());
+    }
   }
 
   #[test]
@@ -736,6 +873,7 @@ mod tests {
     usage.set_on(true);
     usage.note_link("g/1", "https://youtube.com/watch?v=1", 1);
     usage.note_speed("g/1", 1e6);
+    usage.start_job("g/1", Kind::Photo, false);
     assert_eq!(usage.links.lock().unwrap().len(), 1);
     usage.set_on(false);
     assert!(usage.links.lock().unwrap().is_empty() && usage.speeds.lock().unwrap().is_empty());
@@ -744,6 +882,8 @@ mod tests {
     usage.note_speed("g/2", 1e6);
     assert!(usage.links.lock().unwrap().is_empty() && usage.speeds.lock().unwrap().is_empty());
     assert!(usage.snapshot_state().counts.is_empty());
+    usage.note_diagnostic(r#"{"groupId":"g","id":"1","level":"error","code":"signInRequired"}"#);
+    assert!(usage.failures.lock().unwrap().is_empty());
     usage.set_on(true);
     assert!(usage.links.lock().unwrap().is_empty());
   }

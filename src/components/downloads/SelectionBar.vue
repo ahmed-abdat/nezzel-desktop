@@ -14,6 +14,7 @@
     <Button :disabled="busy" v-if="targets.resume.length" variant="ghost" class="h-6 px-2" @click="resumeAll">{{ t('downloads.selection.resume') }}</Button>
     <Button :disabled="busy" v-if="targets.pause.length" variant="ghost" class="h-6 px-2" @click="pauseAll">{{ t('downloads.selection.pause') }}</Button>
     <Button :disabled="busy" v-if="targets.retry.length" variant="ghost" class="h-6 px-2" @click="retryAll">{{ t('downloads.selection.retry') }}</Button>
+    <Button :disabled="busy" v-if="targets.retry.length" variant="ghost" class="h-6 px-2" @click="reportGroups(forIds(targets.retry))">{{ t('downloads.selection.report') }}</Button>
     <Button :disabled="busy" variant="ghost" class="h-6 px-2" @click="removeAll">{{ t('downloads.selection.remove') }}</Button>
     <Button :disabled="busy" v-if="targets.deleteFiles.length" variant="ghost" class="h-6 px-2 text-destructive-foreground" @click="deleteAll">{{ t('downloads.selection.deleteFiles') }}</Button>
     <span class="flex-1" />
@@ -36,6 +37,7 @@ import type { Group } from '../../tauri/types/group';
 import { useMediaStateStore, MediaState } from '../../stores/media/state';
 import { useMediaDestinationStore } from '../../stores/media/destination';
 import { useToastStore } from '../../stores/toast';
+import { useDownloadReports } from '../../composables/useDownloadReports';
 import { useListRemoval } from '../../composables/useListRemoval';
 import { isTrashRefused, trashBinKind, trashGroupFile, useGroupActions } from '../../composables/useDownloadActions';
 import { LIST_SEARCH_ID, ROW_SELECTOR } from '../../helpers/domIds';
@@ -53,6 +55,7 @@ const stateStore = useMediaStateStore();
 const destinationStore = useMediaDestinationStore();
 const toastStore = useToastStore();
 const { removeRows } = useListRemoval();
+const { reportGroups } = useDownloadReports();
 const busy = ref(false);
 
 const targets = computed(() => batchTargets(props.groups.map(group => ({

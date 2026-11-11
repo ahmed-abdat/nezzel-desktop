@@ -1,5 +1,5 @@
 //! Background mode: closing the main window keeps Nezzel in the tray / menu bar. On macOS the Dock
-//! icon goes away while the window is hidden (Accessory) and comes back when it shows (Regular).
+//! icon stays visible while the window is hidden so the app can always be reopened from the Dock.
 //! The first close also shrinks the window into the tray and shows a one-time note anchored there.
 
 use crate::tray::TrayState;
@@ -28,7 +28,7 @@ pub struct BackgroundState {
   /// True while the first-close shrink runs: window tracking must not persist those sizes.
   pub animating: AtomicBool,
   /// Where the note goes once its page has measured itself.
-  note: std::sync::Mutex<Option<NotePlacement>>,
+  note: std::sync::Mutex<Option<(NotePlacement, u64)>>,
   /// Show/hide transitions in order: a later show cancels an earlier, still running close.
   pub transitions: Transitions,
 }
@@ -76,6 +76,7 @@ pub struct Area {
 
 /// Places a note of `width` so its arrow points at `anchor_x`, opening toward the screen centre
 /// and kept 10px inside `area`.
+#[cfg(any(not(target_os = "macos"), test))]
 pub fn place_note(anchor_x: f64, y: f64, edge: Edge, area: Area, width: f64) -> NotePlacement {
   let centre = area.x + area.w / 2.;
   let wanted = if anchor_x > centre {
@@ -129,12 +130,12 @@ pub fn show_main(app: &AppHandle) {
   let _ = window.set_focus();
 }
 
-/// Hides the main window into the tray; on macOS the Dock icon goes away, only once it is hidden.
+/// Hides the main window; keep the macOS Dock icon available even when the menu bar is full.
 pub fn hide_main(app: &AppHandle) -> bool {
   let hidden = app
     .get_webview_window("main")
     .is_some_and(|window| window.hide().is_ok());
-  set_dock(app, !hidden);
+  set_dock(app, cfg!(target_os = "macos") || !hidden);
   hidden
 }
 
@@ -170,6 +171,32 @@ pub fn close_to_tray(app: &AppHandle) {
     hide_main(app);
     return;
   }
+  if cfg!(target_os = "macos") {
+    // Give the note a chance to appear, but never let a stalled webview block closing.
+    if let Err(e) = open_note(app, None, ticket) {
+      tracing::warn!("Failed to show the first-close note: {e}");
+      hide_main(app);
+      return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+      tokio::time::sleep(Duration::from_millis(1500)).await;
+      let handle = app.clone();
+      if let Err(e) = app.run_on_main_thread(move || {
+        // A reopen or newer close cancels this timer's right to hide the window.
+        if handle
+          .state::<BackgroundState>()
+          .transitions
+          .is_current(ticket)
+        {
+          hide_main(&handle);
+        }
+      }) {
+        tracing::warn!("Failed to finish closing the main window: {e}");
+      }
+    });
+    return;
+  }
   let app = app.clone();
   std::thread::spawn(move || {
     let current = || {
@@ -192,11 +219,7 @@ pub fn close_to_tray(app: &AppHandle) {
     if !current() || !hide_main(&app) {
       return;
     }
-    let prefs = app.state::<SharedPreferences>();
-    if let Err(e) = prefs.apply_patch(&json!({ "onboarding": { "closeNoteDone": true } }), &app) {
-      tracing::warn!("Failed to save first-close note state: {e}");
-    }
-    if let Err(e) = open_note(&app, target) {
+    if let Err(e) = open_note(&app, target, ticket) {
       tracing::warn!("Failed to show the first-close note: {e}");
     }
   });
@@ -419,10 +442,25 @@ fn shrink_into(
   state.animating.store(false, Ordering::Relaxed);
 }
 
-fn open_note(app: &AppHandle, anchor: Option<(f64, f64, Edge)>) -> tauri::Result<()> {
+fn open_note(app: &AppHandle, anchor: Option<(f64, f64, Edge)>, ticket: u64) -> tauri::Result<()> {
   let window = app.get_webview_window("main");
   let monitor = window.as_ref().and_then(tray_monitor);
   let placement = match (anchor, monitor) {
+    // A macOS menu-bar icon may sit behind the notch. Put the note inside the work area.
+    #[cfg(target_os = "macos")]
+    (_, Some(m)) => {
+      let scale = m.scale_factor();
+      let work = m.work_area();
+      let pos = work.position.to_logical::<f64>(scale);
+      let size = work.size.to_logical::<f64>(scale);
+      NotePlacement {
+        left: pos.x + (size.width - NOTE_WIDTH).max(0.) / 2.,
+        arrow_x: NOTE_WIDTH / 2.,
+        y: pos.y + 40.,
+        edge: Edge::Top,
+      }
+    }
+    #[cfg(not(target_os = "macos"))]
     (Some((x, y, edge)), Some(m)) => {
       let scale = m.scale_factor();
       #[cfg(windows)]
@@ -445,7 +483,7 @@ fn open_note(app: &AppHandle, anchor: Option<(f64, f64, Edge)>) -> tauri::Result
       edge: Edge::Top,
     },
   };
-  *app.state::<BackgroundState>().note.lock().unwrap() = Some(placement);
+  *app.state::<BackgroundState>().note.lock().unwrap() = Some((placement, ticket));
   let edge = if placement.edge == Edge::Top {
     "top"
   } else {
@@ -491,12 +529,21 @@ pub fn close_note_ready(app: AppHandle, window: WebviewWindow, height: f64) -> R
   if window.label() != NOTE_LABEL {
     return Err("unavailable".into());
   }
-  let placement = app
+  let (placement, ticket) = app
     .state::<BackgroundState>()
     .note
     .lock()
     .unwrap()
+    .take()
     .ok_or("unavailable")?;
+  if !app
+    .state::<BackgroundState>()
+    .transitions
+    .is_current(ticket)
+  {
+    let _ = window.destroy();
+    return Ok(());
+  }
   let height = height.clamp(80., 400.);
   let top = match placement.edge {
     Edge::Top => placement.y,
@@ -505,7 +552,16 @@ pub fn close_note_ready(app: AppHandle, window: WebviewWindow, height: f64) -> R
   let _ = window.set_size(LogicalSize::new(NOTE_WIDTH, height));
   let _ = window.set_position(LogicalPosition::new(placement.left, top));
   window.show().map_err(|e| e.to_string())?;
+  #[cfg(target_os = "macos")]
+  hide_main(&app);
   let _ = window.set_focus();
+  let prefs = app.state::<SharedPreferences>();
+  let mut onboarding = prefs.load().onboarding.clone();
+  if onboarding.mark_close_note_shown() {
+    if let Err(e) = prefs.apply_patch(&json!({ "onboarding": { "closeNoteDone": true } }), &app) {
+      tracing::warn!("Failed to save first-close note state: {e}");
+    }
+  }
   Ok(())
 }
 

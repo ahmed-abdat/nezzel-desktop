@@ -1587,6 +1587,10 @@
       "results": "1 result | {n} results",
       "noMatch": "No downloads match “{query}”",
       "clearFinished": "Remove from list",
+      "failedNotice": "{n} failed download | {n} failed downloads",
+      "viewFailed": "View",
+      "reportFailed": "Report all",
+      "clearFailed": "Clear failed",
       "clearFinishedHint": "Files stay in your Downloads folder",
       "cleared": "Removed 1 download from the list | Removed {n} downloads from the list",
       "undo": "Undo",
@@ -1603,6 +1607,7 @@
       "pause": "Pause",
       "resume": "Resume",
       "retry": "Try again",
+      "report": "Report",
       "remove": "Remove from list",
       "deleteFiles": "Delete files…",
       "deleteConfirm": {
@@ -2172,6 +2177,8 @@
     }
   },
   "closeNote": {
+    "bodyMac": "Closing the window keeps Nezzel and your downloads running.",
+    "hintMac": "Reopen Nezzel from the Dock, Spotlight, or its menu-bar icon.",
     "title": "Nezzel is still running",
     "body": "Copied links still bring up the card, and this icon opens Nezzel again",
     "hintWindows": "It sits under {chev} by the clock. Drag it onto the taskbar to keep it in view",
@@ -2187,6 +2194,9 @@
     "aboutHelp": "Tell us what went wrong. We add the technical details",
     "rowAction": "Report a problem",
     "downloadTitle": "Report this failed download",
+    "batchTitle": "Report {n} failed download | Report {n} failed downloads",
+    "includeLinks": "Include all download links",
+    "includeLinksHelp": "Links help us reproduce the problem. Unchecked, no download links are sent.",
     "lead": "Tell us what happened, if you like. We add the technical details so we can fix it",
     "noteLabel": "What went wrong (optional)",
     "notePlaceholder": "For example: the video saved without sound",

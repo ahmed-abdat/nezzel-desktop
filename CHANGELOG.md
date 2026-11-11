@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0-beta.4
+
+- Facebook photo posts (single photos, albums shared with "share/p", photo.php links) now save the photos instead of stopping at "this post has photos, not a video".
+- Threads: a slow answer from Threads no longer turns into "not supported"; Nezzel retries once and follows threads.com/share links to the post.
+- Vimeo: a video that needs a login now says so instead of a generic "couldn't download".
+- Copied-link card: faster on YouTube, shows the post's caption as the title and its picture, hides the size column when sizes are unknown, and its button no longer looks broken while loading.
+- Library: Video, Audio, Photos and Files show only your files; failed downloads stay in All downloads, with one line pointing to them. Remove all failed from the list, or report several failed downloads at once with one note.
+- A failed download's page shows the message once and a Copy details button; the raw log is no longer on screen, and copied details keep one line per entry.
+- macOS: the first time you close the window while Nezzel keeps running, a note says where it went and how to reopen it.
+- Photo file names no longer contain "pNA".
+- Anonymous usage counts (when on) now include the failure code, so we can see which errors are common.
+
 ## 0.1.0-beta.3
 
 - Playlists: every way of saving a playlist opens a checklist first (select all or none, Space, Ctrl/Cmd+A, one quality for all, "Download N videos"); nothing starts until you choose. The options sheet no longer closes on its own.

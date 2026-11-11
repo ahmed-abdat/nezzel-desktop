@@ -66,9 +66,11 @@ pub fn reason_for_code(code: &str) -> FailReason {
     "geoBlocked" => FailReason::Region,
     "drmProtected" => FailReason::Protected,
     "rateLimited429" | "blockedGeneric" => FailReason::Busy,
-    "networkNameResolutionFailed" | "unableToConnectToProxy" | "sslVerifyFailed" | "server5xx" => {
-      FailReason::Network
-    }
+    "networkNameResolutionFailed"
+    | "networkTimeout"
+    | "unableToConnectToProxy"
+    | "sslVerifyFailed"
+    | "server5xx" => FailReason::Network,
     _ => FailReason::Unknown,
   }
 }
@@ -99,6 +101,9 @@ pub fn fail_reason(stderr: &str) -> FailReason {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewDetails {
+  /// Caption-based display title; the cached download model keeps the extractor's original title.
+  #[serde(default)]
+  pub title: Option<String>,
   /// https only; shown as an <img>, never fetched by the backend.
   pub thumbnail: Option<String>,
   pub media_kind: Option<String>,
@@ -243,6 +248,7 @@ pub fn summarize(item: &Value) -> PreviewDetails {
     None => best_audio.map(|f| text(f, "ext", 8)).unwrap_or_default(),
   };
   PreviewDetails {
+    title: None,
     media_kind,
     photos: item
       .get("attachments")
@@ -381,17 +387,30 @@ pub async fn read_output(
   read_output_reason(command, process_guard).await.ok()
 }
 
+#[cfg(test)]
 /// Like `read_output`, but a failure says why (`fail_reason` over at most 64 KiB of stderr, or `slow`).
 pub async fn read_output_reason(
   command: &mut Command,
   process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
 ) -> Result<Vec<u8>, FailReason> {
+  read_output_stderr(command, process_guard)
+    .await
+    .map_err(|(reason, _)| reason)
+}
+
+/// Bounded stderr is retained only for capture's response-gated URL retries.
+pub(super) async fn read_output_stderr(
+  command: &mut Command,
+  process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
+) -> Result<Vec<u8>, (FailReason, String)> {
   command
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .kill_on_drop(true);
-  let mut child = command.spawn().map_err(|_| FailReason::Unknown)?;
+  let mut child = command
+    .spawn()
+    .map_err(|_| (FailReason::Unknown, String::new()))?;
   // Drained concurrently so a chatty stderr can never block stdout; capped, never forwarded as text.
   let stderr = child.stderr.take().map(|stderr| {
     tokio::spawn(async move {
@@ -430,11 +449,14 @@ pub async fn read_output_reason(
   drop(cancel);
   match result {
     Ok(Some(bytes)) => Ok(bytes),
-    Err(reason) => Err(reason),
-    Ok(None) => match stderr {
-      Some(task) => Err(fail_reason(&task.await.unwrap_or_default())),
-      None => Err(FailReason::Unknown),
-    },
+    Err(reason) => Err((reason, String::new())),
+    Ok(None) => {
+      let text = match stderr {
+        Some(task) => task.await.unwrap_or_default(),
+        None => String::new(),
+      };
+      Err((fail_reason(&text), text))
+    }
   }
 }
 
@@ -493,10 +515,12 @@ mod summary_tests {
       ("ERROR: [youtube] abc: Join this channel to get access to members-only content", "login"),
       ("ERROR: [youtube] abc: Private video. Sign in if you've been granted access", "login"),
       ("ERROR: [vimeo] 123: Video has not been found", "unavailable"),
+      ("ERROR: [vimeo] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized", "unavailable"),
       ("ERROR: Unsupported URL: https://example.com/page", "unsupported"),
       ("ERROR: [youtube] abc: The uploader has not made this video available in your country", "region"),
       ("WARNING: something harmless\nERROR: [generic] Unable to download webpage: HTTP Error 429: Too Many Requests", "busy"),
       ("ERROR: Unable to download webpage: <urlopen error [Errno 11001] getaddrinfo failed>", "network"),
+      ("ERROR: The read operation timed out", "network"),
       ("some unrecognised failure", "unknown"),
       ("", "unknown"),
     ] {

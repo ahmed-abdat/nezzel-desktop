@@ -284,12 +284,11 @@ pub fn run() {
     }
     #[cfg(target_os = "macos")]
     {
-      if let tauri::RunEvent::Reopen {
-        has_visible_windows,
-        ..
-      } = _event
-      {
-        if !has_visible_windows {
+      if let tauri::RunEvent::Reopen { .. } = _event {
+        if _app_handle
+          .get_webview_window("main")
+          .is_some_and(|w| !w.is_visible().unwrap_or(true))
+        {
           reopen_window(_app_handle);
         }
       }

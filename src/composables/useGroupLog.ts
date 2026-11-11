@@ -1,3 +1,4 @@
+import { appendLogLine } from '../helpers/groupLog';
 import { Ref, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
@@ -23,7 +24,7 @@ export function useGroupLog(groupId: Ref<string>) {
 
       unlisten = await listen<LogAppendEvent>('logging_append', (event) => {
         if (event.payload.groupId === groupId) {
-          logText.value += event.payload.line;
+          logText.value = appendLogLine(logText.value, event.payload.line);
         }
       });
     } catch (e: any) {

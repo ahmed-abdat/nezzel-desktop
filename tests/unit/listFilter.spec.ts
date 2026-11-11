@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { needsAttention, countView, filterRows, finishedIds, matchesSearch, parseListView, statusOf, viewQuery, type ListRow, type ListView } from '../../src/helpers/listFilter';
+import { categoryNoticeCount, needsAttention, countView, filterRows, finishedIds, matchesSearch, parseListView, statusOf, viewQuery, type ListRow, type ListView } from '../../src/helpers/listFilter';
 import { kindFilterOf } from '../../src/helpers/groupView';
 import { MediaState } from '../../src/stores/media/state';
 
@@ -56,8 +56,8 @@ describe('filterRows', () => {
     [v('all'), '', ['a', 'b', 'c', 'd', 'e']],
     [v('all', 'active'), '', ['a']],
     [v('all', 'failed'), '', ['c']],
-    [v('video'), '', ['a', 'c', 'd']],
-    [v('video', 'failed'), '', ['c']],
+    [v('video'), '', ['a', 'd']],
+    [v('video', 'failed'), '', []],
     [v('audio', 'failed'), '', []],
     [v('files'), '', ['e']],
     [v('all'), 'youtube', ['a']],
@@ -71,8 +71,37 @@ describe('filterRows', () => {
     expect(ids(filterRows(rows, view, query))).toEqual(expected);
   });
 
+  it.each(['video', 'audio', 'photos', 'files'] as const)('excludes failures from %s but keeps active and finished rows', (kind) => {
+    const list = [row('failed', 'failed', kind, ''), row('active', 'active', kind, ''), row('done', 'done', kind, '')];
+    expect(ids(filterRows(list, v(kind), ''))).toEqual(['active', 'done']);
+    expect(ids(filterRows(list, v('all', 'failed'), ''))).toEqual(['failed']);
+  });
+
   it('matches harakat typed in the query against bare text', () => {
     expect(matchesSearch({ title: 'مرحبا', site: '' }, 'مَرْحَبًا')).toBe(true);
+  });
+});
+
+describe('category notices', () => {
+  const list = [
+    row('v1', 'failed', 'video', ''), row('v2', 'failed', 'video', ''), row('a1', 'failed', 'audio', ''),
+    { ...row('login', 'failed', 'video', ''), needsAttention: true },
+    { ...row('ready', 'active', 'video', ''), needsAttention: true },
+    row('done', 'done', 'video', ''), row('running', 'active', 'video', ''),
+  ];
+
+  it.each([['video', 4], ['audio', 1], ['photos', 0], ['files', 0]] as const)('counts hidden failures and attention rows only for %s', (type, expected) => {
+    expect(categoryNoticeCount(list, type)).toBe(expected);
+  });
+
+  it('counts two video failures separately from an audio failure', () => {
+    expect(categoryNoticeCount(list.slice(0, 3), 'video')).toBe(2);
+  });
+
+  it('hides attention rows from categories but preserves them in All downloads', () => {
+    expect(ids(filterRows(list, v('video'), ''))).toEqual(['done', 'running']);
+    expect(ids(filterRows(list, v('all'), ''))).toEqual(list.map(row => row.id));
+    expect(ids(filterRows(list, v('all', 'failed'), ''))).toEqual(['v1', 'v2', 'a1', 'login']);
   });
 });
 
@@ -83,8 +112,8 @@ describe('countView', () => {
 
   it('counts types over every status, and statuses within the picked type', () => {
     const all = [...rows, row('g', 'done', 'photos', 'Weekend hack', 'X')];
-    expect(countView(all, 'all')).toEqual({ types: { all: 6, video: 3, audio: 1, photos: 1, files: 1 }, statuses: { all: 6, active: 1, failed: 1, done: 4 } });
-    expect(countView(all, 'video').statuses).toEqual({ all: 3, active: 1, failed: 1, done: 1 });
+    expect(countView(all, 'all')).toEqual({ types: { all: 6, video: 2, audio: 1, photos: 1, files: 1 }, statuses: { all: 6, active: 1, failed: 1, done: 4 } });
+    expect(countView(all, 'video').statuses).toEqual({ all: 2, active: 1, failed: 0, done: 1 });
   });
 });
 

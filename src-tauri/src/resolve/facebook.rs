@@ -4,6 +4,7 @@ use super::{html, http, Reason, Resolution, Verdict};
 use regex::Regex;
 use reqwest::Url;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
@@ -170,6 +171,7 @@ pub(super) fn watch(id: &str) -> String {
 #[derive(Default, PartialEq, Eq)]
 struct Media {
   photos: BTreeSet<String>,
+  photo_urls: Vec<(String, String)>,
   videos: BTreeSet<String>,
   has_video: bool,
   others: usize,
@@ -263,7 +265,13 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Verdict
         };
         let media = story_media(story);
         if let Some(existing) = stories.get(key) {
-          if !existing.media.empty() && !media.empty() && existing.media != media {
+          if !existing.media.empty()
+            && !media.empty()
+            && (existing.media.photos != media.photos
+              || existing.media.videos != media.videos
+              || existing.media.has_video != media.has_video
+              || existing.media.others != media.others)
+          {
             conflicts.insert(key);
           }
           if !existing.media.empty() {
@@ -301,20 +309,20 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Verdict
     None
   };
   if let Some(id) = photo_id {
-    if currents.iter().any(|v| v["id"] == id && photo(v).is_some())
-      || bound.is_some_and(|m| m.photos.contains(id))
-    {
-      return Verdict::Verified(Resolution::Passthrough(photo_url(id)));
-    }
-    return Verdict::Unknown;
+    let selected = currents
+      .iter()
+      .filter(|v| v["id"] == id)
+      .find_map(|v| photo(v))
+      .or_else(|| bound?.photo_urls.iter().find(|(key, _)| key == id).cloned());
+    return selected.map_or(Verdict::Unknown, |photo| {
+      photo_attachments(&[photo], requested)
+    });
   }
   if let Some(media) = bound {
-    if media.photos.len() == 1 && !media.has_video {
-      if let Some(id) = media.photos.first().filter(|id| numeric(id)) {
-        return Verdict::Verified(Resolution::Passthrough(photo_url(id)));
-      }
+    if !media.photo_urls.is_empty() && !media.has_video {
+      return photo_attachments(&media.photo_urls, requested);
     }
-    // Keep the original gallery input when the post exposes multiple photos or mixed media.
+    // Mixed posts still need gallery to preserve their videos.
     if !media.photos.is_empty() {
       return Verdict::Verified(Resolution::Unsupported {
         reason: Reason::PhotosOnly,
@@ -407,8 +415,10 @@ fn story_media(story: &Value) -> Media {
       result.others += 1;
       for node in nodes["nodes"].as_array().into_iter().flatten().take(64) {
         let value = &node["media"];
-        if let Some(id) = photo(value) {
-          result.photos.insert(id);
+        if let Some(photo) = photo(value) {
+          if result.photos.insert(photo.0.clone()) {
+            result.photo_urls.push(photo);
+          }
         }
         if value["__typename"] == "Video" {
           result.has_video = true;
@@ -419,8 +429,10 @@ fn story_media(story: &Value) -> Media {
       }
       continue;
     }
-    if let Some(id) = photo(&styled["media"]).or_else(|| photo(&entry["media"])) {
-      result.photos.insert(id);
+    if let Some(photo) = photo(&styled["media"]).or_else(|| photo(&entry["media"])) {
+      if result.photos.insert(photo.0.clone()) {
+        result.photo_urls.push(photo);
+      }
       continue;
     }
     let nodes: Vec<_> = [&styled["media"], &entry["media"]]
@@ -437,20 +449,41 @@ fn story_media(story: &Value) -> Media {
   }
   result
 }
-fn photo(value: &Value) -> Option<String> {
+fn photo(value: &Value) -> Option<(String, String)> {
   if value["__typename"] != "Photo" {
     return None;
   }
   let url = ["viewer_image", "photo_image", "image"]
     .iter()
     .find_map(|key| value[*key]["uri"].as_str().filter(|v| photo_cdn(v)))?;
-  Some(
-    value["id"]
-      .as_str()
-      .filter(|id| numeric(id))
-      .unwrap_or(url)
-      .into(),
-  )
+  let id = match value["id"].as_str().filter(|id| numeric(id)) {
+    Some(id) => id.into(),
+    None => {
+      let mut stable = reqwest::Url::parse(url).ok()?;
+      stable.set_query(None);
+      format!(
+        "photo:{}",
+        hex::encode(Sha256::digest(stable.as_str().as_bytes()))
+      )
+    }
+  };
+  Some((id, url.into()))
+}
+fn photo_attachments(photos: &[(String, String)], source: &Identity) -> Verdict {
+  let attachments: Vec<_> = photos
+    .iter()
+    .map(|(id, url)| serde_json::json!({"id":id, "kind":"image", "url":url, "thumbnail":url}))
+    .collect();
+  let metadata = serde_json::json!({
+    "id":source.post_id.as_deref().or(source.photo_id.as_deref()).unwrap_or(&photos[0].0),
+    "url":source.url.as_str(), "extractor":"Facebook",
+    "mediaKind":if photos.len() > 1 { "carousel" } else { "image" },
+    "attachments":attachments, "thumbnail":photos[0].1,
+    "videoCodecs":[], "audioCodecs":[], "videoTracks":[], "audioTracks":[],
+    "formats":[], "chapters":[], "subtitleInventory":{"manualLanguages":[],"autoLanguages":[]}
+  })
+  .to_string();
+  Verdict::Verified(Resolution::Attachments { metadata })
 }
 fn photo_cdn(input: &str) -> bool {
   http::https_url(input)

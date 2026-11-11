@@ -10,6 +10,7 @@ import MediaView from '../../src/views/app/MediaView.vue';
 import { i18n } from '../../src/i18n';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
+import { installTauriMock } from '../utils/tauriMock';
 import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
 
 describe('download failure presentation', () => {
@@ -81,7 +82,12 @@ describe('download failure presentation', () => {
     ['ar', /أعد المحاولة/],
     ['fr', /réessayez/i],
     ['es', /try again/i], // Locales awaiting this hint use the English fallback.
-  ] as const)('gives a useful %s hint and keeps the final engine error in collapsed details', async (locale, hint) => {
+  ] as const)('gives a useful %s hint and preserves engine output only when copied', async (locale, hint) => {
+    let copied = '';
+    installTauriMock({
+      logging_subscribe: () => 'main\nWARNING: engine output',
+      capture_write_clipboard: (_cmd, args) => { copied = (args as { text: string }).text; },
+    });
     const originalLocale = i18n.global.locale.value;
     i18n.global.locale.value = locale;
     const groups = useMediaGroupStore();
@@ -108,7 +114,14 @@ describe('download failure presentation', () => {
       expect(row.text()).not.toContain('Unexpected server response');
       const details = view.find('[data-slot=collapsible]');
       expect(details.attributes('data-state')).toBe('closed');
-      expect(details.text()).toContain('ERROR: Unexpected server response at [redacted URL]');
+      expect(view.text()).not.toContain('Unexpected server response');
+      expect(view.text()).not.toContain('WARNING: engine output');
+      await details.get('button').trigger('click');
+      // The first button expands the disclosure; Copy details is inside it.
+      const copy = details.findAll('button').find(button => button.text() === i18n.global.t('media.detail.copyDetails'))!;
+      await copy.trigger('click');
+      expect(copied).toContain('ERROR: Unexpected server response at [redacted URL]');
+      expect(copied).toContain('main\nWARNING: engine output');
       expect(details.text()).not.toContain('https://example.com/video');
     } finally {
       row.unmount();

@@ -131,15 +131,25 @@ pub(super) async fn filename(
   post: &GalleryPost,
 ) -> Result<PathBuf, GalleryError> {
   let extension = image_type(bytes)?;
+  // Both gallery-dl and yt-dlp photo posts use this destination renderer. Parent video
+  // dimensions/frame rates must not leak into the selected photo's name.
+  let mut context = entry.template_context.clone();
+  context.insert("media_kind", "image");
+  context.insert(
+    "height",
+    asset
+      .item
+      .height
+      .filter(|h| *h > 0)
+      .map(|h| h.to_string())
+      .unwrap_or_default(),
+  );
+  context.insert("fps", "");
   let stage = Staging::new()?;
   let info = stage.json("image.json", &json!({"id":asset.item.id,"title":post.title.as_deref().unwrap_or(&asset.item.id),"uploader":post.uploader,"webpage_url":post.source,"url":asset.item.url,"ext":extension,"width":asset.item.width,"height":asset.item.height,
     "formats":[{"format_id":"image","url":asset.item.url,"ext":extension,"protocol":"https","vcodec":"unknown","acodec":"none"}]}))?;
   let output = YtdlpRunner::new(app)
-    .with_location_args(
-      &TrackType::Video,
-      &entry.template_context,
-      entry.overrides.as_ref(),
-    )
+    .with_location_args(&TrackType::Video, &context, entry.overrides.as_ref())
     .with_args([
       "--skip-download".into(),
       "--simulate".into(),

@@ -211,14 +211,16 @@ impl Offers {
     current.failed = item.is_none();
     current.reason = reason;
     if let Some(item) = &item {
-      current.title = item
-        .get("title")
-        .and_then(|v| v.as_str())
+      current.details = details.unwrap_or_else(|| preview::summarize(item));
+      current.title = current
+        .details
+        .title
+        .as_deref()
+        .or_else(|| item.get("title").and_then(|v| v.as_str()))
         .unwrap_or("")
         .chars()
         .take(300)
         .collect();
-      current.details = details.unwrap_or_else(|| preview::summarize(item));
     }
     slot.metadata = Some(item);
     true
@@ -879,9 +881,26 @@ pub(super) mod tests {
     let state = CaptureState::default();
     pending_offer(&state, CaptureWindow::Card, true);
     let item = serde_json::json!({ "title": "Ready" });
-    edit_slot(&state, CaptureWindow::Card, |slot| {
-      slot.metadata = Some(Some(item.clone()));
-    });
+    state.offers.lock().unwrap().record_read(
+      CaptureWindow::Card,
+      1,
+      Some(item.clone()),
+      Some(preview::PreviewDetails {
+        title: Some("Caption".into()),
+        ..Default::default()
+      }),
+      None,
+    );
+    assert_eq!(
+      state
+        .offers
+        .lock()
+        .unwrap()
+        .current(CaptureWindow::Card)
+        .unwrap()
+        .title,
+      "Caption"
+    );
     assert_eq!(
       claim_action(&state, CaptureWindow::Card, 1, Action::Options)
         .unwrap()

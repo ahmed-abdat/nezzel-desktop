@@ -1591,6 +1591,10 @@
       "results": "1 résultat | {n} résultats",
       "noMatch": "Aucun téléchargement ne correspond à « {query} »",
       "clearFinished": "Retirer de la liste",
+      "failedNotice": "{n} téléchargement échoué | {n} téléchargements échoués",
+      "viewFailed": "Voir",
+      "reportFailed": "Tout signaler",
+      "clearFailed": "Effacer les échecs",
       "clearFinishedHint": "Les fichiers restent dans votre dossier de téléchargements",
       "cleared": "1 téléchargement retiré de la liste | {n} téléchargements retirés de la liste",
       "undo": "Annuler",
@@ -1607,6 +1611,7 @@
       "pause": "Mettre en pause",
       "resume": "Reprendre",
       "retry": "Réessayer",
+      "report": "Signaler",
       "remove": "Retirer de la liste",
       "deleteFiles": "Supprimer les fichiers…",
       "deleteConfirm": {
@@ -2176,6 +2181,8 @@
     }
   },
   "closeNote": {
+    "bodyMac": "Nezzel et vos téléchargements continuent après la fermeture de la fenêtre.",
+    "hintMac": "Rouvrez Nezzel depuis le Dock, Spotlight ou son icône dans la barre des menus.",
     "title": "Nezzel tourne toujours",
     "body": "La carte s’affiche toujours quand vous copiez un lien, et cette icône rouvre Nezzel",
     "hintWindows": "Elle est sous {chev} près de l’horloge. Glissez-la dans la barre des tâches pour la garder visible",
@@ -2191,6 +2198,9 @@
     "aboutHelp": "Dites-nous ce qui ne va pas. Nous ajoutons les détails techniques",
     "rowAction": "Signaler un problème",
     "downloadTitle": "Signaler ce téléchargement échoué",
+    "batchTitle": "Signaler {n} téléchargement échoué | Signaler {n} téléchargements échoués",
+    "includeLinks": "Inclure tous les liens",
+    "includeLinksHelp": "Les liens nous aident à reproduire le problème. Décoché, aucun lien de téléchargement ne sera envoyé.",
     "lead": "Dites-nous ce qui s'est passé si vous le souhaitez. Nous ajoutons les détails techniques pour le corriger",
     "noteLabel": "Ce qui ne va pas (facultatif)",
     "notePlaceholder": "Par exemple : la vidéo a été enregistrée sans le son",

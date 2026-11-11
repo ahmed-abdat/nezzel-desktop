@@ -59,6 +59,10 @@
           </router-link>
         </div>
       </div>
+      <p v-if="view.type !== 'all' && failedCount" class="flex items-center gap-1 pe-4 ps-8 py-2 text-[12px] text-muted-foreground">
+        {{ t('downloads.list.failedNotice', { n: count(failedCount) }, failedCount) }}
+        <Button variant="link" class="h-auto p-0 text-[12px]" @click="showFailures">{{ t('downloads.list.viewFailed') }}</Button>
+      </p>
       <!-- Finder-style column labels, only when the list is wide enough for columns (cells in DownloadRow). -->
       <div v-if="shownCount > 0" class="hidden items-center gap-3 border-b border-hairline pe-4 ps-8 py-1 text-[11.5px] font-medium text-muted-foreground @min-[1040px]/list:flex" aria-hidden="true">
         <span :class="showThumbnails ? (compactRows ? 'ms-[60px]' : 'ms-[84px]') : ''" class="min-w-0 flex-1">{{ t('downloads.columns.name') }}</span>
@@ -83,6 +87,8 @@
         <selection-bar v-if="selectionCount && firstSection === 'failed'" :groups="selectedGroups" />
         <header v-else :class="headCls">
           <h2 id="ledger-failed" class="flex-1">{{ t('downloads.sections.failed') }} <span class="tnum ms-1 font-normal">{{ count(shownFailed.length) }}</span></h2>
+          <Button variant="ghost" class="-my-1 h-6 px-2 font-normal" @click="reportGroups(shownFailed.map(row => row.group))">{{ t('downloads.list.reportFailed') }}</Button>
+          <Button variant="ghost" class="-my-1 h-6 px-2 font-normal" @click="removeRows(shownFailed.map(row => row.id))">{{ t('downloads.list.clearFailed') }}</Button>
         </header>
         <ul>
           <download-row v-for="row in shownFailed" :key="row.id" :group="row.group" />
@@ -164,12 +170,13 @@ import DownloadRow from '../../components/downloads/DownloadRow.vue';
 import { useDownloadBuckets } from '../../composables/useDownloadBuckets';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import { useDownloadList } from '../../composables/useDownloadList';
-import { parseListView, viewQuery, type StatusFilter } from '../../helpers/listFilter';
+import { categoryNoticeCount, parseListView, viewQuery, type StatusFilter } from '../../helpers/listFilter';
 import { useListVisibilityStore } from '../../stores/listVisibility';
 import { useListRemoval } from '../../composables/useListRemoval';
 import { useMediaStore } from '../../stores/media/media';
 import { useMediaOptionsStore } from '../../stores/media/options';
 import { optionsForChoice } from '../../helpers/quickChoice';
+import { useDownloadReports } from '../../composables/useDownloadReports';
 import { useUiPrefs } from '../../composables/useUiPrefs';
 
 const { t } = useI18n();
@@ -178,7 +185,8 @@ const router = useRouter();
 const { count } = useLocaleNumber();
 const { active, finished, ready } = useDownloadBuckets();
 const { rows, shown, query, counts } = useDownloadList();
-const { clearFinished } = useListRemoval();
+const { clearFinished, removeRows } = useListRemoval();
+const { reportGroups } = useDownloadReports();
 const hidden = useListVisibilityStore();
 const mediaStore = useMediaStore();
 const optionsStore = useMediaOptionsStore();
@@ -206,6 +214,11 @@ const hints = computed(() => {
 const headCls = 'sticky top-0 z-[1] flex items-center gap-2 border-b border-hairline bg-background/90 pe-4 ps-8 py-1.5 text-[11.5px] font-semibold text-muted-foreground backdrop-blur';
 
 const view = computed(() => parseListView(route.query));
+const failedCount = computed(() => categoryNoticeCount(rows.value, view.value.type));
+function showFailures() {
+  query.value = '';
+  void router.push({ name: 'home', query: viewQuery({ type: 'all', status: 'failed' }) });
+}
 const statusCounts = computed(() => counts(view.value.type).statuses);
 const clearedCount = computed(() => rows.value.filter(row => row.cleared).length);
 /**

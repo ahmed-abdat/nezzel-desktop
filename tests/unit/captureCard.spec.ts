@@ -12,7 +12,7 @@ vi.mock('../../src/composables/useCaptureOffer', () => ({
   useCaptureOffer: () => ({
     offer, details: computed(() => offer.value.details), error: ref(false), acting: ref(false), slow: ref(false),
     isPlaylist: computed(() => offer.value.feed || offer.value.details.mediaKind === 'playlist'), choicesLoading: computed(() => !offer.value.read),
-    faviconFailed: ref(false), failure: ref(null), favicon: ref(null), facts: ref([]),
+    thumbFailed: ref(false), faviconFailed: ref(false), failure: ref(null), favicon: ref(null), facts: ref([]),
     act: vi.fn(), onFail: vi.fn(), start: vi.fn(),
   }),
 }));

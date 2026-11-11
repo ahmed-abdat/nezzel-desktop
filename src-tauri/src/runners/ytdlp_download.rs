@@ -282,6 +282,12 @@ async fn run_download_attempts(
       }
       let mut input = ResolvedInput::new(&entry.url);
       match resolution {
+        Resolution::Passthrough(url) if resolve::facebook_photo_target(&url) => {
+          entry.fetch_engine = Some(crate::models::parsed::FetchEngine::Gallery);
+          input.rewrite(url);
+          entry.resolved = Some(Box::new(input));
+          return Box::pin(crate::runners::gallery::run_media_download(app, entry)).await;
+        }
         Resolution::Passthrough(url) => input.rewrite(url),
         Resolution::PostMedia { url, title, .. } => {
           if let Some(title) = title {
@@ -309,6 +315,28 @@ async fn run_download_attempts(
             );
           }
           return Box::pin(crate::runners::gallery::run_media_download(app, entry)).await;
+        }
+        Resolution::Unsupported {
+          reason: Reason::PhotosOnly,
+        } => {
+          entry.fetch_engine = Some(crate::models::parsed::FetchEngine::Gallery);
+          return Box::pin(crate::runners::gallery::run_media_download(app, entry)).await;
+        }
+        Resolution::Failed { failure } => {
+          let mut event = super::gallery::error_diagnostic(
+            &entry.group_id,
+            &entry.id,
+            &crate::parsers::gallery::GalleryError::Refused(failure.code()),
+            false,
+          );
+          event.component = Some("resolve".into());
+          let message = failure.code().to_owned();
+          crate::extract::terminal::emit_terminal(
+            &app,
+            MediaDiagnosticPayload::from_diagnostic_event(event),
+            MediaFatalPayload::with_exit(entry.group_id.clone(), entry.id.clone(), 1, message),
+          );
+          return Err(YtdlpDownloadError::RunnerError(failure.code().into()));
         }
         Resolution::Unsupported { reason } => {
           emit_unsupported(&app, &entry.group_id, &entry.id, reason);

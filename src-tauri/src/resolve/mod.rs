@@ -63,6 +63,23 @@ pub enum Resolution {
   Unsupported {
     reason: Reason,
   },
+  Failed {
+    failure: Failure,
+  },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failure {
+  Network,
+  Timeout,
+}
+impl Failure {
+  pub fn code(self) -> &'static str {
+    match self {
+      Self::Network => "networkNameResolutionFailed",
+      Self::Timeout => "networkTimeout",
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,12 +100,14 @@ enum Verdict {
   NoMatch,
   Verified(Resolution),
   Unknown,
+  Failed(Failure),
 }
 
 impl Verdict {
   fn resolution(self, original: &str) -> Resolution {
     match self {
       Self::Verified(result) => result,
+      Self::Failed(failure) => Resolution::Failed { failure },
       Self::NoMatch | Self::Unknown => Resolution::Passthrough(original.into()),
     }
   }
@@ -100,6 +119,7 @@ impl std::fmt::Debug for Resolution {
       Self::Passthrough(_) => f.write_str("Passthrough(redacted)"),
       Self::PostMedia { .. } => f.write_str("PostMedia(redacted)"),
       Self::Attachments { .. } => f.write_str("Attachments(redacted)"),
+      Self::Failed { failure } => f.debug_tuple("Failed").field(failure).finish(),
       Self::Unsupported { reason } => f
         .debug_struct("Unsupported")
         .field("reason", reason)
@@ -109,10 +129,20 @@ impl std::fmt::Debug for Resolution {
 }
 
 pub async fn resolve(url: &str) -> Resolution {
-  tokio::time::timeout(Duration::from_secs(20), read_site(url, &http::PublicHttp))
-    .await
-    .unwrap_or(Verdict::Unknown)
-    .resolution(url)
+  match tokio::time::timeout(Duration::from_secs(20), read_site(url, &http::PublicHttp)).await {
+    Ok(verdict) => verdict.resolution(url),
+    Err(_) => resolution_timeout(url),
+  }
+}
+
+pub(crate) fn resolution_timeout(url: &str) -> Resolution {
+  if threads::Identity::parse(url).is_some() {
+    Resolution::Failed {
+      failure: Failure::Timeout,
+    }
+  } else {
+    Resolution::Passthrough(url.into())
+  }
 }
 
 async fn read_site<T: http::Transport>(url: &str, transport: &T) -> Verdict {
@@ -130,7 +160,7 @@ async fn read_site<T: http::Transport>(url: &str, transport: &T) -> Verdict {
       ReaderId::Facebook => read_facebook(url, transport).await,
     };
     match result {
-      Verdict::Verified(_) => return result,
+      Verdict::Verified(_) | Verdict::Failed(_) => return result,
       Verdict::NoMatch => {}
       Verdict::Unknown => unknown = true,
     }
@@ -164,7 +194,13 @@ async fn read_facebook<T: http::Transport>(url: &str, transport: &T) -> Verdict 
   let Ok(html) = std::str::from_utf8(&page.body) else {
     return Verdict::Unknown;
   };
-  facebook::read(html, &identity, &requested)
+  let verdict = facebook::read(html, &identity, &requested);
+  if let Verdict::Verified(result @ Resolution::Attachments { .. }) = &verdict {
+    if !admit_resolution(transport, result).await {
+      return Verdict::Unknown;
+    }
+  }
+  verdict
 }
 
 /// Only the reader's bounded single-photo route can bypass yt-dlp for gallery-dl.
@@ -275,7 +311,7 @@ async fn admit_resolution<T: http::Transport>(transport: &T, resolution: &Resolu
         Err(_) => false,
       }
     }
-    Resolution::Unsupported { .. } => true,
+    Resolution::Unsupported { .. } | Resolution::Failed { .. } => true,
   }
 }
 

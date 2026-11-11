@@ -1,4 +1,11 @@
 {
+  "closeNote": {
+    "title": "Nezzel sigue funcionando",
+    "bodyMac": "Nezzel y tus descargas siguen funcionando al cerrar la ventana.",
+    "hintMac": "Vuelve a abrir Nezzel desde el Dock, Spotlight o su icono en la barra de menús.",
+    "quit": "Salir de Nezzel",
+    "gotIt": "Entendido"
+  },
   "toolsUpdate": {
     "stale": "Nezzel no ha podido actualizar las herramientas de descarga en al menos 7 días. Puede que algunos sitios no funcionen",
     "tryNow": "Intentar ahora",
@@ -1224,5 +1231,21 @@
       "wiki": "Wiki",
       "reportABug": "Reportar un error (bug)"
     }
+  },
+  "downloads": {
+    "list": {
+      "failedNotice": "{n} descarga fallida | {n} descargas fallidas",
+      "viewFailed": "Ver",
+      "reportFailed": "Informar de todas",
+      "clearFailed": "Quitar fallidas"
+    },
+    "selection": {
+      "report": "Informar"
+    }
+  },
+  "report": {
+    "batchTitle": "Informar de {n} descarga fallida | Informar de {n} descargas fallidas",
+    "includeLinks": "Incluir todos los enlaces",
+    "includeLinksHelp": "Los enlaces nos ayudan a reproducir el problema. Si desmarcas esta opción, no se enviará ningún enlace de descarga."
   }
 }

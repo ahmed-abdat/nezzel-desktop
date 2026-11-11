@@ -1013,6 +1013,51 @@ fn prefs_with_tracks() -> PathPreferences {
 }
 
 #[test]
+fn default_filename_media_suffixes() {
+  for (kind, height, fps, ext, expected) in [
+    ("video", "1080", "60", "mp4", "Title-(1080p60).mp4"),
+    ("video", "1080", "", "mp4", "Title-(1080p).mp4"),
+    ("image", "2731", "", "jpg", "Title-(2731p).jpg"),
+    ("image", "", "", "jpg", "Title.jpg"),
+  ] {
+    let mut context = TemplateContext {
+      values: HashMap::from([
+        ("title".into(), "Title".into()),
+        ("media_kind".into(), kind.into()),
+        ("height".into(), height.into()),
+        ("fps".into(), fps.into()),
+        ("ext".into(), ext.into()),
+      ]),
+    };
+    if kind == "image" {
+      // Photos supply no frame-rate field; never leave an fps placeholder for yt-dlp's NA fallback.
+      context.values.remove("fps");
+    }
+    for template in [
+      "%(title).200s-(%(height)sp%(fps).0d).%(ext)s",
+      "%(title).200B-(%(height)sp%(fps).0d).%(ext)s",
+    ] {
+      let output = OutputSettings {
+        file_name_template: template.into(),
+        ..Default::default()
+      };
+      let args = build_location_args(
+        &TrackType::Video,
+        &context,
+        &output,
+        &PathPreferences::default(),
+        PathBuf::from("/downloads"),
+      );
+      assert_eq!(
+        PathBuf::from(&args[1]).file_name().unwrap(),
+        expected,
+        "{kind}, {height}, {fps}"
+      );
+    }
+  }
+}
+
+#[test]
 fn default_filenames_fit_linux_bytes_even_for_long_non_latin_titles() {
   for (title, expected_prefix) in [
     ("ع".repeat(200), "ع".repeat(100)),

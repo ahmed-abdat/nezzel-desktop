@@ -195,6 +195,14 @@
       ]
     },
     {
+      "code": "accessForbidden403",
+      "component": "vimeo",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Unable to download webpage: HTTP Error 401" }
+      ]
+    },
+    {
       "code": "notFound404",
       "appliesTo": "error",
       "patterns": [

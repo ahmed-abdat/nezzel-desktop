@@ -251,6 +251,7 @@ pub fn diagnostics_report(
 
 /// "Report a problem": sends now, even with automatic reports off (the user asked).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Each optional report field is a Tauri command argument.
 pub async fn diagnostics_send(
   app: AppHandle,
   note: Option<String>,
@@ -258,15 +259,19 @@ pub async fn diagnostics_send(
   url: Option<String>,
   extractor: Option<String>,
   include_link: Option<bool>,
+  batch_id: Option<String>,
+  event_id: Option<String>,
 ) -> Result<(), send::SendError> {
   let report = build_report(
     &app,
     manual_draft(note, download, url, extractor, include_link),
   );
   // The frontend says "could not send" and offers "Copy details" for any `SendError`.
-  tauri::async_runtime::spawn_blocking(move || send::send_manual(&report))
-    .await
-    .map_err(|_| send::SendError::NotDelivered)?
+  tauri::async_runtime::spawn_blocking(move || {
+    send::send_manual(&report, batch_id.as_deref(), event_id.as_deref())
+  })
+  .await
+  .map_err(|_| send::SendError::NotDelivered)?
 }
 
 /// A download failed: sent automatically when reports are on. Returns whether it was sent.
@@ -376,7 +381,7 @@ pub async fn diagnostics_send_crash(app: AppHandle) -> Result<(), send::SendErro
     .try_state::<PendingCrash>()
     .and_then(|pending| pending.0.lock().ok()?.clone())
     .ok_or(send::SendError::NothingToSend)?;
-  tauri::async_runtime::spawn_blocking(move || send::send_manual(&report))
+  tauri::async_runtime::spawn_blocking(move || send::send_manual(&report, None, None))
     .await
     .map_err(|_| send::SendError::NotDelivered)??;
   if let Some(pending) = app.try_state::<PendingCrash>() {

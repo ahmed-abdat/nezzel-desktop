@@ -310,15 +310,21 @@ mod tests {
 
   #[test]
   fn a_key_counts_at_most_500_a_day_then_usage_capped_once() {
-    let mut state = State::default();
-    for _ in 0..11_358 {
-      state.count("dl.cancelled.video.fhd", T);
+    for key in [
+      "dl.cancelled.video.fhd",
+      "sitefail:x.com",
+      "failcode:unknown",
+    ] {
+      let mut state = State::default();
+      for _ in 0..11_358 {
+        state.count(key, T);
+      }
+      assert_eq!(state.counts[key], MAX_PER_DAY);
+      assert_eq!(state.counts[keys::USAGE_CAPPED], 1);
+      // The next UTC day counts again.
+      assert!(state.count(key, T + DAY_MS));
+      assert_eq!(state.counts[key], MAX_PER_DAY + 1);
     }
-    assert_eq!(state.counts["dl.cancelled.video.fhd"], MAX_PER_DAY);
-    assert_eq!(state.counts[keys::USAGE_CAPPED], 1);
-    // The next UTC day counts again.
-    assert!(state.count("dl.cancelled.video.fhd", T + DAY_MS));
-    assert_eq!(state.counts["dl.cancelled.video.fhd"], MAX_PER_DAY + 1);
   }
 
   #[test]

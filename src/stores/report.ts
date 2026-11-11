@@ -1,5 +1,7 @@
+import { v4 as uuid } from 'uuid';
+import { batchReportPayloads, type ReportCandidate } from '../helpers/reportContext';
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { copyText } from '../tauri/clipboard';
 import { i18n } from '../i18n';
@@ -66,14 +68,35 @@ export function reportFailedDownload(download: ReportedDownload): void {
 export const useReportStore = defineStore('report', () => {
   const open = ref(false);
   const download = ref<ReportedDownload | null>(null);
+  const batch = ref<ReportCandidate[]>([]);
+  const batchId = ref('');
+  const sentEventIds = ref(new Set<string>());
+  const batchConsent = ref<{ note: string; includeLink: boolean } | null>(null);
+  const batchLocked = computed(() => batchConsent.value !== null);
+  const isBatch = computed(() => !!batchId.value);
+  const batchCount = computed(() => batch.value.length);
+  const hasLinks = computed(() => batch.value.length ? batch.value.some(row => !!row.download.url) : !!download.value?.url);
   const sending = ref(false);
   const toast = useToastStore();
 
   function openReport(failed?: ReportedDownload) {
     countUsage('report.opened');
+    batch.value = [];
+    batchId.value = '';
+    sentEventIds.value.clear();
+    batchConsent.value = null;
     download.value = failed ?? null;
     sending.value = false;
     open.value = true;
+  }
+
+  function openBatchReport(rows: ReportCandidate[]) {
+    const failed = rows.filter(row => row.status === 'failed');
+    if (!failed.length) return;
+    if (sending.value) return;
+    openReport();
+    batch.value = failed.map(row => ({ ...row, eventId: uuid() }));
+    batchId.value = uuid();
   }
 
   function close() {
@@ -81,20 +104,28 @@ export const useReportStore = defineStore('report', () => {
   }
 
   function args(note: string, includeLink: boolean) {
-    return {
+    if (isBatch.value) {
+      const consent = batchConsent.value ?? { note, includeLink };
+      const unsent = batch.value.filter(row => !row.eventId || !sentEventIds.value.has(row.eventId));
+      return batchReportPayloads(unsent, consent.note, consent.includeLink, batchId.value);
+    }
+    return [{
       note: note.trim() || null,
       download: download.value?.context ?? null,
       url: download.value?.url ?? null,
       extractor: download.value?.extractor ?? null,
       includeLink,
-    };
+    }];
   }
 
   /** Copy the same scrubbed text, for when sending is not possible. */
   async function copyDetails(note: string, includeLink: boolean) {
     try {
-      const report = await invoke<ProblemReport>('diagnostics_report', args(note, includeLink));
-      await copyText(report.body);
+      const reports = [];
+      for (const payload of args(note, includeLink)) {
+        reports.push(await invoke<ProblemReport>('diagnostics_report', payload));
+      }
+      await copyText(reports.map(report => report.body).join('\n\n'));
       toast.showToast(t('report.copied'), { style: 'success' });
     } catch {
       toast.showToast(t('report.copyFailed'), { style: 'error' });
@@ -102,9 +133,17 @@ export const useReportStore = defineStore('report', () => {
   }
 
   async function send(note: string, includeLink: boolean) {
+    if (!open.value || sending.value) return;
+    if (batchId.value && !batchConsent.value) batchConsent.value = { note, includeLink };
+    const payloads = args(note, includeLink);
+    if (!payloads.length) return;
     sending.value = true;
     try {
-      await invoke('diagnostics_send', args(note, includeLink));
+      // Keep the original batch and its event IDs intact across retries.
+      for (const payload of payloads) {
+        await invoke('diagnostics_send', payload);
+        if ('eventId' in payload && payload.eventId) sentEventIds.value.add(payload.eventId);
+      }
       open.value = false;
       toast.showToast(t('report.sent'), { style: 'success' });
     } catch {
@@ -176,5 +215,5 @@ export const useReportStore = defineStore('report', () => {
     });
   }
 
-  return { open, download, sending, openReport, close, send, checkCrash, startupChecks };
+  return { open, download, isBatch, batchCount, hasLinks, batchLocked, sending, openReport, openBatchReport, close, send, checkCrash, startupChecks };
 });

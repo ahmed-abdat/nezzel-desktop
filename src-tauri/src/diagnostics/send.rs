@@ -192,12 +192,15 @@ struct Outgoing {
 }
 
 /// The event and its `report.txt`, exactly as they leave the app.
-fn event(out: Outgoing) -> (Event<'static>, Attachment) {
+fn event(out: Outgoing, event_id: Option<&str>) -> (Event<'static>, Attachment) {
   let mut event = Event {
     level: out.level,
     message: Some(out.message.first_line(200).0),
     ..Event::default()
   };
+  if let Some(id) = event_id.and_then(|id| uuid::Uuid::parse_str(id).ok()) {
+    event.event_id = id;
+  }
   event.tags.insert(SOURCE_TAG.into(), out.source.into());
   for (key, value) in out.tags {
     event.tags.insert(key.into(), value.0);
@@ -220,8 +223,8 @@ fn event(out: Outgoing) -> (Event<'static>, Attachment) {
   (event, attachment)
 }
 
-fn capture(out: Outgoing) -> sentry::types::Uuid {
-  let (event, attachment) = event(out);
+fn capture(out: Outgoing, event_id: Option<&str>) -> sentry::types::Uuid {
+  let (event, attachment) = event(out, event_id);
   sentry::with_scope(
     |scope| scope.add_attachment(attachment),
     || sentry::capture_event(event),
@@ -295,12 +298,17 @@ fn frontend_event(clean: &ScrubbedText) -> Outgoing {
   }
 }
 
-fn manual_event(report: &Report) -> Outgoing {
+fn manual_event(report: &Report, batch_id: Option<&str>) -> Outgoing {
+  // A batch id is random and per-dialog; reject arbitrary webview text at the privacy boundary.
+  let tags = batch_id
+    .and_then(|id| uuid::Uuid::parse_str(id).ok())
+    .map(|id| vec![("batch_id", EventText(id.to_string()))])
+    .unwrap_or_default();
   Outgoing {
     source: "manual",
     level: Level::Info,
     message: EventText::title(report),
-    tags: vec![],
+    tags,
     fingerprint: vec![],
     body: EventText::body(report),
   }
@@ -311,7 +319,7 @@ pub fn send_crash(app: &AppHandle, report: &Report, crash: &ScrubbedText, fatal:
   if !enabled(app) {
     return false;
   }
-  capture(crash_event(report, crash, fatal));
+  capture(crash_event(report, crash, fatal), None);
   true
 }
 
@@ -329,7 +337,7 @@ pub fn send_failure(app: &AppHandle, report: &Report, download: &DownloadContext
   if !admit(format!("failure:{code}:{site}")) {
     return false;
   }
-  capture(failure_event(report, download));
+  capture(failure_event(report, download), None);
   true
 }
 
@@ -339,7 +347,7 @@ pub fn send_frontend_error(app: &AppHandle, clean: &ScrubbedText) {
   if !enabled(app) || !admit(format!("frontend:{first}")) {
     return;
   }
-  capture(frontend_event(clean));
+  capture(frontend_event(clean), None);
 }
 
 /// Why a report the user sent did not go. Only `notDelivered` is worth trying again.
@@ -379,11 +387,15 @@ impl serde::Serialize for SendError {
 
 /// "Report a problem": explicit, so it is sent even with automatic reports off.
 /// Waits for delivery so the UI can say it was sent.
-pub fn send_manual(report: &Report) -> Result<(), SendError> {
+pub fn send_manual(
+  report: &Report,
+  batch_id: Option<&str>,
+  event_id: Option<&str>,
+) -> Result<(), SendError> {
   if !configured() {
     return Err(SendError::NotConfigured);
   }
-  capture(manual_event(report));
+  capture(manual_event(report, batch_id), event_id);
   let delivered = sentry::Hub::current()
     .client()
     .is_some_and(|client| client.flush(Some(Duration::from_secs(10))));
@@ -421,7 +433,7 @@ mod tests {
 
   /// The event and its attachment exactly as they would leave the app.
   fn wire(out: Outgoing) -> (serde_json::Value, String) {
-    let (event, attachment) = event(out);
+    let (event, attachment) = event(out, None);
     let json = serde_json::to_value(&event).expect("event serialises");
     (
       json,
@@ -488,6 +500,36 @@ mod tests {
   }
 
   #[test]
+  fn manual_batch_tag_is_a_uuid_and_does_not_change_grouping() {
+    let (report, _) = built(super::super::manual_draft(
+      None,
+      Some(failed_row()),
+      None,
+      None,
+      None,
+    ));
+    let (single, _) = wire(manual_event(&report, None));
+    let id = uuid::Uuid::new_v4().to_string();
+    let (batch, _) = wire(manual_event(&report, Some(&id)));
+    assert_eq!(batch["tags"]["batch_id"], id);
+    assert_eq!(batch["message"], single["message"]);
+    assert_eq!(batch["fingerprint"], single["fingerprint"]);
+    let event_id = uuid::Uuid::new_v4();
+    let (first, _) = event(
+      manual_event(&report, Some(&id)),
+      Some(&event_id.to_string()),
+    );
+    let (retry, _) = event(
+      manual_event(&report, Some(&id)),
+      Some(&event_id.to_string()),
+    );
+    assert_eq!(first.event_id, event_id);
+    assert_eq!(first.event_id, retry.event_id);
+    let (invalid, _) = wire(manual_event(&report, Some("/Users/private/name")));
+    assert!(invalid["tags"].get("batch_id").is_none());
+  }
+
+  #[test]
   fn manual_report_has_the_full_link_only_when_the_user_includes_it() {
     let draft = |include_link| {
       super::super::manual_draft(
@@ -499,7 +541,7 @@ mod tests {
       )
     };
     let (report, _) = built(draft(true));
-    let (json, body) = wire(manual_event(&report));
+    let (json, body) = wire(manual_event(&report, None));
     assert_no_leaks(&json, &body);
     assert_eq!(json["message"], "Download failed: http403");
     assert_eq!(json["tags"][SOURCE_TAG], "manual");
@@ -510,7 +552,7 @@ mod tests {
     assert!(body.contains("### Recent log"), "{body}");
 
     let (report, _) = built(draft(false));
-    let (json, body) = wire(manual_event(&report));
+    let (json, body) = wire(manual_event(&report, None));
     assert_no_leaks(&json, &body);
     assert!(!body.contains("dQw4w9WgXcQ"), "{body}");
     assert!(
