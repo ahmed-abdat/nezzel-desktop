@@ -1,4 +1,9 @@
 {
+  "toolsUpdate": {
+    "stale": "Nezzel konnte die Download-Werkzeuge seit mindestens 7 Tagen nicht aktualisieren. Einige Websites funktionieren möglicherweise nicht",
+    "tryNow": "Jetzt versuchen",
+    "failed": "Die Download-Werkzeuge konnten nicht aktualisiert werden. Versuchen Sie es später erneut"
+  },
   "common": {
     "download": "Herunterladen",
     "save": "Speichern",
@@ -915,6 +920,51 @@
   },
   "errors": {
     "runner": {
+      "networkTimeout": {
+        "shortMessage": "Zeitüberschreitung der Verbindung",
+        "message": "Die Website hat nicht rechtzeitig geantwortet",
+        "action": "Versuchen Sie es gleich noch einmal"
+      },
+      "diskFull": {
+        "shortMessage": "Der Datenträger ist voll",
+        "message": "Für diesen Download ist nicht genug Speicherplatz vorhanden",
+        "action": "Geben Sie Speicherplatz auf dem Download-Datenträger frei und versuchen Sie es erneut"
+      },
+      "outputNameTooLong": {
+        "shortMessage": "Der Dateiname ist zu lang",
+        "message": "Der Dateiname überschreitet die Grenze des Datenträgers",
+        "action": "Verwenden Sie in den Einstellungen eine kürzere Dateinamenvorlage und versuchen Sie es erneut"
+      },
+      "browserCookiesUnreadable": {
+        "shortMessage": "Browser-Anmeldung nicht lesbar",
+        "message": "Nezzel konnte die Browser-Anmeldung nicht lesen",
+        "action": "Wählen Sie in den Anmeldeeinstellungen einen anderen Browser"
+      },
+      "browserKeychainDenied": {
+        "shortMessage": "Schlüsselbundzugriff verweigert",
+        "message": "Die Browser-Anmeldung konnte nicht entsperrt werden",
+        "action": "Versuchen Sie es erneut und erlauben Sie den Schlüsselbundzugriff in macOS"
+      },
+      "browserSafariAccessDenied": {
+        "shortMessage": "Safari benötigt eine Berechtigung",
+        "message": "macOS hat den Zugriff auf die Safari-Anmeldung verweigert",
+        "action": "Erlauben Sie Nezzel Festplattenvollzugriff in den Systemeinstellungen und versuchen Sie es erneut"
+      },
+      "browserDatabaseLocked": {
+        "shortMessage": "Browser-Datenbank belegt",
+        "message": "Die Anmeldedatenbank des Browsers ist gesperrt",
+        "action": "Beenden Sie den Browser vollständig und versuchen Sie es erneut"
+      },
+      "browserProfileMissing": {
+        "shortMessage": "Browserprofil nicht gefunden",
+        "message": "Der Browser oder das gewählte Profil ist nicht mehr verfügbar",
+        "action": "Wählen Sie in den Anmeldeeinstellungen ein installiertes Browserprofil"
+      },
+      "accountAccessDenied": {
+        "shortMessage": "Ihr Konto hat möglicherweise keinen Zugriff",
+        "message": "Die Website hat Ihre Anmeldung erhalten, verweigert aber den Zugriff auf diesen Inhalt",
+        "action": "Öffnen Sie den Beitrag im Browser und prüfen Sie den Zugriff"
+      },
       "internal": {
         "shortMessage": "Interner Fehler",
         "message": "Beim Verarbeiten dieses Elements ist ein interner Fehler aufgetreten."
@@ -1050,6 +1100,11 @@
       "downloadRetryingFragment": {
         "shortMessage": "Fragment wird erneut versucht",
         "message": "Ein Fragment-Download ist fehlgeschlagen und wird automatisch erneut versucht."
+      },
+      "facebookVideoUnavailable": {
+        "shortMessage": "Facebook hat dieses Video nicht bereitgestellt",
+        "message": "Facebook hat dieses Video für Nezzel nicht bereitgestellt. Öffnen Sie den Link in einem Browser und kopieren Sie den Link aus der Adressleiste oder versuchen Sie es später erneut.",
+        "action": "Link aus der Adressleiste des Browsers kopieren oder später erneut versuchen"
       },
       "unknown": {
         "shortMessage": "Unbekannter Fehler",

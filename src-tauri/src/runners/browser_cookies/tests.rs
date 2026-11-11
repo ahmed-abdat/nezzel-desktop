@@ -74,6 +74,7 @@ async fn scoped_cookie_files_restrict_both_engines_and_are_removed_after_use() {
     ),
     ("x.com", vec![".twitter.com", ".x.com"]),
     ("twitter.com", vec![".twitter.com", ".x.com"]),
+    ("youtube.com", vec![]),
   ] {
     let access = CookieAccess::prepare(
       &AuthSettings::default(),
@@ -84,6 +85,7 @@ async fn scoped_cookie_files_restrict_both_engines_and_are_removed_after_use() {
     )
     .await
     .unwrap();
+    assert_eq!(access.has_session, !expected.is_empty());
     assert_eq!(access.args[0], "--cookies");
     assert!(!access
       .args
@@ -133,17 +135,27 @@ async fn declined_consent_creates_no_file_and_manual_cookie_file_is_unchanged() 
     assert!(!context.directory.exists());
   }
   let manual = root.path.join("manual.txt");
-  std::fs::write(&manual, b"user-managed jar").unwrap();
+  let contents =
+    b"# Netscape HTTP Cookie File\n.reddit.com\tTRUE\t/\tTRUE\t4102444800\tfixture\tsynthetic\n";
+  std::fs::write(&manual, contents).unwrap();
   let settings = AuthSettings {
     cookie_file: Some(manual.to_string_lossy().into_owned()),
     ..Default::default()
   };
-  let args = CookieAccess::prepare(&settings, None, "https://reddit.com/post", &context, cancel)
+  for (host, has_session) in [("reddit.com", true), ("youtube.com", false)] {
+    let args = CookieAccess::prepare(
+      &settings,
+      None,
+      &format!("https://{host}/post"),
+      &context,
+      cancel.clone(),
+    )
     .await
     .unwrap();
-  assert_eq!(args.args, ["--cookies", manual.to_str().unwrap()]);
-  drop(args);
-  assert_eq!(std::fs::read(manual).unwrap(), b"user-managed jar");
+    assert_eq!(args.args, ["--cookies", manual.to_str().unwrap()]);
+    assert_eq!(args.has_session, has_session);
+  }
+  assert_eq!(std::fs::read(manual).unwrap(), contents);
   assert!(!context.directory.exists());
 }
 
@@ -237,7 +249,20 @@ done
 [ -f "$info" ]
 printf '%s\n' '# Netscape HTTP Cookie File' '.reddit.com	TRUE	/	TRUE	4102444800	fixture	synthetic' 'google.com	FALSE	/	TRUE	4102444800	fixture	synthetic' > "$full"
 case '{mode}' in
-  error) exit 1 ;;
+  error) echo 'Cookie: private-cookie-value /Users/PrivatePerson/Profile' >&2; exit 1 ;;
+  keychain) echo 'WARNING: find-generic-password failed' >&2; exit 1 ;;
+  decrypt) echo 'WARNING: failed to decrypt cookie (AES-CBC) because UTF-8 decoding failed. Possibly the key is wrong?' >&2; exit 1 ;;
+  v10) echo 'WARNING: cannot decrypt v10 cookies: no key found' >&2; exit 1 ;;
+  dpapi) echo 'ERROR: Failed to decrypt with DPAPI. See  https://github.com/yt-dlp/yt-dlp/issues/10927  for more info' >&2; exit 1 ;;
+  keyring) echo 'ERROR: failed to read from keyring' >&2; exit 1 ;;
+  kwallet) echo 'ERROR: kwallet-query failed with return code 1. Please consult the kwallet-query man page for details' >&2; exit 1 ;;
+  zero) printf '%s\n' '# Netscape HTTP Cookie File' > "$full" ;;
+  zero-keychain) printf '%s\n' '# Netscape HTTP Cookie File' > "$full"; echo 'WARNING: find-generic-password failed' >&2; exit 0 ;;
+  zero-decrypt) printf '%s\n' '# Netscape HTTP Cookie File' > "$full"; echo 'WARNING: cannot decrypt v10 cookies: no key found' >&2; exit 0 ;;
+  unrelated-missing) echo 'ERROR: could not find ffmpeg: No such file or directory' >&2; exit 1 ;;
+  safari) echo 'ERROR: [Errno 1] Operation not permitted: /Users/PrivatePerson/Safari/Cookies.binarycookies' >&2; exit 1 ;;
+  locked) echo 'ERROR: database is locked' >&2; exit 1 ;;
+  missing) echo 'ERROR: could not find chrome cookies database' >&2; exit 1 ;;
   wait) exec /usr/bin/tail -f /dev/null ;;
 esac
 "#)).unwrap();
@@ -251,32 +276,82 @@ esac
 #[cfg(unix)]
 #[tokio::test]
 async fn chromium_exporter_passes_only_scoped_args_and_erases_full_jar() {
-  let root = Staging::new().unwrap();
-  let context = exporter_fixture(&root.path, "success");
-  let (_tx, cancel) = watch::channel(true);
-  let access = CookieAccess::prepare(
-    &AuthSettings::default(),
-    Some("chrome:/synthetic"),
-    "https://reddit.com/post",
-    &context,
-    cancel,
-  )
-  .await
-  .unwrap();
-  assert_eq!(access.args[0], "--cookies");
-  let path = PathBuf::from(&access.args[1]);
-  assert_eq!(domains(&path), [".reddit.com"]);
-  assert!(!path.with_file_name("full.txt").exists());
-  assert_eq!(
-    std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
-    1
-  );
-  let child = access.clone();
-  assert_eq!(access.args, child.args);
-  drop(access);
-  assert!(path.exists());
-  drop(child);
-  assert!(!path.exists());
+  use crate::parsers::ytdlp_error::{CookieFetchFailure, DiagnosticMatcher, YtdlpErrorParser};
+  let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
+  for (mode, host, expected_session) in [
+    ("success", "reddit.com", true),
+    ("success", "youtube.com", false),
+    ("zero", "reddit.com", false),
+  ] {
+    let root = Staging::new().unwrap();
+    let context = exporter_fixture(&root.path, mode);
+    let (_tx, cancel) = watch::channel(true);
+    let access = CookieAccess::prepare(
+      &AuthSettings::default(),
+      Some("chrome:/synthetic"),
+      &format!("https://{host}/post"),
+      &context,
+      cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(access.args[0], "--cookies");
+    let path = PathBuf::from(&access.args[1]);
+    assert_eq!(
+      domains(&path),
+      if expected_session {
+        vec![".reddit.com"]
+      } else {
+        vec![]
+      }
+    );
+    assert_eq!(access.has_session, expected_session);
+    let refusal = "ERROR: Login required";
+    assert_eq!(
+      parser.cookie_fetch_failure(refusal, access.has_session),
+      if expected_session {
+        CookieFetchFailure::Refused
+      } else {
+        CookieFetchFailure::Other
+      }
+    );
+    assert_eq!(
+      parser
+        .parse_fetch_line(refusal, access.has_session)
+        .unwrap()
+        .code,
+      if expected_session {
+        "accountAccessDenied"
+      } else {
+        "signInRequired"
+      }
+    );
+    assert_eq!(
+      crate::runners::gallery::error_diagnostic(
+        "group",
+        "item",
+        &crate::parsers::gallery::GalleryError::Login,
+        access.has_session
+      )
+      .code,
+      if expected_session {
+        "accountAccessDenied"
+      } else {
+        "signInRequired"
+      }
+    );
+    assert!(!path.with_file_name("full.txt").exists());
+    assert_eq!(
+      std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+      1
+    );
+    let child = access.clone();
+    assert_eq!(access.args, child.args);
+    drop(access);
+    assert!(path.exists());
+    drop(child);
+    assert!(!path.exists());
+  }
 }
 
 #[cfg(unix)]
@@ -321,19 +396,39 @@ async fn cancelling_an_active_export_removes_the_full_and_scoped_files() {
 #[cfg(unix)]
 #[tokio::test]
 async fn exporter_failure_removes_every_cookie_file() {
-  let root = Staging::new().unwrap();
-  let context = exporter_fixture(&root.path, "error");
-  let (_tx, cancel) = watch::channel(true);
-  let result = CookieAccess::prepare(
-    &AuthSettings::default(),
-    Some("chrome:/synthetic"),
-    "https://reddit.com/post",
-    &context,
-    cancel,
-  )
-  .await;
-  assert!(matches!(result, Err(COOKIE_READ_ERROR)));
-  assert_eq!(std::fs::read_dir(&context.directory).unwrap().count(), 0);
+  for (mode, expected) in [
+    ("error", "browserCookiesUnreadable"),
+    ("keychain", "browserKeychainDenied"),
+    ("decrypt", "browserKeychainDenied"),
+    ("v10", "browserKeychainDenied"),
+    ("dpapi", "browserKeychainDenied"),
+    ("keyring", "browserKeychainDenied"),
+    ("kwallet", "browserKeychainDenied"),
+    ("zero-keychain", "browserKeychainDenied"),
+    ("zero-decrypt", "browserKeychainDenied"),
+    ("unrelated-missing", "browserCookiesUnreadable"),
+    ("safari", "browserSafariAccessDenied"),
+    ("locked", "browserDatabaseLocked"),
+    ("missing", "browserProfileMissing"),
+  ] {
+    let root = Staging::new().unwrap();
+    let context = exporter_fixture(&root.path, mode);
+    let (_tx, cancel) = watch::channel(true);
+    let result = CookieAccess::prepare(
+      &AuthSettings::default(),
+      Some(if mode == "safari" {
+        "safari"
+      } else {
+        "chrome:/synthetic"
+      }),
+      "https://reddit.com/post",
+      &context,
+      cancel,
+    )
+    .await;
+    assert_eq!(result.unwrap_err(), expected, "{mode}");
+    assert_eq!(std::fs::read_dir(&context.directory).unwrap().count(), 0);
+  }
 }
 
 #[cfg(unix)]

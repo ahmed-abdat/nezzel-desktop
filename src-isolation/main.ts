@@ -34,6 +34,8 @@ const allowedCommands: Set<string> = new Set([
     'navigate',
     'binaries_check',
     'binaries_ensure',
+    'binaries_update_status',
+    'binaries_update_now',
     'updater_check',
     'updater_download',
     'updater_install',

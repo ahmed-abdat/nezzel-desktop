@@ -47,15 +47,33 @@ fn facebook_reads_only_the_bound_attachment() {
   ] {
     assert_eq!(facebook_read(&fixture(file), POST), None, "{file}");
   }
-  for file in ["photo-post.html", "album-post.html", "decoys-post.html"] {
+  for file in ["photo-post.html", "decoys-post.html"] {
     assert_eq!(
       facebook_read(&fixture(file), POST),
-      Some(Resolution::Unsupported {
-        reason: Reason::PhotosOnly
-      }),
+      Some(Resolution::Passthrough(
+        "https://www.facebook.com/photo/?fbid=900000000000002".into()
+      )),
       "{file}"
     );
   }
+  for source in [
+    "https://www.facebook.com/photo/?fbid=900000000000002",
+    "https://www.facebook.com/photo.php?fbid=900000000000002",
+    "https://www.facebook.com/page/photos/a.123/900000000000002/?type=3&theater",
+  ] {
+    assert_eq!(
+      facebook_read(&fixture("photo-post.html"), source),
+      Some(Resolution::Passthrough(
+        "https://www.facebook.com/photo/?fbid=900000000000002".into()
+      ))
+    );
+  }
+  assert_eq!(
+    facebook_read(&fixture("album-post.html"), POST),
+    Some(Resolution::Unsupported {
+      reason: Reason::PhotosOnly
+    })
+  );
   assert_eq!(
     facebook_read(
       &fixture("video-decoys-post.html"),
@@ -69,6 +87,41 @@ fn facebook_reads_only_the_bound_attachment() {
     facebook::read(&oversized_string, &identity, &identity),
     Verdict::Unknown
   ));
+}
+
+#[test]
+fn facebook_hands_off_single_photos_and_keeps_multi_photo_and_mixed_posts_for_gallery() {
+  use serde_json::json;
+  for (count, video) in [(1, false), (16, false), (1, true)] {
+    let mut attachments: Vec<_> = (0..count)
+      .map(|i| {
+        json!({"media": {
+          "__typename": "Photo", "id": format!("{}", 900000000000002u64 + i),
+          "image": {"uri": format!("https://scontent.example.fbcdn.net/{i}.jpg")}
+        }})
+      })
+      .collect();
+    if video {
+      attachments.push(json!({"media": {"__typename": "Video", "id": "900000000000099"}}));
+    }
+    let root = json!({"require": [["RelayPrefetchedStreamCache", "next", [], ["key", {
+      "__bbox": {"result": {"data": {"node_v2": {
+        "__typename": "Story", "post_id": "900000000000001", "attachments": attachments
+      }}}}
+    }]]]});
+    let html = format!("<script data-sjs>{root}</script>");
+    assert_eq!(
+      facebook_read(&html, POST),
+      Some(if count == 1 && !video {
+        Resolution::Passthrough("https://www.facebook.com/photo/?fbid=900000000000002".into())
+      } else {
+        Resolution::Unsupported {
+          reason: Reason::PhotosOnly,
+        }
+      }),
+      "{count} photos, video={video}"
+    );
+  }
 }
 
 // Attribute order, HTML entities and relative URLs occur in real publisher metadata.
@@ -164,6 +217,10 @@ fn facebook_identity_table() {
     ),
     (
       "https://web.facebook.com/photo.php?fbid=555&set=a.1",
+      "https://www.facebook.com/photo/?fbid=555",
+    ),
+    (
+      "https://www.facebook.com/page/photos/a.123/555/?type=3&theater",
       "https://www.facebook.com/photo/?fbid=555",
     ),
   ] {
@@ -309,23 +366,21 @@ async fn page_budget_and_login_wall_precede_metadata() {
     ));
   }
   let identity = facebook::Identity::parse(POST).unwrap();
-  assert!(matches!(
-    facebook::read(&fixture("mixed-post.html"), &identity, &identity),
-    Verdict::Verified(Resolution::Passthrough(url)) if url == "https://www.facebook.com/watch/?v=900000000000003"
-  ));
-  let missing_video_id = fixture("mixed-post.html").replace("900000000000003", "invalid-video-id");
-  assert!(matches!(
-    facebook::read(&missing_video_id, &identity, &identity),
-    Verdict::Unknown
-  ));
-  let multiple_videos = fixture("mixed-post.html").replace(
-    "\"nodes\":[",
-    "\"nodes\":[{\"media\":{\"__typename\":\"Video\",\"id\":\"900000000000099\"}},",
-  );
-  assert!(matches!(
-    facebook::read(&multiple_videos, &identity, &identity),
-    Verdict::Unknown
-  ));
+  for html in [
+    fixture("mixed-post.html"),
+    fixture("mixed-post.html").replace("900000000000003", "invalid-video-id"),
+    fixture("mixed-post.html").replace(
+      "\"nodes\":[",
+      "\"nodes\":[{\"media\":{\"__typename\":\"Video\",\"id\":\"900000000000099\"}},",
+    ),
+  ] {
+    assert!(matches!(
+      facebook::read(&html, &identity, &identity),
+      Verdict::Verified(Resolution::Unsupported {
+        reason: Reason::PhotosOnly
+      })
+    ));
+  }
   let consent = "<meta property='og:image' content='https://scontent.example.fbcdn.net/1.jpg'><form id='consent_form' action='/privacy/consent/'></form>";
   assert!(matches!(
     facebook::read(consent, &identity, &identity),
@@ -343,9 +398,7 @@ async fn facebook_regional_and_login_wrappers_keep_post_binding() {
   ].into()));
   assert!(matches!(
     read_site(short, &fake).await,
-    Verdict::Verified(Resolution::Unsupported {
-      reason: Reason::PhotosOnly
-    })
+    Verdict::Verified(Resolution::Passthrough(url)) if url == "https://www.facebook.com/photo/?fbid=900000000000002"
   ));
   let moved = "https://www.facebook.com/reel/900000000000789";
   let fake = FakeTransport(std::sync::Mutex::new(
@@ -741,24 +794,133 @@ fn threads_reads_the_bound_posts_linked_inline_video() {
   );
 }
 
+// Single-photo posts, including share/p redirects, hand off the bound photo to gallery.
+#[tokio::test]
+async fn facebook_photo_handoff_uses_single_photo_ids() {
+  let canonical = "https://www.facebook.com/photo/?fbid=900000000000002";
+  let short = "https://www.facebook.com/share/p/AbC/";
+  let post = "https://www.facebook.com/mic.gov.sl/posts/616512838936732";
+  for (source, landing, photo) in [
+    (short, POST, true),
+    (short, post, true),
+    (post, post, true),
+    (POST, POST, true),
+    (
+      "https://www.facebook.com/page/permalink/900000000000001",
+      POST,
+      true,
+    ),
+    (
+      "https://www.facebook.com/permalink.php?story_fbid=900000000000001&id=42",
+      POST,
+      true,
+    ),
+    (POST, canonical, true),
+    (canonical, canonical, true),
+    (
+      "https://www.facebook.com/photo.php?fbid=900000000000002",
+      canonical,
+      true,
+    ),
+    (
+      "https://www.facebook.com/page/photos/a.123/900000000000002/",
+      canonical,
+      true,
+    ),
+    (short, canonical, true),
+    (
+      short,
+      "https://www.facebook.com/photo.php?fbid=900000000000002",
+      true,
+    ),
+    (
+      short,
+      "https://www.facebook.com/page/photos/a.123/900000000000002/",
+      true,
+    ),
+    (POST, POST, false),
+    (short, POST, false),
+    (
+      "https://www.facebook.com/page/permalink/900000000000001",
+      POST,
+      false,
+    ),
+    (
+      "https://www.facebook.com/permalink.php?story_fbid=900000000000001&id=42",
+      POST,
+      false,
+    ),
+  ] {
+    let requested = facebook::Identity::parse(source).unwrap();
+    let page = facebook::Identity::parse(landing).unwrap();
+    let request_url = if requested.photo_id.is_some() {
+      canonical
+    } else {
+      source
+    };
+    let landing_url = if page.photo_id.is_some() {
+      canonical
+    } else {
+      landing
+    };
+    let body = fixture(if !photo {
+      "album-post.html"
+    } else if landing == post {
+      "fb-ministry-photo.html"
+    } else {
+      "photo-post.html"
+    });
+    let fake = FakeTransport(std::sync::Mutex::new(
+      if requested.url == page.url {
+        vec![(request_url, reply(200, None, body.as_bytes()))]
+      } else {
+        vec![
+          (request_url, reply(302, Some(landing), b"")),
+          (landing_url, reply(200, None, body.as_bytes())),
+        ]
+      }
+      .into(),
+    ));
+    let expected = if photo {
+      Resolution::Passthrough(if landing == post {
+        "https://www.facebook.com/photo/?fbid=616512792270070".into()
+      } else {
+        canonical.into()
+      })
+    } else {
+      // PhotosOnly leaves the gallery input unchanged, rather than selecting an attachment.
+      Resolution::Unsupported {
+        reason: Reason::PhotosOnly,
+      }
+    };
+    assert_eq!(
+      read_site(source, &fake).await.resolution(source),
+      expected,
+      "{source} -> {landing}"
+    );
+  }
+}
+
 // These recorded post roots are photos; crawler og:type=video.other must not override them.
 #[test]
 fn facebook_bound_photos_win_over_misleading_crawler_video_metadata() {
-  for (file, url) in [
+  for (file, url, id) in [
     (
       "fb-government-photo.html",
       "https://www.facebook.com/governostp/posts/830881617425000",
+      "830881584091670",
     ),
     (
       "fb-ministry-photo.html",
       "https://www.facebook.com/mic.gov.sl/posts/616512838936732",
+      "616512792270070",
     ),
   ] {
     assert_eq!(
       facebook_read(&fixture(file), url),
-      Some(Resolution::Unsupported {
-        reason: Reason::PhotosOnly
-      })
+      Some(Resolution::Passthrough(format!(
+        "https://www.facebook.com/photo/?fbid={id}"
+      )))
     );
   }
 }
@@ -1053,5 +1215,49 @@ async fn every_resolution_variant_needs_public_addresses() {
       expected,
       "{resolution:?}"
     );
+  }
+}
+
+#[test]
+fn vimeo_401_retries_chrome_once_and_only_after_that_response() {
+  for (url, stderr, retry) in [
+    (
+      "https://player.vimeo.com/video/123",
+      "ERROR: HTTP Error 401: Unauthorized",
+      true,
+    ),
+    (
+      "https://vimeo.com/123",
+      "ERROR: HTTP Error 401: Unauthorized",
+      true,
+    ),
+    (
+      "https://vimeo.com.evil.test/123",
+      "ERROR: HTTP Error 401: Unauthorized",
+      false,
+    ),
+    (
+      "https://www.linkedin.com/posts/video",
+      "ERROR: HTTP Error 401: Unauthorized",
+      false,
+    ),
+    (
+      "https://player.vimeo.com/video/123",
+      "ERROR: HTTP Error 403: Forbidden",
+      false,
+    ),
+  ] {
+    let mut input = ResolvedInput::new(url);
+    assert!(!input.args().contains(&"--impersonate"));
+    assert_eq!(input.retry_vimeo_401(stderr), retry);
+    assert_eq!(input.args().contains(&"chrome"), retry);
+    assert!(!input.retry_vimeo_401(stderr));
+    assert_eq!(
+      input.impersonation_unavailable(
+        "ERROR: Impersonate target chrome is not available. Use --list-impersonate-targets"
+      ),
+      retry
+    );
+    assert!(!input.impersonation_unavailable("ERROR: HTTP Error 401: Unauthorized"));
   }
 }

@@ -1,5 +1,6 @@
 //! Logged-out Reddit HTML, bound to one post. Unknown pages retain yt-dlp/login fallback.
-use super::{dom::Document, http, post, Resolution, Verdict};
+use super::{dom::Document, http, post, Reason, Resolution, Verdict};
+use crate::media_types::{ext_in, GALLERY_VIDEO_EXTS, IMAGE_EXTS, MANIFEST_EXTS, MEDIA_EXTS};
 use crate::models::parsed::{AttachmentKind, MediaAttachment};
 use reqwest::Url;
 use std::collections::HashSet;
@@ -189,6 +190,9 @@ pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdic
     };
     if let Some(result) = parse(body, &id, requested.video_id.as_deref()) {
       return match result {
+        Post::NoMedia => Verdict::Verified(Resolution::Unsupported {
+          reason: Reason::NoMedia,
+        }),
         Post::Video {
           target,
           title,
@@ -321,6 +325,7 @@ fn challenge(body: &str, page: &Url) -> Option<Url> {
 }
 
 enum Post {
+  NoMedia,
   Video {
     target: String,
     title: Option<String>,
@@ -373,11 +378,59 @@ fn parse(body: &str, id: &str, video_id: Option<&str>) -> Option<Post> {
         thumbnail: image_url(player.attr("poster")).map(|u| u.to_string()),
       })
     }
+    "text" => {
+      let images: Vec<_> = doc
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(i, n)| {
+          owned(*i)
+            && n.tag.name == "img"
+            && doc
+              .ancestors(*i)
+              .any(|p| doc.0[p].attr("slot") == "text-body")
+        })
+        .map(|(i, _)| i)
+        .collect();
+      if images.is_empty() {
+        return Some(Post::NoMedia);
+      }
+      if images.len() > 40 {
+        return None;
+      }
+      let mut items = Vec::new();
+      let mut seen = HashSet::new();
+      for image in images {
+        let item = photo(&doc, image, None, title.clone())?;
+        if seen.insert(item.id.clone()) {
+          items.push(item);
+        }
+      }
+      Some(Post::Items {
+        title,
+        author,
+        items,
+      })
+    }
     "link" => {
-      let url = http::https_url(post.attr("content-href")).ok()?;
+      let Ok(url) = http::https_url(post.attr("content-href")) else {
+        return Some(Post::NoMedia);
+      };
       let host = url.host_str()?;
       if is_host(host) || host.ends_with(".reddit.com") || host.ends_with(".redd.it") {
         return None;
+      }
+      if crate::sites::site_of(host).is_none() {
+        // Unknown media URLs and Reddit shares retain extractor/gallery fallback.
+        let extension = url.path().rsplit('.').next().unwrap_or_default();
+        return if [MEDIA_EXTS, IMAGE_EXTS, MANIFEST_EXTS, GALLERY_VIDEO_EXTS]
+          .iter()
+          .any(|set| ext_in(set, extension))
+        {
+          None
+        } else {
+          Some(Post::NoMedia)
+        };
       }
       Some(Post::Video {
         target: url.to_string(),
@@ -492,7 +545,7 @@ fn photo(
     candidates.push((url, 0));
   }
   for (i, node) in doc.0.iter().enumerate() {
-    if !doc.ancestors(i).any(|p| p == root)
+    if (i != root && !doc.ancestors(i).any(|p| p == root))
       || doc.closest(i, |n| n.tag.name == "shreddit-post") != Some(owner)
     {
       continue;

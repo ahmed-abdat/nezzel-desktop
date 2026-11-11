@@ -49,6 +49,14 @@ pub fn build_location_args(
       output_settings.audio_file_name_template.as_str(),
     ),
   };
+  // Upgrade only the old shipped defaults; leave custom templates alone.
+  let filename = match filename {
+    "%(title).200s-(%(height)sp%(fps).0d).%(ext)s" => {
+      "%(title).200B-(%(height)sp%(fps).0d).%(ext)s"
+    }
+    "%(title).200s-(%(abr)dk).%(ext)s" => "%(title).200B-(%(abr)dk).%(ext)s",
+    custom => custom,
+  };
   let base_dir = output_base_dir(track_type, output_settings, path_preferences, fallback_dir);
 
   let output_path = base_dir.join(prefix_dir).join(filename);

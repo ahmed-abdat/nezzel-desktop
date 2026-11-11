@@ -44,11 +44,26 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
   let mut best: Option<(Rank, Confidence, &'static str)> = None;
   let authenticated_terminal = attempts.iter().any(|attempt| {
     attempt.auth != AuthUsed::Anonymous
-      && (attempt.outcome == Outcome::NoMedia
+      && (attempt
+        .code
+        .is_some_and(|code| code.as_str() == "accountAccessDenied")
+        || attempt.outcome == Outcome::NoMedia
         || (attempt.outcome == Outcome::Removed && scoped_content_rank(attempt).is_some()))
   });
+  let authenticated_no_media = attempts.iter().any(|attempt| {
+    attempt.auth != AuthUsed::Anonymous
+      && attempt.stage == StageId::Reader(ReaderId::Reddit)
+      && attempt.confidence == Confidence::High
+      && attempt.outcome == Outcome::NoMedia
+  });
   for attempt in attempts {
+    if authenticated_no_media && attempt.outcome == Outcome::Forbidden {
+      continue;
+    }
     if authenticated_terminal
+      && attempt
+        .code
+        .is_none_or(|code| code.as_str() != "accountAccessDenied")
       && matches!(
         attempt.outcome,
         Outcome::Login | Outcome::AgeRestricted | Outcome::Paid | Outcome::Private
@@ -56,13 +71,28 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
     {
       continue;
     }
-    let site_changed = attempt.confidence == Confidence::High
+    let local_failure = attempt.code.is_some_and(|code| {
+      matches!(
+        code.as_str(),
+        "diskFull"
+          | "outputNameTooLong"
+          | "browserCookiesUnreadable"
+          | "browserKeychainDenied"
+          | "browserSafariAccessDenied"
+          | "browserDatabaseLocked"
+          | "browserProfileMissing"
+      )
+    });
+    let site_changed = !local_failure
+      && attempt.confidence == Confidence::High
       && matches!(
         (attempt.stage, attempt.outcome),
         (StageId::Reader(_), Outcome::Unknown)
           | (StageId::Ytdlp | StageId::Gallery, Outcome::ExtractFailed)
       );
-    let rank = if is_timeout(attempt) {
+    let rank = if local_failure {
+      Some(Rank(0, 0))
+    } else if is_timeout(attempt) {
       Some(Rank::TIMEOUT)
     } else {
       match attempt.outcome {
@@ -117,7 +147,7 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
 fn is_timeout(attempt: &Attempt) -> bool {
   attempt
     .code
-    .is_some_and(|code| code.as_str() == "fetchTimeout")
+    .is_some_and(|code| matches!(code.as_str(), "fetchTimeout" | "networkTimeout"))
 }
 
 fn scoped_content_rank(attempt: &Attempt) -> Option<Rank> {
@@ -170,7 +200,16 @@ mod tests {
 
   #[test]
   fn logged_in_terminal_evidence_replaces_anonymous_account_gates() {
-    for terminal in ["noMediaFound", "notFound404"] {
+    for terminal in [
+      "noMediaFound",
+      "notFound404",
+      "accountAccessDenied",
+      "browserKeychainDenied",
+      "browserSafariAccessDenied",
+      "browserDatabaseLocked",
+      "browserProfileMissing",
+      "browserCookiesUnreadable",
+    ] {
       let mut browser = failed(terminal);
       browser.auth = AuthUsed::Browser;
       for gate in [
@@ -182,6 +221,48 @@ mod tests {
         assert_eq!(final_code(&[failed(gate), browser]), Some(terminal));
       }
     }
+  }
+
+  #[test]
+  fn only_verified_reddit_reader_no_media_outranks_forbidden() {
+    for (stage, confidence, expected) in [
+      (
+        StageId::Reader(ReaderId::Reddit),
+        Confidence::High,
+        "noMediaFound",
+      ),
+      (
+        StageId::Reader(ReaderId::Reddit),
+        Confidence::Low,
+        "accessForbidden403",
+      ),
+      (
+        StageId::Reader(ReaderId::Facebook),
+        Confidence::High,
+        "accessForbidden403",
+      ),
+      (StageId::Ytdlp, Confidence::High, "accessForbidden403"),
+      (StageId::Gallery, Confidence::High, "accessForbidden403"),
+    ] {
+      let mut browser = failed("noMediaFound");
+      browser.auth = AuthUsed::Browser;
+      browser.stage = stage;
+      browser.confidence = confidence;
+      for pair in [
+        [failed("accessForbidden403"), browser],
+        [browser, failed("accessForbidden403")],
+      ] {
+        assert_eq!(
+          final_code(&pair),
+          Some(expected),
+          "{stage:?} {confidence:?}"
+        );
+      }
+    }
+    assert_eq!(
+      final_code(&[failed("noMediaFound"), failed("accessForbidden403")]),
+      Some("accessForbidden403")
+    );
   }
 
   #[test]
@@ -210,6 +291,11 @@ mod tests {
         "unknown",
       ),
       (vec!["networkNameResolutionFailed", "unknown"], "unknown"),
+      (vec!["networkTimeout"], "networkTimeout"),
+      (vec!["networkTimeout", "unknown"], "networkTimeout"),
+      (vec!["networkTimeout", "sslVerifyFailed"], "sslVerifyFailed"),
+      (vec!["networkTimeout", "urlNotSupported"], "urlNotSupported"),
+      (vec!["networkTimeout", "signInRequired"], "signInRequired"),
       (vec!["fetchTimeout"], "fetchTimeout"),
       (vec!["fetchTimeout", "unknown"], "fetchTimeout"),
       (vec!["fetchTimeout", "sslVerifyFailed"], "sslVerifyFailed"),

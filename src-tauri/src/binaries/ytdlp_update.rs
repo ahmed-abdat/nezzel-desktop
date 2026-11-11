@@ -155,6 +155,49 @@ pub(super) fn check_due(last_check: Option<u64>, now: u64) -> bool {
   last_check.is_none_or(|last| now.saturating_sub(last) >= 24 * 60 * 60)
 }
 
+/// Persist the first failed attempt across restarts; a successful check/install clears it.
+fn record_update_health(
+  meta: &mut super::binaries_manager::Metadata,
+  now: u64,
+  success: bool,
+  offline: bool,
+) -> bool {
+  if success {
+    meta.ytdlp_failure_since = None;
+  } else {
+    meta.ytdlp_failure_since.get_or_insert(now);
+  }
+  !offline && update_is_stale(meta, now)
+}
+
+pub(super) fn update_is_stale(meta: &super::binaries_manager::Metadata, now: u64) -> bool {
+  meta
+    .ytdlp_failure_since
+    .is_some_and(|since| now.saturating_sub(since) >= 7 * 86400)
+}
+
+fn update_offline(mut error: &(dyn std::error::Error + 'static)) -> bool {
+  loop {
+    let text = error.to_string().to_ascii_lowercase();
+    if error
+      .downcast_ref::<reqwest::Error>()
+      .is_some_and(|error| error.is_connect() || error.is_timeout())
+      || text.contains("error sending request")
+      || text.contains("timed out")
+      || crate::parsers::ytdlp_error::network_down("", &text)
+      || text.contains("dns error")
+      || text.contains("no such host")
+      || text.contains("failed to lookup address")
+    {
+      return true;
+    }
+    match error.source() {
+      Some(source) => error = source,
+      None => return false,
+    }
+  }
+}
+
 pub(crate) fn executable(bin: &Path) -> PathBuf {
   let name = &crate::binaries::bundled_tools::exe_name("yt-dlp");
   let current = bin.join(CURRENT_DIR).join(name);
@@ -353,17 +396,66 @@ impl BinariesManager {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
       let manager = app.state::<Self>();
-      if let Err(error) = manager.update_ytdlp().await {
-        tracing::info!("yt-dlp update failed: {error}");
-        crate::usage::engine_updated(&app, false);
-      }
+      let _ = manager.run_ytdlp_update(false).await;
     });
   }
 
-  async fn update_ytdlp(&self) -> Result<(), AnyError> {
+  /// One updater at a time, including explicit retries. Never pass update errors into IPC.
+  pub(crate) async fn run_ytdlp_update(&self, force: bool) -> Result<(), &'static str> {
+    let Ok(_check) = self.update_check.try_lock() else {
+      return if force {
+        Err("toolsUpdateFailed")
+      } else {
+        Ok(())
+      };
+    };
+    let result = self.update_ytdlp(force).await;
+    if matches!(result, Ok(false)) {
+      return if force {
+        Err("toolsUpdateFailed")
+      } else {
+        Ok(())
+      };
+    }
+    let offline = result
+      .as_ref()
+      .err()
+      .is_some_and(|error| update_offline(error.as_ref()));
+    let success = result.is_ok();
+    if !success {
+      tracing::info!(offline, "yt-dlp update failed");
+      crate::usage::engine_updated(&self.app, false);
+    }
+    let now = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .map_err(|_| "toolsUpdateFailed")?
+      .as_secs();
+    let _operation = self.operation.lock().await;
+    let meta_path = self.bin_dir.join("metadata.json");
+    let mut meta = self
+      .load_metadata(&meta_path)
+      .await
+      .map_err(|_| "toolsUpdateFailed")?;
+    if offline {
+      crate::diagnostics::send::network_response_failed();
+    }
+    let stale = record_update_health(&mut meta, now, success, offline);
+    self
+      .save_metadata(&meta_path, &meta)
+      .map_err(|_| "toolsUpdateFailed")?;
+    self
+      .app
+      .state::<super::binaries_state::BinariesState>()
+      .update_stale
+      .store(stale, std::sync::atomic::Ordering::SeqCst);
+    crate::events::emit(&self.app, "binary_update_stale", stale);
+    result.map(|_| ()).map_err(|_| "toolsUpdateFailed")
+  }
+
+  async fn update_ytdlp(&self, force: bool) -> Result<bool, AnyError> {
     self.maintain_ytdlp().await;
     let Some(client) = self.client()? else {
-      return Ok(());
+      return Ok(false);
     };
     let (old, attempt) = {
       let _operation = self.operation.lock().await;
@@ -374,20 +466,20 @@ impl BinariesManager {
         .update
         .update_binaries
       {
-        return Ok(());
+        return Ok(false);
       }
       let meta_path = self.bin_dir.join("metadata.json");
       let mut meta = self.load_metadata(&meta_path).await?;
       let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-      if meta.is_locked || !check_due(meta.ytdlp_last_check, now) {
-        return Ok(());
+      if meta.is_locked || (!force && !check_due(meta.ytdlp_last_check, now)) {
+        return Ok(false);
       }
       let manifest: Manifest = serde_json::from_slice(BUNDLED_MANIFEST)?;
       let Some(info) = manifest.tools.get("yt-dlp") else {
-        return Ok(());
+        return Ok(false);
       };
       let Some(path) = self.resolved_tool("yt-dlp", info, &meta) else {
-        return Ok(());
+        return Ok(false);
       };
       let old = if self.bundled_paths().get("yt-dlp") == Some(&path) {
         info.version.clone()
@@ -400,7 +492,7 @@ impl BinariesManager {
       };
       if YTDLP_PROCESSES.try_write().is_err() {
         tracing::info!("yt-dlp update deferred: process active");
-        return Ok(());
+        return Ok(false);
       }
       let attempt = CheckAttempt {
         checked_at: now,
@@ -415,8 +507,10 @@ impl BinariesManager {
       .get(LATEST_URL)
       .timeout(SMALL_REQUEST_TIMEOUT)
       .send()
-      .await?
-      .error_for_status()?;
+      .await?;
+    // Reuse this existing HTTP exchange as online evidence; never add a connectivity probe.
+    crate::diagnostics::send::network_response_received();
+    let response = response.error_for_status()?;
     let tag = redirect_tag(
       response.status().as_u16(),
       response
@@ -428,7 +522,7 @@ impl BinariesManager {
     if compare_versions(&tag, &old).ok_or("invalid installed yt-dlp version")? != Ordering::Greater
     {
       tracing::info!("yt-dlp up to date");
-      return Ok(());
+      return Ok(true);
     }
     let manifest = self.fetch_manifest(&client).await?;
     let arch = Self::current_platform();
@@ -476,10 +570,10 @@ impl BinariesManager {
         crate::usage::engine_updated(&self.app, true);
       }
       InstallOutcome::UpToDate => tracing::info!("yt-dlp up to date"),
-      InstallOutcome::Busy => tracing::info!("yt-dlp update deferred: process active"),
-      InstallOutcome::Locked => tracing::info!("yt-dlp update deferred: metadata locked"),
+      InstallOutcome::Busy => return Ok(false),
+      InstallOutcome::Locked => return Ok(false),
     }
-    Ok(())
+    Ok(true)
   }
 
   pub(super) async fn install_ytdlp(
@@ -606,6 +700,54 @@ mod tests {
       ),
       None
     );
+  }
+
+  #[test]
+  fn update_failures_notice_after_seven_days_and_recovery_resets_the_streak() {
+    for (message, offline) in [
+      ("Network is unreachable", true),
+      ("dns error", true),
+      ("Connection timed out", true),
+      (
+        "error sending request for url (https://github.com/yt-dlp/yt-dlp/releases/latest)",
+        true,
+      ),
+      ("checksum mismatch", false),
+    ] {
+      assert_eq!(update_offline(&std::io::Error::other(message)), offline);
+    }
+    let mut meta = super::super::binaries_manager::Metadata::default();
+    let day = 86400;
+    assert!(!record_update_health(&mut meta, 100, false, false));
+    assert!(!record_update_health(
+      &mut meta,
+      100 + 7 * day - 1,
+      false,
+      false
+    ));
+    assert!(!record_update_health(&mut meta, 100 + 7 * day, false, true));
+    assert!(record_update_health(&mut meta, 100 + 7 * day, false, false));
+    let stored = serde_json::to_vec(&meta).unwrap();
+    let mut reloaded = serde_json::from_slice(&stored).unwrap();
+    assert!(record_update_health(
+      &mut reloaded,
+      100 + 8 * day,
+      false,
+      false
+    ));
+    assert!(!record_update_health(
+      &mut reloaded,
+      100 + 8 * day,
+      true,
+      false
+    ));
+    assert!(!record_update_health(
+      &mut reloaded,
+      100 + 9 * day,
+      false,
+      false
+    ));
+    assert!(!record_update_health(&mut reloaded, 99, false, false));
   }
 
   #[test]

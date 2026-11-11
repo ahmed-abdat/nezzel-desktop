@@ -13,12 +13,34 @@ use sentry::protocol::{Attachment, Event, Level};
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 const SOURCE_TAG: &str = "nezzel.source";
 /// One session can't flood the project: a loop of failures sends a handful of events.
 const MAX_AUTO_EVENTS: usize = 20;
+
+// A timeout alone cannot distinguish an unreachable network from a slow site. Reuse a
+// recent HTTP response or successful remote metadata fetch; unknown connectivity suppresses it.
+const ONLINE_EVIDENCE_TTL: Duration = Duration::from_secs(60);
+static LAST_NETWORK_RESPONSE: Mutex<Option<Instant>> = Mutex::new(None);
+
+pub(crate) fn network_response_received() {
+  if let Ok(mut last) = LAST_NETWORK_RESPONSE.lock() {
+    *last = Some(Instant::now());
+  }
+}
+
+pub(crate) fn network_response_failed() {
+  if let Ok(mut last) = LAST_NETWORK_RESPONSE.lock() {
+    *last = None;
+  }
+}
+
+fn worth_reporting_with_network(code: &str, response_age: Option<Duration>) -> bool {
+  worth_reporting(code)
+    && (code != "networkTimeout" || response_age.is_some_and(|age| age < ONLINE_EVIDENCE_TTL))
+}
 
 static SENT: LazyLock<Mutex<(usize, HashSet<String>)>> =
   LazyLock::new(|| Mutex::new((0, HashSet::new())));
@@ -82,7 +104,7 @@ fn strip_event(mut event: Event<'static>) -> Option<Event<'static>> {
 pub fn worth_reporting(code: &str) -> bool {
   !matches!(
     code,
-    "rejectedByFilter" | "input_filter_skipped" | "cancelled" | "unknown"
+    "rejectedByFilter" | "input_filter_skipped" | "cancelled"
   ) && !crate::parsers::ytdlp_error::network_down(code, "")
 }
 
@@ -296,7 +318,11 @@ pub fn send_crash(app: &AppHandle, report: &Report, crash: &ScrubbedText) -> boo
 /// A failed download, sent automatically. Site and extractor come from the row (`link::link_for_report`).
 pub fn send_failure(app: &AppHandle, report: &Report, download: &DownloadContext) -> bool {
   let code = failure_code(download);
-  if !enabled(app) || !worth_reporting(code.as_str()) {
+  let response_age = LAST_NETWORK_RESPONSE
+    .lock()
+    .ok()
+    .and_then(|last| last.map(|when| when.elapsed()));
+  if !enabled(app) || !worth_reporting_with_network(code.as_str(), response_age) {
     return false;
   }
   let site = download.site.as_ref().map_or("unknown", SiteToken::as_str);
@@ -584,11 +610,24 @@ mod tests {
       "rejectedByFilter",
       "cancelled",
       "networkNameResolutionFailed",
-      "unknown",
     ] {
       assert!(!worth_reporting(code), "{code}");
     }
     assert!(worth_reporting("http403"));
+    assert!(worth_reporting("unknown"));
+    assert!(worth_reporting("networkTimeout"));
+    for (age, report) in [
+      (None, false),
+      (Some(Duration::ZERO), true),
+      (Some(ONLINE_EVIDENCE_TTL), false),
+    ] {
+      assert_eq!(worth_reporting_with_network("networkTimeout", age), report);
+      assert!(worth_reporting_with_network("unknown", age));
+      assert!(!worth_reporting_with_network(
+        "networkNameResolutionFailed",
+        age
+      ));
+    }
     // Login walls and site decisions are still worth a report (only the user's own choices and outages are not).
     for code in [
       "signInRequired",

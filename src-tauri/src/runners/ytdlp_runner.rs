@@ -44,6 +44,7 @@ pub enum YtdlpCommandEvent {
 
 #[derive(Debug)]
 pub struct YtdlpOutput {
+  pub has_session: bool,
   pub code: i32,
   pub stdout: Vec<u8>,
   pub stderr: Vec<u8>,
@@ -388,7 +389,7 @@ impl<'a> YtdlpRunner<'a> {
     } else {
       self.prepare_cookie_access(group_id).await?
     };
-    self.args.extend(cookies.args.iter().cloned());
+    insert_before_url_separator(&mut self.args, &cookies.args);
     let process_guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
     log_run_summary(&self.args);
     let mut command = self.build_command()?;
@@ -584,6 +585,10 @@ async fn collect_output(
   mut cancel: watch::Receiver<bool>,
   deadline: Deadline,
 ) -> Result<Option<YtdlpOutput>, String> {
+  let has_session = child
+    ._cookies
+    .as_ref()
+    .is_some_and(|cookies| cookies.has_session);
   let mut guard = OutputChildGuard(Some(child));
   let result = wait_until(
     async {
@@ -602,6 +607,7 @@ async fn collect_output(
           Some(YtdlpCommandEvent::Terminated(term)) => {
             guard.0 = None;
             return Ok(YtdlpOutput {
+              has_session,
               code: term.code.unwrap_or(1),
               stdout,
               stderr,
@@ -1051,8 +1057,47 @@ fn subtitle_language_bases(languages: &[String]) -> Vec<String> {
   bases
 }
 
+/// Options added late (cookies) must come before `--`: everything after it is read by yt-dlp as a URL.
+fn insert_before_url_separator(args: &mut Vec<String>, extra: &[String]) {
+  let at = args
+    .iter()
+    .position(|arg| arg == "--")
+    .unwrap_or(args.len());
+  args.splice(at..at, extra.iter().cloned());
+}
+
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn cookie_options_go_before_the_url_separator() {
+    let extra = ["--cookies".to_string(), "/tmp/jar.txt".to_string()];
+    let mut args: Vec<String> = [
+      "-J",
+      "--referer",
+      "https://a.example/",
+      "--",
+      "https://a.example/v",
+    ]
+    .map(String::from)
+    .into();
+    super::insert_before_url_separator(&mut args, &extra);
+    assert_eq!(
+      args,
+      [
+        "-J",
+        "--referer",
+        "https://a.example/",
+        "--cookies",
+        "/tmp/jar.txt",
+        "--",
+        "https://a.example/v"
+      ]
+    );
+    let mut no_separator: Vec<String> = vec!["-J".into()];
+    super::insert_before_url_separator(&mut no_separator, &extra);
+    assert_eq!(no_separator, ["-J", "--cookies", "/tmp/jar.txt"]);
+  }
+
   use super::{
     build_sponsorblock_args, build_subtitle_args, normalize_extractor_args, summarize_args_for_log,
   };

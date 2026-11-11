@@ -14,7 +14,7 @@ impl TemplateContext {
   }
 
   pub fn render_template(&self, template: &str) -> String {
-    let re = Regex::new(r"%\(([^)]+)\)([0-9.]*[sd])").expect("invalid regex");
+    let re = Regex::new(r"%\(([^)]+)\)([0-9.]*[sdB])").expect("invalid regex");
 
     let replaced = re.replace_all(template, |caps: &Captures| {
       let whole = caps.get(0).unwrap().as_str();
@@ -86,6 +86,21 @@ impl TemplateContext {
 
           let ty = fmt.chars().last().unwrap_or('s');
           let width_str = &fmt[..fmt.len().saturating_sub(1)];
+
+          // yt-dlp's B conversion measures precision in UTF-8 bytes. Apply it here
+          // too when the app already supplied the title (for example a gallery item).
+          if ty == 'B' {
+            if let Some(limit) = width_str
+              .strip_prefix('.')
+              .and_then(|s| s.parse::<usize>().ok())
+            {
+              let mut end = out.len().min(limit);
+              while !out.is_char_boundary(end) {
+                end -= 1;
+              }
+              out.truncate(end);
+            }
+          }
 
           if ty == 'd' && !width_str.is_empty() {
             if let Ok(num) = out.trim().parse::<i64>() {

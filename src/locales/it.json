@@ -1,4 +1,9 @@
 {
+  "toolsUpdate": {
+    "stale": "Nezzel non riesce ad aggiornare gli strumenti di download da almeno 7 giorni. Alcuni siti potrebbero non funzionare",
+    "tryNow": "Prova ora",
+    "failed": "Non è stato possibile aggiornare gli strumenti di download. Riprova più tardi"
+  },
   "common": {
     "download": "Download",
     "save": "Salva",
@@ -916,6 +921,51 @@
   },
   "errors": {
     "runner": {
+      "networkTimeout": {
+        "shortMessage": "La connessione è scaduta",
+        "message": "Il sito non ha risposto in tempo",
+        "action": "Riprova tra un momento"
+      },
+      "diskFull": {
+        "shortMessage": "Il disco è pieno",
+        "message": "Non c’è spazio sufficiente per salvare questo download",
+        "action": "Libera spazio sul disco di download e riprova"
+      },
+      "outputNameTooLong": {
+        "shortMessage": "Il nome del file è troppo lungo",
+        "message": "Il nome del file supera il limite del disco",
+        "action": "Usa un modello di nome più corto nelle Impostazioni e riprova"
+      },
+      "browserCookiesUnreadable": {
+        "shortMessage": "Sessione del browser illeggibile",
+        "message": "Nezzel non ha potuto leggere la sessione del browser",
+        "action": "Scegli un altro browser nelle impostazioni di accesso"
+      },
+      "browserKeychainDenied": {
+        "shortMessage": "Accesso al portachiavi negato",
+        "message": "Non è stato possibile sbloccare la sessione del browser",
+        "action": "Riprova e consenti l’accesso al portachiavi quando macOS lo richiede"
+      },
+      "browserSafariAccessDenied": {
+        "shortMessage": "Safari richiede un permesso",
+        "message": "macOS non ha consentito l’accesso alla sessione Safari",
+        "action": "Concedi a Nezzel l’accesso completo al disco in Impostazioni di Sistema e riprova"
+      },
+      "browserDatabaseLocked": {
+        "shortMessage": "Database del browser occupato",
+        "message": "Il database della sessione del browser è bloccato",
+        "action": "Chiudi completamente il browser e riprova"
+      },
+      "browserProfileMissing": {
+        "shortMessage": "Profilo del browser non trovato",
+        "message": "Il browser o il profilo selezionato non è più disponibile",
+        "action": "Scegli un profilo di browser installato nelle impostazioni di accesso"
+      },
+      "accountAccessDenied": {
+        "shortMessage": "Il tuo account potrebbe non avere accesso",
+        "message": "Il sito ha rifiutato dopo aver ricevuto la sessione. Il tuo account potrebbe non avere accesso a questo contenuto",
+        "action": "Apri il post nel browser per verificare l’accesso"
+      },
       "internal": {
         "shortMessage": "Errore interno",
         "message": "Si è verificato un errore interno durante l'elaborazione di questo elemento."
@@ -1051,6 +1101,11 @@
       "downloadRetryingFragment": {
         "shortMessage": "Nuovo tentativo recupero frammento",
         "message": "Il download di un frammento non è riuscito e verrà ritentato automaticamente."
+      },
+      "facebookVideoUnavailable": {
+        "shortMessage": "Facebook non ha fornito questo video",
+        "message": "Facebook non ha fornito questo video a Nezzel. Apra il link in un browser e copi il link dalla barra degli indirizzi, oppure riprovi più tardi.",
+        "action": "Copi il link dalla barra degli indirizzi del browser oppure riprovi più tardi"
       },
       "unknown": {
         "shortMessage": "Errore sconosciuto",

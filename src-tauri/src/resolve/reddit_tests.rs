@@ -302,3 +302,82 @@ fn reddit_identities_reject_unsafe_and_non_post_urls() {
     assert!(!crate::resolve::reddit::is_post_url(source), "{source}");
   }
 }
+
+#[tokio::test]
+async fn reddit_only_bound_link_and_text_posts_prove_no_media() {
+  for (kind, id, href, expected) in [
+    ("link", "abc123", "https://www.nytimes.com/article", true),
+    ("link", "abc123", "https://www.reddit.com/r/games", false),
+    (
+      "link",
+      "abc123",
+      "https://www.reddit.com/gallery/abc123",
+      false,
+    ),
+    (
+      "link",
+      "abc123",
+      "https://cdn.example.org/clip.MP4?key=1",
+      false,
+    ),
+    ("link", "abc123", "https://cdn.example.org/photo.jpg", false),
+    ("text", "abc123", "", true),
+    ("link", "abc123", "http://example.org/article", true),
+    ("link", "abc123", "", true),
+    ("link", "other123", "https://www.nytimes.com/article", false),
+    ("unknown", "abc123", "", false),
+  ] {
+    let body = format!(
+      "<shreddit-post id='t3_{id}' post-type='{kind}' content-href='{href}'></shreddit-post>"
+    );
+    let transport = FakeTransport(std::sync::Mutex::new(
+      [(CANONICAL, reply(200, None, body.as_bytes()))].into(),
+    ));
+    let result = read_site(CANONICAL, &transport).await.resolution(CANONICAL);
+    assert_eq!(
+      result,
+      if expected {
+        Resolution::Unsupported {
+          reason: Reason::NoMedia,
+        }
+      } else {
+        Resolution::Passthrough(CANONICAL.into())
+      }
+    );
+  }
+}
+
+#[tokio::test]
+async fn reddit_text_post_keeps_inline_body_images() {
+  let body = b"<shreddit-post id='t3_abc123' post-type='text'><div slot='text-body'><img src='https://i.redd.it/one.jpg'><img src='https://i.redd.it/two.png'></div></shreddit-post>";
+  let transport = FakeTransport(std::sync::Mutex::new(
+    [(CANONICAL, reply(200, None, body))].into(),
+  ));
+  let Resolution::Attachments { metadata } =
+    read_site(CANONICAL, &transport).await.resolution(CANONICAL)
+  else {
+    panic!("inline images must remain downloadable");
+  };
+  let media: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+  assert_eq!(
+    media["attachments"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .map(|i| i["url"].as_str().unwrap())
+      .collect::<Vec<_>>(),
+    ["https://i.redd.it/one.jpg", "https://i.redd.it/two.png"]
+  );
+}
+
+#[tokio::test]
+async fn reddit_link_posts_still_forward_known_media_hosts() {
+  let body = b"<shreddit-post id='t3_abc123' post-type='link' content-href='https://www.youtube.com/watch?v=abc123'></shreddit-post>";
+  let transport = FakeTransport(std::sync::Mutex::new(
+    [(CANONICAL, reply(200, None, body))].into(),
+  ));
+  assert!(
+    matches!(read_site(CANONICAL, &transport).await.resolution(CANONICAL),
+    Resolution::PostMedia { url, .. } if url == "https://www.youtube.com/watch?v=abc123")
+  );
+}

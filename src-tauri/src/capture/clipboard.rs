@@ -236,7 +236,17 @@ pub async fn probe_data_control_bounded() -> bool {
     .unwrap_or(false)
 }
 
+static EXITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Called when the app starts to exit: the plugin's clipboard is about to be dropped.
+pub fn stop_reads() {
+  EXITING.store(true, std::sync::atomic::Ordering::Release);
+}
+
 fn read_plugin(app: &AppHandle) -> Result<String, ReadError> {
+  if EXITING.load(std::sync::atomic::Ordering::Acquire) {
+    return Err(ReadError::Other);
+  }
   app
     .clipboard()
     .read_text()

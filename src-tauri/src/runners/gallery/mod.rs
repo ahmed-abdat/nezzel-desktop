@@ -13,7 +13,7 @@ pub use download::run_media_download;
 pub use info::preview_media;
 #[cfg(feature = "link-matrix")]
 pub use info::run_media_info;
-pub(crate) use info::{error_diagnostic, photo_info, run_gallery_info};
+pub(crate) use info::{diagnostic, error_diagnostic, photo_info, run_gallery_info};
 #[cfg(test)]
 pub(in crate::runners) use runner::arguments;
 pub(crate) use runner::available;

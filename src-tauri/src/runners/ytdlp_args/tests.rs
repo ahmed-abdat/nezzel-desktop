@@ -1011,3 +1011,52 @@ fn prefs_with_tracks() -> PathPreferences {
     ..PathPreferences::default()
   }
 }
+
+#[test]
+fn default_filenames_fit_linux_bytes_even_for_long_non_latin_titles() {
+  for (title, expected_prefix) in [
+    ("ع".repeat(200), "ع".repeat(100)),
+    ("界".repeat(200), "界".repeat(66)),
+    ("😀".repeat(200), "😀".repeat(50)),
+  ] {
+    let context = TemplateContext {
+      values: HashMap::from([
+        ("title".into(), title),
+        ("height".into(), "1080".into()),
+        ("fps".into(), "60".into()),
+        ("ext".into(), "mp4".into()),
+        ("abr".into(), "320".into()),
+      ]),
+    };
+    for (track, suffix) in [
+      (TrackType::Both, "-(1080p60).mp4"),
+      (TrackType::Audio, "-(320k).mp4"),
+    ] {
+      for legacy in [false, true] {
+        let mut output = OutputSettings::default();
+        if legacy {
+          output.file_name_template = "%(title).200s-(%(height)sp%(fps).0d).%(ext)s".into();
+          output.audio_file_name_template = "%(title).200s-(%(abr)dk).%(ext)s".into();
+        }
+        let args = build_location_args(
+          &track,
+          &context,
+          &output,
+          &PathPreferences::default(),
+          PathBuf::from("/downloads"),
+        );
+        let name = std::path::Path::new(&args[1])
+          .file_name()
+          .unwrap()
+          .to_str()
+          .unwrap();
+        assert_eq!(name, format!("{expected_prefix}{suffix}"));
+        assert!(
+          name.len() + ".f137.mp4.part-Frag999999".len() <= 255,
+          "{} bytes",
+          name.len()
+        );
+      }
+    }
+  }
+}

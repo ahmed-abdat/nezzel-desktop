@@ -263,8 +263,8 @@ export const defaultOutputSettings: OutputSettings = {
   preciseCuts: false,
   reversePlaylistNumbering: false,
   downloadDir: null,
-  fileNameTemplate: '%(title).200s-(%(height)sp%(fps).0d).%(ext)s',
-  audioFileNameTemplate: '%(title).200s-(%(abr)dk).%(ext)s',
+  fileNameTemplate: '%(title).200B-(%(height)sp%(fps).0d).%(ext)s',
+  audioFileNameTemplate: '%(title).200B-(%(abr)dk).%(ext)s',
   restrictFilenames: false,
 };
 

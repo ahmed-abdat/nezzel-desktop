@@ -105,14 +105,13 @@ fn start() -> Result<(), Box<dyn Error>> {
       return Err(format!("missing app binary {name}").into());
     }
   }
-  let gallery_binary = fs::canonicalize(
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries/gallery-dl-aarch64-apple-darwin"),
-  )?;
+  // macOS ships gallery-dl as a onedir resource (tools/gallery-dl/gallery-dl); link the whole tools folder.
+  let binaries = fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries"))?;
   let resources = run_dir.join("resources");
   fs::create_dir(&resources)?;
-  link_file(&gallery_binary, &resources.join("gallery-dl"))?;
+  std::os::unix::fs::symlink(binaries.join("tools"), resources.join("tools"))?;
   link_file(
-    &gallery_binary.with_file_name("gallery-dl.sha256"),
+    &binaries.join("gallery-dl.sha256"),
     &resources.join("gallery-dl.sha256"),
   )?;
   // Keep the production checksum gate. A missing or mismatched sidecar fails setup.

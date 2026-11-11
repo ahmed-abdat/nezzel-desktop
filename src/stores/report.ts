@@ -57,6 +57,8 @@ export function crashConsent(input: CrashConsentInput): { showNotice: boolean; a
 
 /** A download failed: Rust sends it when reports are on (site + link shape only). */
 export function reportFailedDownload(download: ReportedDownload): void {
+  // Reuse the webview's online signal; Rust also requires recent network evidence for timeouts.
+  if (!navigator.onLine) return;
   // Never lets reporting break failure handling.
   fireAndForget('diagnostics_download_failed', { download: download.context, url: download.url, extractor: download.extractor });
 }

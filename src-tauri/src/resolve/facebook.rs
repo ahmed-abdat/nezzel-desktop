@@ -107,6 +107,7 @@ impl Identity {
       identity.video_id = Some(c[1].into());
     } else if let Some(c) = SHAPES[3].captures(path) {
       identity.photo_id = Some(c[2].into());
+      identity.url = Url::parse(&photo_url(&c[2])).ok()?;
       identity.post_surface = true;
     } else if let Some(c) = SHAPES[6].captures(path) {
       identity.video_id = Some(c[2].into());
@@ -303,22 +304,17 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Verdict
     if currents.iter().any(|v| v["id"] == id && photo(v).is_some())
       || bound.is_some_and(|m| m.photos.contains(id))
     {
-      return Verdict::Verified(Resolution::Unsupported {
-        reason: Reason::PhotosOnly,
-      });
+      return Verdict::Verified(Resolution::Passthrough(photo_url(id)));
     }
     return Verdict::Unknown;
   }
   if let Some(media) = bound {
-    if !media.photos.is_empty() && media.has_video {
-      return if media.videos.len() == 1 {
-        Verdict::Verified(Resolution::Passthrough(watch(
-          media.videos.first().unwrap(),
-        )))
-      } else {
-        Verdict::Unknown
-      };
+    if media.photos.len() == 1 && !media.has_video {
+      if let Some(id) = media.photos.first().filter(|id| numeric(id)) {
+        return Verdict::Verified(Resolution::Passthrough(photo_url(id)));
+      }
     }
+    // Keep the original gallery input when the post exposes multiple photos or mixed media.
     if !media.photos.is_empty() {
       return Verdict::Verified(Resolution::Unsupported {
         reason: Reason::PhotosOnly,
@@ -425,7 +421,6 @@ fn story_media(story: &Value) -> Media {
     }
     if let Some(id) = photo(&styled["media"]).or_else(|| photo(&entry["media"])) {
       result.photos.insert(id);
-      result.others += 1;
       continue;
     }
     let nodes: Vec<_> = [&styled["media"], &entry["media"]]
@@ -531,4 +526,8 @@ fn route(value: &Value, depth: usize) -> Option<&str> {
       Value::Array(list) => list.iter().find_map(|v| route(v, depth + 1)),
       _ => None,
     })
+}
+
+fn photo_url(id: &str) -> String {
+  format!("{WWW}/photo/?fbid={id}")
 }

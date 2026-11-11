@@ -491,7 +491,7 @@ fn failed_anonymous_retry_reports_the_more_informative_attempt() {
     (
       "ERROR: [Reddit] Account authentication is required. Use --cookies",
       "ERROR: Unsupported URL",
-      "signInRequired",
+      "accountAccessDenied",
     ),
   ] {
     let mut session = LoginSession::from_auth(
@@ -558,7 +558,7 @@ fn network_outages_and_cancellation_do_not_spend_the_anonymous_budget() {
       "{error}"
     );
     assert!(!session.state.anonymous_attempted);
-    if !cancelled {
+    if !cancelled && !error.contains("timed out") {
       assert_eq!(
         crate::parsers::gallery::failure(error),
         crate::parsers::gallery::GalleryError::NetworkDown

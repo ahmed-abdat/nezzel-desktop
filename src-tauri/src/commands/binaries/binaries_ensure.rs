@@ -21,3 +21,17 @@ pub async fn binaries_ensure(
   BinariesManager::schedule_ytdlp_update(&app);
   res
 }
+
+/// Snapshot covers startup events emitted before the webview's listeners were ready.
+#[tauri::command]
+pub fn binaries_update_status(state: State<'_, BinariesState>) -> bool {
+  state.update_stale.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[tauri::command]
+pub async fn binaries_update_now(manager: State<'_, BinariesManager>) -> Result<(), String> {
+  manager
+    .run_ytdlp_update(true)
+    .await
+    .map_err(|_| "toolsUpdateFailed".to_owned())
+}

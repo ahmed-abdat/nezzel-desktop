@@ -104,6 +104,7 @@ pub(super) async fn download_attempt(
   entry: &DownloadEntry,
   login: &mut LoginSession,
 ) -> Result<(), GalleryError> {
+  login.has_session = false;
   let runner = GalleryRunner::new(
     app,
     entry.overrides.as_ref(),
@@ -112,6 +113,10 @@ pub(super) async fn download_attempt(
     &entry.group_id,
   )
   .await?;
+  login.has_session = runner
+    ._cookies
+    .as_ref()
+    .is_some_and(|cookies| cookies.has_session);
   let post = if !probe_with_gallery(entry) {
     if !crate::resolve::admit_post_attachments(&entry.attachments).await {
       return Err(GalleryError::Invalid);
@@ -340,7 +345,7 @@ pub async fn run_media_download(
         }
         if retry_gallery_login(&error) {
           match login
-            .retry_cookie_fetch(error.cookie_fetch_failure(), &mut cancel)
+            .retry_cookie_fetch(error.cookie_fetch_failure(login.has_session), &mut cancel)
             .await
           {
             CookieRetry::Cancelled => return Ok(()),
@@ -351,7 +356,12 @@ pub async fn run_media_download(
         let reason = (error == GalleryError::Login
           || (!login.uses_cookies() && error == GalleryError::Refused("unableToExtractIdOrInfo")))
         .then_some("signInRequired");
-        let diagnostics = vec![error_diagnostic(&entry.group_id, &entry.id, &error)];
+        let diagnostics = vec![error_diagnostic(
+          &entry.group_id,
+          &entry.id,
+          &error,
+          login.has_session,
+        )];
         login.record_failure(&diagnostics, error == GalleryError::NetworkDown);
         match if !retry_gallery_login(&error) {
           RetryAction::Stop
