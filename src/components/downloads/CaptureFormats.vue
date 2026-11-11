@@ -26,7 +26,8 @@
         tabindex="-1"
         :disabled="disabled"
         :data-choice="row.key"
-        class="group/row grid h-8 w-full grid-cols-[80px_minmax(0,1fr)_auto_14px] items-center gap-x-2.5 px-3.5 text-start hover:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--nz-focus)] disabled:opacity-50"
+        class="group/row grid h-8 w-full items-center gap-x-2.5 px-3.5 text-start hover:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--nz-focus)] disabled:opacity-50"
+        :class="showSizes ? 'grid-cols-[80px_minmax(0,1fr)_auto_14px]' : 'grid-cols-[80px_minmax(0,1fr)_14px]'"
         @click="emit('pick', row.choice)"
       >
         <bdi class="tnum truncate font-semibold">{{ quality(row) }}</bdi>
@@ -35,6 +36,7 @@
           <bdi class="truncate">{{ detail(row) }}</bdi>
         </span>
         <bdi
+          v-if="showSizes"
           :dir="row.size ? 'ltr' : undefined"
           class="tnum text-end text-[12px] whitespace-nowrap text-muted-foreground"
           :class="!row.size && 'opacity-60'"
@@ -59,6 +61,7 @@ const emit = defineEmits<{ pick: [choice: RowChoice]; close: [] }>();
 const { t } = useI18n();
 const { size: formatSize } = useLocaleNumber();
 const root = ref<HTMLElement | null>(null);
+const showSizes = computed(() => props.rows.some(row => !!row.size));
 
 const groups = computed(() => {
   const video = props.rows.filter(row => row.choice.kind !== 'audio');

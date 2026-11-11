@@ -136,6 +136,9 @@ pub(super) async fn download_attempt(
   } else {
     let resolution = crate::resolve::resolve(&entry.url).await;
     match resolution {
+      crate::resolve::Resolution::Failed { failure } => {
+        return Err(GalleryError::Refused(failure.code()))
+      }
       crate::resolve::Resolution::Attachments { metadata } => {
         GalleryPost::from_resolved(&metadata, &entry.url)
       }
@@ -146,7 +149,12 @@ pub(super) async fn download_attempt(
           _ => (entry.url.clone(), None),
         };
         let gallery = if probe_with_gallery(entry) {
-          runner.probe(&entry.url, &entry.group_id).await
+          let probe_target = if crate::resolve::facebook_photo_target(&target) {
+            &target
+          } else {
+            &entry.url
+          };
+          runner.probe(probe_target, &entry.group_id).await
         } else {
           Err(GalleryError::Unsupported)
         };

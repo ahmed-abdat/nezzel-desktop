@@ -29,10 +29,15 @@
     <p v-if="offer.feed" class="text-[12.5px] text-foreground/80 text-pretty" role="status" data-testid="capture-feed">{{ t('capture.feedPage') }}</p>
     <p v-else-if="error" class="text-[12.5px] text-destructive" role="alert">{{ t(error === 'action' ? 'capture.actionFailed' : 'capture.failed') }}</p>
     <template v-else-if="offer.read && !offer.failed">
-      <p class="line-clamp-2 text-start text-[13px] leading-[1.4] font-medium rtl:leading-[1.5]"><bdi dir="auto">{{ offer.title || offer.site }}</bdi></p>
-      <p v-if="facts.length" class="tnum mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12px] whitespace-nowrap text-muted-foreground" data-testid="capture-best">
-        <template v-for="(part, index) in facts" :key="index"><span v-if="index > 0" class="nz-sep" aria-hidden="true" /><bdi :dir="part.ltr ? 'ltr' : undefined" :class="part.strong && 'font-medium text-foreground'">{{ part.text }}</bdi></template>
-      </p>
+      <div class="flex min-w-0 items-start gap-2.5">
+        <img v-if="offer.remoteImages && details.thumbnail && !thumbFailed" :src="details.thumbnail" alt="" class="h-12 w-16 shrink-0 rounded-md object-cover" referrerpolicy="no-referrer" @error="thumbFailed = true" />
+        <div class="min-w-0 flex-1">
+          <p class="line-clamp-2 text-start text-[13px] leading-[1.4] font-medium rtl:leading-[1.5]"><bdi dir="auto">{{ offer.title || offer.site }}</bdi></p>
+          <p v-if="facts.length" class="tnum mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12px] whitespace-nowrap text-muted-foreground" data-testid="capture-best">
+            <template v-for="(part, index) in facts" :key="index"><span v-if="index > 0" class="nz-sep" aria-hidden="true" /><bdi :dir="part.ltr ? 'ltr' : undefined" :class="part.strong && 'font-medium text-foreground'">{{ part.text }}</bdi></template>
+          </p>
+        </div>
+      </div>
     </template>
     <CaptureFailure v-else-if="offer.failed" :reason="failure" :site="offer.site" />
     <p v-else class="text-[12.5px] text-muted-foreground" role="status">{{ slow ? t('capture.stillReading') : t('capture.loading') }}</p>
@@ -55,19 +60,19 @@
             <LoaderCircle v-if="acting" class="animate-spin" aria-hidden="true" /><ArrowDownToLine v-else aria-hidden="true" />
             {{ acting ? t('capture.starting') : isPlaylist ? t('capture.chooseItems') : rows.length || choicesLoading ? t('capture.downloadBest') : t('capture.pick.download') }}
           </Button>
-          <Skeleton v-if="choicesLoading" class="size-8 shrink-0 rounded-s-none" role="status" :aria-label="t('capture.loading')" data-testid="capture-choices-loading" />
           <Button
-            v-else-if="rows.length"
+            v-if="rows.length || choicesLoading"
             ref="caret"
             size="icon"
-            class="rounded-s-none shadow-[inset_1px_0_0_color-mix(in_oklab,var(--primary-foreground)_28%,transparent)] rtl:shadow-[inset_-1px_0_0_color-mix(in_oklab,var(--primary-foreground)_28%,transparent)]"
+            class="rounded-s-none disabled:opacity-100 shadow-[inset_1px_0_0_color-mix(in_oklab,var(--primary-foreground)_28%,transparent)] rtl:shadow-[inset_-1px_0_0_color-mix(in_oklab,var(--primary-foreground)_28%,transparent)]"
             :class="formatsOpen ? 'bg-primary-hover' : undefined"
-            :disabled="!offer.url || acting"
-            :aria-label="t('capture.formats.choose')"
+            :disabled="choicesLoading || !offer.url || acting"
+            :aria-label="t(choicesLoading ? 'capture.loading' : 'capture.formats.choose')"
+            :aria-busy="choicesLoading || undefined"
             aria-haspopup="menu"
             :aria-expanded="formatsOpen"
             :aria-controls="formatsOpen ? 'capture-formats' : undefined"
-            data-testid="capture-formats-toggle"
+            :data-testid="choicesLoading ? 'capture-choices-loading' : 'capture-formats-toggle'"
             @click="toggleFormats"
             @keydown.down.prevent="openFormats(true)"
           >
@@ -98,7 +103,6 @@ import CaptureFailure from './CaptureFailure.vue';
 import { cardRows, pickChoice, type PickKey } from '../../helpers/captureChoices';
 import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { ArrowDownToLine, ChevronDown, ClipboardCheck, LoaderCircle, X } from '@lucide/vue';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
@@ -108,7 +112,7 @@ import { CAPTURE_CARD_SIZE, type CaptureChoice } from '@/generated/contract';
 
 const { t, locale } = useI18n();
 const panel = ref<HTMLElement>();
-const { offer, error, acting, slow, faviconFailed, details, failure, isPlaylist, choicesLoading, favicon, facts, act, onFail, start } = useCaptureOffer();
+const { offer, error, acting, slow, thumbFailed, faviconFailed, details, failure, isPlaylist, choicesLoading, favicon, facts, act, onFail, start } = useCaptureOffer();
 
 const rtl = computed(() => localeDirection(locale.value) === 'rtl');
 /** The card's format menu only contains known formats. */

@@ -86,22 +86,14 @@
         </ol>
       </section>
 
-      <!-- Developer output, collapsed. Empty lists never show. -->
-      <Collapsible class="group mt-10 border-t border-hairline pt-3" :unmount-on-hide="false">
+      <!-- The error is above; full engine output is available only by copying. -->
+      <Collapsible v-if="phase === 'error'" class="group mt-10 border-t border-hairline pt-3" :unmount-on-hide="false">
         <CollapsibleTrigger class="inline-flex h-7 cursor-pointer items-center gap-1 rounded-[6px] text-[12px] font-semibold text-foreground/65 outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]">
           <ChevronRight class="size-3.5 transition-transform duration-150 group-data-[state=open]:rotate-90 rtl:rotate-180 rtl:group-data-[state=open]:rotate-90" aria-hidden="true" />
           {{ t('media.detail.technical') }}
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div class="mt-2 flex flex-col gap-3">
-            <ul v-if="problems.length" class="flex flex-col gap-1.5">
-              <li v-for="problem in problems" :key="problem.key" class="flex items-start gap-2 text-[12.5px]">
-                <span class="mt-1.5 size-1.5 shrink-0 rounded-full" :class="problem.level === 'error' ? 'bg-destructive' : 'bg-amber-foreground/60'" aria-hidden="true" />
-                <span class="min-w-0 flex-1 [overflow-wrap:anywhere]">{{ problem.text }}</span>
-              </li>
-            </ul>
-            <pre v-if="logText" role="log" aria-live="off" dir="ltr" class="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-muted px-3 py-2 font-mono text-[11.5px] leading-5 text-foreground/80">{{ logText }}</pre>
-            <p v-else class="text-[12.5px] text-muted-foreground">{{ t('media.detail.noLog') }}</p>
             <div>
               <Button variant="outline" size="sm" @click="copy(details, 'details')">
                 <Check v-if="copied === 'details'" class="text-primary" aria-hidden="true" />

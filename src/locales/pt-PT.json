@@ -1,4 +1,11 @@
 {
+  "closeNote": {
+    "title": "Nezzel continua em execução",
+    "bodyMac": "Nezzel e as transferências continuam ao fechar a janela.",
+    "hintMac": "Volte a abrir o Nezzel pelo Dock, Spotlight ou pelo ícone na barra de menus.",
+    "quit": "Sair do Nezzel",
+    "gotIt": "Percebi"
+  },
   "toolsUpdate": {
     "stale": "O Nezzel não consegue atualizar as ferramentas de transferência há pelo menos 7 dias. Alguns sites podem não funcionar",
     "tryNow": "Tentar agora",
@@ -1095,5 +1102,21 @@
       "wiki": "Wiki",
       "reportABug": "Reportar um erro"
     }
+  },
+  "downloads": {
+    "list": {
+      "failedNotice": "{n} transferência falhada | {n} transferências falhadas",
+      "viewFailed": "Ver",
+      "reportFailed": "Reportar todas",
+      "clearFailed": "Limpar falhadas"
+    },
+    "selection": {
+      "report": "Reportar"
+    }
+  },
+  "report": {
+    "batchTitle": "Reportar {n} transferência falhada | Reportar {n} transferências falhadas",
+    "includeLinks": "Incluir todas as ligações",
+    "includeLinksHelp": "As ligações ajudam-nos a reproduzir o problema. Sem esta opção, não será enviada nenhuma ligação de transferência."
   }
 }

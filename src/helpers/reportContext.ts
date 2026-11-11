@@ -1,5 +1,6 @@
 import type { MediaAttempts } from '../stores/media/diagnostics';
-import type { ReportDownloadContext } from '../stores/report';
+import type { RowStatus } from './listFilter';
+import type { ReportedDownload, ReportDownloadContext } from '../stores/report';
 
 /**
  * A failed row's report context: the error code, exit code and the latest stage trail.
@@ -12,4 +13,23 @@ export function downloadReportContext(code: string | null | undefined, exitCode:
     exitCode: exitCode ?? null,
     attempts: (latest?.attempts ?? []).map(({ stage, login, outcome, code: attemptCode, ms }) => ({ stage, login, outcome, code: attemptCode, ms })),
   };
+}
+
+export interface ReportCandidate {
+  status: RowStatus;
+  download: ReportedDownload;
+  eventId?: string;
+}
+
+/** Only failed rows; allowlisted fields, one shared id, and no link unless the user includes it. */
+export function batchReportPayloads(rows: ReportCandidate[], note: string, includeLink: boolean, batchId: string) {
+  return rows.filter(row => row.status === 'failed').map(({ download, eventId }) => ({
+    note: note.trim() || null,
+    download: download.context,
+    url: includeLink ? download.url : null,
+    extractor: download.extractor,
+    includeLink,
+    batchId,
+    eventId: eventId ?? null,
+  }));
 }

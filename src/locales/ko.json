@@ -1,4 +1,11 @@
 {
+  "closeNote": {
+    "title": "Nezzel이 계속 실행 중입니다",
+    "bodyMac": "창을 닫아도 Nezzel과 다운로드는 계속 실행됩니다.",
+    "hintMac": "Dock, Spotlight 또는 메뉴 막대 아이콘에서 Nezzel을 다시 여세요.",
+    "quit": "Nezzel 종료",
+    "gotIt": "확인"
+  },
   "toolsUpdate": {
     "stale": "최소 7일 동안 다운로드 도구를 업데이트하지 못했어요. 일부 사이트가 작동하지 않을 수 있어요",
     "tryNow": "지금 시도",
@@ -1224,5 +1231,21 @@
       "wiki": "위키",
       "reportABug": "버그 신고"
     }
+  },
+  "downloads": {
+    "list": {
+      "failedNotice": "실패한 다운로드 {n}개",
+      "viewFailed": "보기",
+      "reportFailed": "모두 신고",
+      "clearFailed": "실패 항목 지우기"
+    },
+    "selection": {
+      "report": "신고"
+    }
+  },
+  "report": {
+    "batchTitle": "실패한 다운로드 {n}개 신고",
+    "includeLinks": "모든 다운로드 링크 포함",
+    "includeLinksHelp": "링크는 문제를 재현하는 데 도움이 됩니다. 선택을 해제하면 다운로드 링크를 보내지 않습니다."
   }
 }

@@ -72,6 +72,17 @@ pub struct OnboardingPreferences {
   pub reports_notice_done: bool,
 }
 
+impl OnboardingPreferences {
+  /// Called only after the note was displayed. Returns whether this needs persisting.
+  pub fn mark_close_note_shown(&mut self) -> bool {
+    if self.close_note_done {
+      return false;
+    }
+    self.close_note_done = true;
+    true
+  }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {

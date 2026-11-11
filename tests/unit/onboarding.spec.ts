@@ -15,6 +15,13 @@ vi.mock('../../src/composables/useCapturePlatform', () => ({
 
 /** Welcome sheet: first launch only; existing users and unknown state never see it. */
 describe('onboarding', () => {
+  it.each(Object.entries(import.meta.glob<{ closeNote: Record<string, string> }>('../../src/locales/*.json', { eager: true, import: 'default' })))('explains macOS reopening in %s', (_path, messages) => {
+    for (const key of ['title', 'bodyMac', 'hintMac', 'quit', 'gotIt']) {
+      expect(messages.closeNote[key]?.trim()).toBeTruthy();
+    }
+    expect(messages.closeNote.hintMac).toContain('Dock');
+    expect(messages.closeNote.hintMac).toContain('Spotlight');
+  });
   it.each([
     ['fresh profile, empty library', { welcomeDone: false, closeNoteDone: false }, 0, true],
     ['already welcomed', { welcomeDone: true, closeNoteDone: false }, 0, false],

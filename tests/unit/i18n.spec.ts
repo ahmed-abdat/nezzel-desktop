@@ -89,6 +89,27 @@ describe('locale direction', () => {
   });
 });
 
+describe('batch report title counts', () => {
+  it.each([
+    ['ar', 0, 'الإبلاغ عن التنزيلات الفاشلة (0)'],
+    ['ar', 1, 'الإبلاغ عن التنزيل الفاشل (1)'],
+    ['ar', 2, 'الإبلاغ عن التنزيلين الفاشلين (2)'],
+    ['ar', 3, 'الإبلاغ عن 3 تنزيلات فاشلة'],
+    ['ar', 11, 'الإبلاغ عن 11 تنزيلًا فاشلًا'],
+    ['ar', 100, 'الإبلاغ عن 100 تنزيل فاشل'],
+    ['en', 1, 'Report 1 failed download'],
+    ['en', 3, 'Report 3 failed downloads'],
+    ['fr', 1, 'Signaler 1 téléchargement échoué'],
+    ['fr', 3, 'Signaler 3 téléchargements échoués'],
+  ] as const)('renders %s count %s', (locale, n, expected) => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    try {
+      expect(i18n.global.t('report.batchTitle', { n: String(n) }, n)).toBe(expected);
+    } finally { i18n.global.locale.value = previous; }
+  });
+});
+
 describe('Arabic playlist selection counts', () => {
   it.each([
     [0, 'لم يُحدَّد أي عنصر'],

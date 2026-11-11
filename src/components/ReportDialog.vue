@@ -3,7 +3,7 @@
     <DialogContent :show-close-button="false" class="w-[min(32rem,calc(100vw-2rem))] max-w-none sm:max-w-none" data-testid="report-dialog">
       <form class="flex flex-col gap-4" @submit.prevent="store.send(note, includeLink)">
         <DialogHeader>
-          <DialogTitle>{{ store.download ? t('report.downloadTitle') : t('report.title') }}</DialogTitle>
+          <DialogTitle>{{ store.isBatch ? t('report.batchTitle', { n: count(store.batchCount) }, store.batchCount) : store.download ? t('report.downloadTitle') : t('report.title') }}</DialogTitle>
           <DialogDescription>{{ t('report.lead') }}</DialogDescription>
         </DialogHeader>
 
@@ -16,15 +16,15 @@
             rows="4"
             :maxlength="2000"
             :placeholder="t('report.notePlaceholder')"
-            :disabled="store.sending"
+            :disabled="store.sending || store.batchLocked"
           />
         </div>
 
-        <label v-if="store.download?.url" class="flex cursor-pointer items-start gap-2.5 text-[13px]">
-          <Checkbox v-model="includeLink" data-testid="report-include-link" class="mt-0.5" :disabled="store.sending" />
+        <label v-if="store.hasLinks" class="flex cursor-pointer items-start gap-2.5 text-[13px]">
+          <Checkbox v-model="includeLink" data-testid="report-include-link" class="mt-0.5" :disabled="store.sending || store.batchLocked" />
           <span class="flex min-w-0 flex-col items-start gap-0.5 text-start">
-            <span>{{ t('report.includeLink') }}</span>
-            <small class="text-nz-caption text-muted-foreground">{{ t('report.includeLinkHelp') }}</small>
+            <span>{{ t(store.isBatch ? 'report.includeLinks' : 'report.includeLink') }}</span>
+            <small class="text-nz-caption text-muted-foreground">{{ t(store.isBatch ? 'report.includeLinksHelp' : 'report.includeLinkHelp') }}</small>
           </span>
         </label>
 
@@ -51,9 +51,11 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useLocaleNumber } from '../composables/useLocaleNumber';
 import { useReportStore } from '../stores/report';
 
 const { t } = useI18n();
+const { count } = useLocaleNumber();
 const store = useReportStore();
 
 const note = ref('');

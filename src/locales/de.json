@@ -1,4 +1,11 @@
 {
+  "closeNote": {
+    "title": "Nezzel läuft weiter",
+    "bodyMac": "Nezzel und deine Downloads laufen nach dem Schließen des Fensters weiter.",
+    "hintMac": "Öffne Nezzel über das Dock, Spotlight oder das Symbol in der Menüleiste.",
+    "quit": "Nezzel beenden",
+    "gotIt": "Verstanden"
+  },
   "toolsUpdate": {
     "stale": "Nezzel konnte die Download-Werkzeuge seit mindestens 7 Tagen nicht aktualisieren. Einige Websites funktionieren möglicherweise nicht",
     "tryNow": "Jetzt versuchen",
@@ -1227,5 +1234,21 @@
       "saved": "Eingabefilter gespeichert!",
       "error": "Eingabefilter konnten nicht gespeichert werden. {error}"
     }
+  },
+  "downloads": {
+    "list": {
+      "failedNotice": "{n} fehlgeschlagener Download | {n} fehlgeschlagene Downloads",
+      "viewFailed": "Anzeigen",
+      "reportFailed": "Alle melden",
+      "clearFailed": "Fehlgeschlagene entfernen"
+    },
+    "selection": {
+      "report": "Melden"
+    }
+  },
+  "report": {
+    "batchTitle": "{n} fehlgeschlagenen Download melden | {n} fehlgeschlagene Downloads melden",
+    "includeLinks": "Alle Downloadlinks beifügen",
+    "includeLinksHelp": "Links helfen uns, das Problem nachzustellen. Ohne Häkchen werden keine Downloadlinks gesendet."
   }
 }

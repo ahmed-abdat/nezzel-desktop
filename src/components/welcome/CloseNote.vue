@@ -1,6 +1,6 @@
 <template>
   <config-provider :dir="dir">
-    <div ref="root" class="cn-wrap" :class="[`edge-${edge}`, dir === 'rtl' && 'is-rtl']" data-testid="close-note">
+    <div ref="root" class="cn-wrap" :class="[`edge-${edge}`, dir === 'rtl' && 'is-rtl', os === 'mac' && 'is-mac']" data-testid="close-note">
       <div
         class="cn-pop"
         role="dialog"
@@ -13,13 +13,14 @@
           <img :src="nezzelMark" alt="" class="size-8 flex-none">
           <div class="min-w-0">
             <h2 id="cn-title" class="cn-h">{{ t('closeNote.title') }}</h2>
-            <p id="cn-body" class="cn-p">{{ t('closeNote.body') }}</p>
+            <p id="cn-body" class="cn-p">{{ t(os === 'mac' ? 'closeNote.bodyMac' : 'closeNote.body') }}</p>
             <p v-if="os === 'windows'" id="cn-hint" class="cn-p cn-hint">
               <i18n-t keypath="closeNote.hintWindows" scope="global">
                 <template #chev><span class="cn-chev" role="img" aria-label="^"><ChevronUp class="size-[11px]" aria-hidden="true" /></span></template>
               </i18n-t>
             </p>
             <p v-else-if="os === 'linux'" id="cn-hint" class="cn-p cn-hint">{{ t(`closeNote.${linuxHintKey(desktop ?? 'other')}`) }}</p>
+            <p v-else-if="os === 'mac'" id="cn-hint" class="cn-p cn-hint">{{ t('closeNote.hintMac') }}</p>
           </div>
         </div>
         <div class="mt-3 flex justify-end gap-2">
@@ -45,7 +46,7 @@ import { linuxHintKey, type LinuxDesktop } from './desktopOs';
 const props = defineProps<{ os: string; desktop?: LinuxDesktop; edge: 'top' | 'bottom'; arrowX: number }>();
 const { t, locale } = useI18n();
 const dir = computed(() => localeDirection(locale.value));
-const hint = computed(() => props.os === 'windows' || props.os === 'linux');
+const hint = computed(() => ['windows', 'linux', 'mac'].includes(props.os));
 const root = ref<HTMLElement>();
 const gotIt = ref<{ $el: HTMLElement }>();
 
@@ -77,6 +78,7 @@ onMounted(async () => {
 /* Arrow toward the tray icon: positioned from the measured anchor, so physical left on purpose. */
 .cn-pop::before { content: ""; position: absolute; top: -6px; left: var(--nx); width: 12px; height: 12px; margin-left: -6px; background: var(--card); transform: rotate(45deg); box-shadow: -1px -1px 0 rgb(14 22 20 / .08); }
 .edge-bottom .cn-pop::before { top: auto; bottom: -6px; box-shadow: 1px 1px 0 rgb(14 22 20 / .08); }
+.is-mac .cn-pop::before { display: none; }
 @keyframes cn-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
 .cn-h { font-size: 15px; font-weight: 600; line-height: 1.35; }
 .cn-p { font-size: 12.5px; color: var(--muted-foreground); margin-top: 2px; line-height: 1.5; text-wrap: pretty; }

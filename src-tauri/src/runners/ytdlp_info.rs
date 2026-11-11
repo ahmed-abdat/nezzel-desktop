@@ -25,6 +25,7 @@ use tauri::{AppHandle, Manager};
 pub enum YtdlpInfoFetchError {
   LoginPending,
   Unsupported(Reason),
+  ReaderFailed(resolve::Failure),
   InvalidDiagnosticRules(String),
   RunnerFailed(String),
   NonZeroExit(i32),
@@ -35,6 +36,7 @@ impl fmt::Display for YtdlpInfoFetchError {
     match self {
       Self::LoginPending => write!(f, "Waiting for browser login consent"),
       Self::Unsupported(reason) => write!(f, "{}", reason.code()),
+      Self::ReaderFailed(failure) => write!(f, "{}", failure.code()),
       Self::InvalidDiagnosticRules(e) => write!(f, "Invalid diagnostic rules: {e}"),
       Self::RunnerFailed(e) => write!(f, "yt-dlp invocation failed: {e}"),
       Self::NonZeroExit(code) => write!(f, "yt-dlp exited with code {code}"),
@@ -147,9 +149,9 @@ async fn run_attempts(
       tracing::warn!(
         stage = "resolve",
         diagnostic_code = FETCH_TIMEOUT,
-        "info fetch resolution timed out; using original input"
+        "info fetch resolution timed out"
       );
-      Resolution::Passthrough(entry.url.clone())
+      resolve::resolution_timeout(&entry.url)
     }),
   };
   if !*cancel.borrow() {
@@ -183,6 +185,11 @@ async fn run_attempts(
       media.fetch_engine = Some(crate::models::parsed::FetchEngine::Reader);
       stage.media = Some(ParsedMedia::Single(media));
       return Some(Outcome::Verified);
+    }
+    Resolution::Failed { failure } => {
+      stage.error = Some(YtdlpInfoFetchError::ReaderFailed(failure));
+      stage.record_code(failure.code(), "", login.has_session, start);
+      return None;
     }
     Resolution::Unsupported { reason } => {
       stage.error = Some(YtdlpInfoFetchError::Unsupported(reason));
@@ -387,6 +394,15 @@ fn reader_handoff(
       stage.record_code("photosOnly", "", has_session, start);
       true
     }
+    Resolution::Failed { failure } => {
+      stage.terminal = true;
+      stage.error = Some(YtdlpInfoFetchError::ReaderFailed(*failure));
+      stage.record_code(failure.code(), "", false, start);
+      if let Some(attempt) = stage.attempts.last_mut() {
+        attempt.stage = StageId::Reader(crate::routing::ReaderId::Threads);
+      }
+      true
+    }
     Resolution::Unsupported { reason } => {
       stage.terminal = !matches!(reason, Reason::PhotosOnly);
       stage.error = Some(YtdlpInfoFetchError::Unsupported(*reason));
@@ -516,6 +532,22 @@ mod tests {
           reason: Reason::NoMedia,
         },
         "noMediaFound",
+        true,
+        None,
+      ),
+      (
+        Resolution::Failed {
+          failure: resolve::Failure::Network,
+        },
+        "networkNameResolutionFailed",
+        true,
+        None,
+      ),
+      (
+        Resolution::Failed {
+          failure: resolve::Failure::Timeout,
+        },
+        "networkTimeout",
         true,
         None,
       ),

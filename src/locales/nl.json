@@ -1,4 +1,11 @@
 {
+  "closeNote": {
+    "title": "Nezzel blijft actief",
+    "bodyMac": "Nezzel en je downloads blijven actief nadat je het venster sluit.",
+    "hintMac": "Open Nezzel opnieuw via het Dock, Spotlight of het pictogram in de menubalk.",
+    "quit": "Nezzel afsluiten",
+    "gotIt": "Begrepen"
+  },
   "toolsUpdate": {
     "stale": "Nezzel kon de downloadhulpmiddelen al minstens 7 dagen niet bijwerken. Sommige sites werken mogelijk niet",
     "tryNow": "Nu proberen",
@@ -1227,5 +1234,21 @@
       "saved": "Invoerfilters opgeslagen!",
       "error": "Invoerfilters konden niet worden opgeslagen. {error}"
     }
+  },
+  "downloads": {
+    "list": {
+      "failedNotice": "{n} mislukte download | {n} mislukte downloads",
+      "viewFailed": "Bekijken",
+      "reportFailed": "Alles melden",
+      "clearFailed": "Mislukte verwijderen"
+    },
+    "selection": {
+      "report": "Melden"
+    }
+  },
+  "report": {
+    "batchTitle": "{n} mislukte download melden | {n} mislukte downloads melden",
+    "includeLinks": "Alle downloadlinks bijvoegen",
+    "includeLinksHelp": "Links helpen ons het probleem te reproduceren. Zonder vinkje worden geen downloadlinks verstuurd."
   }
 }

@@ -1,4 +1,11 @@
 {
+  "closeNote": {
+    "title": "Nezzel çalışmaya devam ediyor",
+    "bodyMac": "Pencereyi kapatsanız da Nezzel ve indirmeleriniz çalışmaya devam eder.",
+    "hintMac": "Nezzel’i Dock, Spotlight veya menü çubuğundaki simgesinden yeniden açın.",
+    "quit": "Nezzel’den çık",
+    "gotIt": "Anladım"
+  },
   "toolsUpdate": {
     "stale": "Nezzel indirme araçlarını en az 7 gündür güncelleyemedi. Bazı siteler çalışmayabilir",
     "tryNow": "Şimdi dene",
@@ -1227,5 +1234,21 @@
       "saved": "Giriş filtreleri kaydedildi!",
       "error": "Giriş filtreleri kaydedilemedi. {error}"
     }
+  },
+  "downloads": {
+    "list": {
+      "failedNotice": "{n} başarısız indirme",
+      "viewFailed": "Göster",
+      "reportFailed": "Tümünü bildir",
+      "clearFailed": "Başarısızları temizle"
+    },
+    "selection": {
+      "report": "Bildir"
+    }
+  },
+  "report": {
+    "batchTitle": "{n} başarısız indirmeyi bildir",
+    "includeLinks": "Tüm indirme bağlantılarını ekle",
+    "includeLinksHelp": "Bağlantılar sorunu yeniden oluşturmamıza yardımcı olur. İşaret kaldırılırsa indirme bağlantıları gönderilmez."
   }
 }

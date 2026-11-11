@@ -63,6 +63,28 @@ mod tests {
   }
 
   #[test]
+  fn close_note_is_recorded_once_after_display_and_survives_reload() {
+    for (initial, displayed, should_save) in [
+      (false, false, false),
+      (false, true, true),
+      (true, true, false),
+    ] {
+      let mut prefs =
+        Preferences::materialize(&json!({"onboarding":{"closeNoteDone":initial}})).unwrap();
+      let save = displayed && prefs.onboarding.mark_close_note_shown();
+      assert_eq!(save, should_save);
+      let mut reloaded = Preferences::materialize(&serde_json::to_value(prefs).unwrap()).unwrap();
+      assert_eq!(reloaded.onboarding.close_note_done, initial || displayed);
+      if displayed {
+        assert!(
+          !reloaded.onboarding.mark_close_note_shown(),
+          "subsequent closes never repeat the note"
+        );
+      }
+    }
+  }
+
+  #[test]
   fn lenient_resets_a_wrong_typed_leaf_and_keeps_siblings() {
     let raw = json!({ "onboarding": { "welcomeDone": "yes", "closeNoteDone": true } });
     assert!(Preferences::materialize(&raw).is_err());

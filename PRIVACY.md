@@ -42,6 +42,7 @@ Reports only work in builds made with our Sentry key. Builds without one send no
 While **Settings → Advanced → Help improve Nezzel** is on (the default):
 
 - Once a day, Nezzel sends anonymous totals to our own server (`nezzel.hululsoft.mr`): features used, how far links got (received, options shown, downloaded, failed), rough quality, speed and wait-time buckets, your settings, and the sites you saved from (domain only). Each send also names the app version, your system (macOS, Windows or Linux) and processor type, the app language and a rough install age. No ID, links, titles, file names, folders or account names. The server adds your country and keeps daily totals only.
+- When a download fails, the count also records the app's error type (for example "sign-in required"), never the link, title, file name or error text.
 - Your IP address is never stored. No third-party analytics.
 
 Turn it off and nothing is sent; anything not yet sent is deleted. Builds made without our server address count and send nothing.

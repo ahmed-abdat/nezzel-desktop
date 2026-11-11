@@ -1,6 +1,7 @@
 import type { CaptureChoice } from '@/generated/contract';
 
 export interface CaptureDetails {
+  title?: string | null;
   thumbnail: string | null;
   mediaKind: string | null;
   photos: number | null;

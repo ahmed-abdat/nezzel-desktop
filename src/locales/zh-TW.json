@@ -1,4 +1,11 @@
 {
+  "closeNote": {
+    "title": "Nezzel 仍在執行",
+    "bodyMac": "關閉視窗後，Nezzel 和下載仍會繼續執行。",
+    "hintMac": "您可以從 Dock、Spotlight 或選單列圖示重新開啟 Nezzel。",
+    "quit": "結束 Nezzel",
+    "gotIt": "知道了"
+  },
   "toolsUpdate": {
     "stale": "Nezzel 已至少 7 天無法更新下載工具。部分網站可能無法使用",
     "tryNow": "立即重試",
@@ -1227,5 +1234,21 @@
       "saved": "輸入篩選條件已儲存！",
       "error": "無法儲存輸入篩選條件。{error}"
     }
+  },
+  "downloads": {
+    "list": {
+      "failedNotice": "{n} 個下載失敗",
+      "viewFailed": "檢視",
+      "reportFailed": "全部回報",
+      "clearFailed": "清除失敗項目"
+    },
+    "selection": {
+      "report": "回報"
+    }
+  },
+  "report": {
+    "batchTitle": "回報 {n} 個失敗的下載",
+    "includeLinks": "附上所有下載連結",
+    "includeLinksHelp": "連結有助於我們重現問題。取消勾選後，不會傳送任何下載連結。"
   }
 }

@@ -3,7 +3,7 @@ import { phaseOf, type KindFilter } from './groupView';
 
 /**
  * The downloads list has two independent filters: the sidebar picks a type, the chips above the
- * list pick a status. They combine (e.g. failed videos).
+ * list pick a status. Categories exclude failures, which live in All downloads.
  */
 export type TypeFilter = 'all' | KindFilter;
 export type StatusFilter = 'all' | 'active' | 'failed' | 'done';
@@ -49,12 +49,19 @@ export interface ListRow {
   site: string;
   /** Finished row the user removed from the list: hidden from "All", still under "Completed". */
   cleared?: boolean;
+  /** A login prompt or another choice that needs the user, shown only in All downloads. */
+  needsAttention?: boolean;
 }
 
-export function matchesView(row: Pick<ListRow, 'status' | 'kind' | 'cleared'>, view: ListView): boolean {
-  if (view.type !== 'all' && row.kind !== view.type) return false;
+export function matchesView(row: Pick<ListRow, 'status' | 'kind' | 'cleared' | 'needsAttention'>, view: ListView): boolean {
+  if (view.type !== 'all' && (row.status === 'failed' || row.needsAttention || row.kind !== view.type)) return false;
   if (view.status === 'all') return !row.cleared;
   return row.status === view.status;
+}
+
+/** Category notices count hidden failures and attention rows of that type, without double counting. */
+export function categoryNoticeCount(rows: Pick<ListRow, 'status' | 'kind' | 'needsAttention'>[], type: TypeFilter): number {
+  return rows.filter(row => (type === 'all' || row.kind === type) && (row.status === 'failed' || row.needsAttention)).length;
 }
 
 /**
@@ -88,8 +95,8 @@ export function filterRows<T extends ListRow>(rows: T[], view: ListView, query: 
   return rows.filter(row => matchesView(row, view) && matchesSearch(row, query));
 }
 
-/** Sidebar counts per type (any status), and chip counts per status within the selected type. */
-export function countView(rows: Pick<ListRow, 'status' | 'kind' | 'cleared'>[], type: TypeFilter) {
+/** Sidebar counts per type (excluding failures in categories), and chip counts per status within the selected type. */
+export function countView(rows: Pick<ListRow, 'status' | 'kind' | 'cleared' | 'needsAttention'>[], type: TypeFilter) {
   const types = Object.fromEntries(TYPES.map(f => [f, 0])) as Record<TypeFilter, number>;
   const statuses = Object.fromEntries(STATUSES.map(f => [f, 0])) as Record<StatusFilter, number>;
   for (const row of rows) {

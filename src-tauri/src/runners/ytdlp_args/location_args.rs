@@ -51,8 +51,26 @@ pub fn build_location_args(
   };
   // Upgrade only the old shipped defaults; leave custom templates alone.
   let filename = match filename {
-    "%(title).200s-(%(height)sp%(fps).0d).%(ext)s" => {
-      "%(title).200B-(%(height)sp%(fps).0d).%(ext)s"
+    "%(title).200s-(%(height)sp%(fps).0d).%(ext)s"
+    | "%(title).200B-(%(height)sp%(fps).0d).%(ext)s" => {
+      if template_context
+        .values
+        .get("media_kind")
+        .map(String::as_str)
+        == Some("image")
+      {
+        if template_context
+          .values
+          .get("height")
+          .is_some_and(|h| !h.is_empty())
+        {
+          "%(title).200B-(%(height)sp).%(ext)s"
+        } else {
+          "%(title).200B.%(ext)s"
+        }
+      } else {
+        "%(title).200B-(%(height)sp%(fps|).0d).%(ext)s"
+      }
     }
     "%(title).200s-(%(abr)dk).%(ext)s" => "%(title).200B-(%(abr)dk).%(ext)s",
     custom => custom,

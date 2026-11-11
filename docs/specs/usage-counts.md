@@ -22,7 +22,7 @@ fail, without an ID, links, titles, file names, paths or account names.
   workflow sets `NEZZEL_USAGE_URL` only once the server is live, so nothing is sent before.
 
 ## 2. Client rules (Rust `src-tauri/src/usage/`)
-- `keys.rs`: the one allow-list (fixed set + patterned `site:`/`sitein:`/`sitefail:`/`opt:`). Unknown keys are
+- `keys.rs`: the one allow-list (fixed set + patterned `site:`/`sitein:`/`sitefail:`/`opt:`/`failcode:`). Unknown keys are
   dropped, never an error. Domain = `diagnostics::link` registrable-domain logic (shared helper, read-only
   reuse), lowercase, regex `[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+`, ≤ 64 chars, numeric last label (IP) dropped.
 - `store.rs`: `usage.json` in the app data dir: `{since, usage_day, counts, today:{day, per_key}, installed_at,
@@ -72,6 +72,7 @@ fail, without an ID, links, titles, file names, paths or account names.
 | `site:<domain>` (A, meaning kept; registrable domain only) | a download ended (finished or failed) |
 | `sitein:<domain>` (D) | a link received for that site |
 | `sitefail:<domain>` (D) | a download failed; success rate = (site − sitefail)/site (lesson 2) |
+| `failcode:<code>` (D) | once when a download fails, alongside `sitefail`; only fixed app error codes from `keys::FAILURE_CODES`, anything else → `unknown`; never engine text, links, titles or paths; same 500-per-key daily cap |
 | `site.other` (A) | past the 40-site cap |
 | `quick.download/audio/smaller/options` (D) | Quick bar / copied-link card actions (`capture_action`) |
 | `card.format.video/audio` (D) | A row of the copied-link card's format menu (`capture_action`; height or bitrate itself not sent) |
@@ -100,7 +101,9 @@ OS version, hostname. Failures with links stay in Sentry (unchanged, `diagnostic
    `^\d+\.\d+\.\d+(-[a-z]+\.\d+)?$`, ≤ 24 chars; Android unchanged (int 500–9999).
 3. Allow-list per platform: Android's FIXED set unchanged; a new DESKTOP_FIXED set (table below). Patterned
    keys are shared with the same syntax rules: `site:`, `opt:` (existing), `sitein:`, `sitefail:` (new; same
-   domain regex, ≤ 64-char domain, numeric last label rejected). `sdk:`/`brand:` stay android-only.
+   domain regex, ≤ 64-char domain, numeric last label rejected). `failcode:<code>` is desktop-only:
+   `^failcode:[a-zA-Z0-9]{1,48}$`, further restricted to the fixed app error-code allow-list in
+   `keys::FAILURE_CODES`; anything unclassified counts as `failcode:unknown`. `sdk:`/`brand:` stay android-only.
 4. Dashboard: platform toggle (Android / Desktop / All) on every card; desktop cards: OS/arch share, versions
    (semver), install.new per day, quick picks, copied-link card shown vs used, tray/shortcut, success rate per
    site from `site`/`sitefail`.
@@ -149,3 +152,7 @@ Fixed (generated the same way as Android's, `src-tauri/src/usage/keys.rs` is the
   {ar,de,en,es,fr,it,ko,nb,nl,pt-br,pt-pt,ru,tr,zh-tw}, `set.theme.{system,light,dark}`,
   `set.parallel.{1,2,3,4up}`, `set.{tray,clipboard,autostart,reports}.{on,off}`, `age.{day0,d1-7,d8-30,d31up}`
 Patterned (shared): `site:<domain>`, `sitein:<domain>`, `sitefail:<domain>`, `opt:<t0-2|t2-5|t5-10|t10up>:<domain>`.
+
+Patterned (desktop-only): `failcode:<code>` (`^failcode:[a-zA-Z0-9]{1,48}$` and `code` ∈
+`keys::FAILURE_CODES`; unknown/unclassified → `unknown`). Counts once per failed job, including when no
+site domain is available; the same 500-per-key UTC-day client limit applies.

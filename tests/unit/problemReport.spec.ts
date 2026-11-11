@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { downloadReportContext } from '../../src/helpers/reportContext';
+import { batchReportPayloads, downloadReportContext } from '../../src/helpers/reportContext';
 import { logFrontendError, stripOrigins } from '../../src/tauri/errorLog';
-import { reportFailedDownload } from '../../src/stores/report';
+import { reportFailedDownload, useReportStore } from '../../src/stores/report';
+import { useToastStore } from '../../src/stores/toast';
 import { countUsage } from '../../src/tauri/usage';
 import { installTauriMock } from '../utils/tauriMock';
 import type { MediaAttempts } from '../../src/stores/media/diagnostics';
@@ -68,5 +69,74 @@ describe('best-effort IPC', () => {
     }).not.toThrow();
     // An unhandled rejection would fail the run.
     await new Promise(resolve => setTimeout(resolve, 0));
+  });
+});
+
+describe('batchReportPayloads', () => {
+  it.each([false, true])('builds one report per failed row, includeLink=%s', (includeLink) => {
+    const rows = ['failed', 'done', 'active', 'failed', 'failed'].map((status, index) => ({
+      status: status as 'failed' | 'done' | 'active',
+      download: { context: downloadReportContext(`code${index}`, 1, []), url: `https://example.com/${index}`, extractor: 'Example', title: 'private filename' },
+    }));
+    expect(batchReportPayloads(rows, '  ملاحظة  ', includeLink, 'shared-batch')).toEqual([0, 3, 4].map(index => ({
+      note: 'ملاحظة', download: rows[index]!.download.context,
+      url: includeLink ? `https://example.com/${index}` : null,
+      extractor: 'Example', includeLink, batchId: 'shared-batch', eventId: null,
+    })));
+    expect(batchReportPayloads([], '', includeLink, 'batch')).toEqual([]);
+  });
+});
+
+describe('batch report delivery', () => {
+  it('ignores concurrent and completed submits without sending or toasting twice', async () => {
+    const sent: unknown[] = [];
+    installTauriMock({ diagnostics_send: (_cmd, args) => {
+      sent.push(args);
+    } });
+    const toast = vi.spyOn(useToastStore(), 'showToast').mockReturnValue(1);
+    const store = useReportStore();
+    store.openBatchReport([0, 1, 2].map(index => ({
+      status: 'failed', download: { context: downloadReportContext(`code${index}`, 1, []), url: null, extractor: null },
+    })));
+    try {
+      await Promise.all([store.send('', false), store.send('', false)]);
+      await store.send('', false);
+      expect(sent).toHaveLength(3);
+      expect(store.download).toBeNull();
+      expect(toast).toHaveBeenCalledTimes(1);
+      expect(store.open).toBe(false);
+    } finally { toast.mockRestore(); }
+  });
+
+  it('retries unsent rows only, with the same batch id and consent', async () => {
+    const sent: { download: { errorCode: string }; batchId: string; eventId: string; note: string; url: string | null }[] = [];
+    let fail = true;
+    let failedEventId = '';
+    installTauriMock({ diagnostics_send: (_cmd, args) => {
+      const payload = args as (typeof sent)[number];
+      if (payload.download.errorCode === 'code2' && fail) {
+        failedEventId = payload.eventId;
+        throw new Error('offline');
+      }
+      sent.push(payload);
+    } });
+    const store = useReportStore();
+    store.openBatchReport([0, 1, 2].map(index => ({
+      status: 'failed', download: { context: downloadReportContext(`code${index}`, 1, []), url: `https://example.com/${index}`, extractor: null },
+    })));
+    await store.send('note', false);
+    expect(store.open).toBe(true);
+    expect(store.isBatch).toBe(true);
+    expect(store.batchCount).toBe(3);
+    expect(sent.map(row => row.download.errorCode)).toEqual(['code0', 'code1']);
+    fail = false;
+    await store.send('changed note', true);
+    expect(store.open).toBe(false);
+    expect(sent.map(row => row.download.errorCode)).toEqual(['code0', 'code1', 'code2']);
+    expect(new Set(sent.map(row => row.batchId)).size).toBe(1);
+    expect(new Set(sent.map(row => row.eventId)).size).toBe(3);
+    expect(sent[2]!.eventId).toBe(failedEventId);
+    expect(sent.every(row => row.note === 'note')).toBe(true);
+    expect(sent.every(row => row.url === null)).toBe(true);
   });
 });

@@ -16,6 +16,15 @@ fn facebook_read(html: &str, url: &str) -> Option<Resolution> {
   }
 }
 
+fn facebook_assets(result: Option<Resolution>) -> Vec<crate::models::parsed::MediaAttachment> {
+  let Some(Resolution::Attachments { metadata }) = result else {
+    panic!("expected bound photos: {result:?}")
+  };
+  serde_json::from_str::<crate::models::ParsedSingleVideo>(&metadata)
+    .unwrap()
+    .attachments
+}
+
 const POST: &str = "https://www.facebook.com/story.php?story_fbid=900000000000001&id=42";
 fn fixture(name: &str) -> String {
   std::fs::read_to_string(
@@ -48,31 +57,29 @@ fn facebook_reads_only_the_bound_attachment() {
     assert_eq!(facebook_read(&fixture(file), POST), None, "{file}");
   }
   for file in ["photo-post.html", "decoys-post.html"] {
-    assert_eq!(
-      facebook_read(&fixture(file), POST),
-      Some(Resolution::Passthrough(
-        "https://www.facebook.com/photo/?fbid=900000000000002".into()
-      )),
-      "{file}"
-    );
+    let assets = facebook_assets(facebook_read(&fixture(file), POST));
+    assert_eq!(assets.len(), 1, "{file}");
+    assert_eq!(assets[0].id, "900000000000002", "{file}");
   }
   for source in [
     "https://www.facebook.com/photo/?fbid=900000000000002",
     "https://www.facebook.com/photo.php?fbid=900000000000002",
     "https://www.facebook.com/page/photos/a.123/900000000000002/?type=3&theater",
   ] {
-    assert_eq!(
-      facebook_read(&fixture("photo-post.html"), source),
-      Some(Resolution::Passthrough(
-        "https://www.facebook.com/photo/?fbid=900000000000002".into()
-      ))
-    );
+    let assets = facebook_assets(facebook_read(&fixture("photo-post.html"), source));
+    assert_eq!(assets.len(), 1);
+    assert_eq!(assets[0].id, "900000000000002");
   }
+  let assets = facebook_assets(facebook_read(&fixture("album-post.html"), POST));
   assert_eq!(
-    facebook_read(&fixture("album-post.html"), POST),
-    Some(Resolution::Unsupported {
-      reason: Reason::PhotosOnly
-    })
+    assets.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+    [
+      "900000000000002",
+      "900000000000003",
+      "900000000000004",
+      "900000000000005",
+      "900000000000006"
+    ]
   );
   assert_eq!(
     facebook_read(
@@ -96,7 +103,7 @@ fn facebook_hands_off_single_photos_and_keeps_multi_photo_and_mixed_posts_for_ga
     let mut attachments: Vec<_> = (0..count)
       .map(|i| {
         json!({"media": {
-          "__typename": "Photo", "id": format!("{}", 900000000000002u64 + i),
+          "__typename": "Photo", "id": format!("{}", 900000000000050u64 - i),
           "image": {"uri": format!("https://scontent.example.fbcdn.net/{i}.jpg")}
         }})
       })
@@ -110,16 +117,69 @@ fn facebook_hands_off_single_photos_and_keeps_multi_photo_and_mixed_posts_for_ga
       }}}}
     }]]]});
     let html = format!("<script data-sjs>{root}</script>");
+    for source in [
+      POST,
+      "https://www.facebook.com/share/p/1EiNJaQ8Yr/",
+      "https://www.facebook.com/share/p/18nsn8sxfB/",
+    ] {
+      let result = facebook_read(&html, source);
+      if video {
+        assert_eq!(
+          result,
+          Some(Resolution::Unsupported {
+            reason: Reason::PhotosOnly
+          })
+        );
+        continue;
+      }
+      let Some(Resolution::Attachments { metadata }) = result else {
+        panic!("{source}: {count} verified photos must become attachments: {result:?}");
+      };
+      let media: crate::models::ParsedSingleVideo = serde_json::from_str(&metadata).unwrap();
+      assert_eq!(media.url.as_deref(), Some(source));
+      assert_eq!(media.attachments.len(), count as usize);
+      for (i, asset) in media.attachments.iter().enumerate() {
+        assert_eq!(asset.id, format!("{}", 900000000000050u64 - i as u64));
+        assert_eq!(
+          asset.url,
+          format!("https://scontent.example.fbcdn.net/{i}.jpg")
+        );
+      }
+    }
+    if !video {
+      let source = "https://www.facebook.com/photo.php?fbid=900000000000050&set=pb.42";
+      let Some(Resolution::Attachments { metadata }) = facebook_read(&html, source) else {
+        panic!("bound photo.php attachment")
+      };
+      let media: crate::models::ParsedSingleVideo = serde_json::from_str(&metadata).unwrap();
+      assert_eq!(media.attachments.len(), 1);
+      assert_eq!(media.attachments[0].id, "900000000000050");
+      assert_eq!(
+        media.attachments[0].url,
+        "https://scontent.example.fbcdn.net/0.jpg"
+      );
+    }
+  }
+  // Missing numeric IDs must still survive signed-URL rotation and manifest validation.
+  for token in ["a", "b"] {
+    let url = format!(
+      "https://scontent.example.fbcdn.net/no-id.jpg?token={}",
+      token.repeat(600)
+    );
+    let root = json!({"RelayPrefetchedStreamCache": {"__bbox": {"result": {"data": {"node_v2": {
+      "__typename":"Story", "post_id":"900000000000001", "attachments":[{"media": {
+        "__typename":"Photo", "image":{"uri":url}
+      }}]
+    }}}}}});
+    let html = format!("<script data-sjs>{root}</script>");
+    let assets = facebook_assets(facebook_read(&html, POST));
     assert_eq!(
-      facebook_read(&html, POST),
-      Some(if count == 1 && !video {
-        Resolution::Passthrough("https://www.facebook.com/photo/?fbid=900000000000002".into())
-      } else {
-        Resolution::Unsupported {
-          reason: Reason::PhotosOnly,
-        }
-      }),
-      "{count} photos, video={video}"
+      assets[0].id,
+      "photo:0d1b27ef58cbf3ab32ee6e43d9a6724e3738df62463f9b5653afd185e894cc94"
+    );
+    assert_eq!(assets[0].url, url);
+    assert!(
+      crate::parsers::gallery::GalleryPost::from_attachments(assets, POST, None, None).is_ok()
     );
   }
 }
@@ -396,10 +456,31 @@ async fn facebook_regional_and_login_wrappers_keep_post_binding() {
     ("https://web.facebook.com/share/p/AbC/", reply(302, Some("/login/?next=https%3A%2F%2Fwww.facebook.com%2Fstory.php%3Fstory_fbid%3D900000000000001%26id%3D42"), b"")),
     (POST, reply(200, None, fixture("photo-post.html").as_bytes())),
   ].into()));
-  assert!(matches!(
-    read_site(short, &fake).await,
-    Verdict::Verified(Resolution::Passthrough(url)) if url == "https://www.facebook.com/photo/?fbid=900000000000002"
-  ));
+  let assets = facebook_assets(Some(read_site(short, &fake).await.resolution(short)));
+  assert_eq!(assets.len(), 1);
+  assert_eq!(assets[0].id, "900000000000002");
+  struct RefusingCdn(FakeTransport);
+  impl http::Transport for RefusingCdn {
+    async fn get(
+      &self,
+      url: &reqwest::Url,
+      cap: usize,
+    ) -> Result<http::Response, http::FetchError> {
+      self.0.get(url, cap).await
+    }
+    async fn admit_media(&self, _: &reqwest::Url) -> Result<(), http::FetchError> {
+      Err(http::FetchError::Address)
+    }
+  }
+  let refused = RefusingCdn(FakeTransport(std::sync::Mutex::new(
+    [(
+      POST,
+      reply(200, None, fixture("photo-post.html").as_bytes()),
+    )]
+    .into(),
+  )));
+  assert!(matches!(read_site(POST, &refused).await, Verdict::Unknown));
+
   let moved = "https://www.facebook.com/reel/900000000000789";
   let fake = FakeTransport(std::sync::Mutex::new(
     [
@@ -476,9 +557,12 @@ async fn shortlink_reader_verifies_photos_video_and_preserves_unknown() {
       ]
       .into(),
     ));
-    assert!(
-      matches!(read_site(short, &fake).await, Verdict::Verified(result) if result == expected)
-    );
+    let result = read_site(short, &fake).await.resolution(short);
+    if fixture_name == "album-post.html" {
+      assert_eq!(facebook_assets(Some(result)).len(), 5);
+    } else {
+      assert_eq!(result, expected);
+    }
   }
   let fake = FakeTransport(std::sync::Mutex::new(
     [(POST, reply(404, None, b"error"))].into(),
@@ -881,23 +965,21 @@ async fn facebook_photo_handoff_uses_single_photo_ids() {
       }
       .into(),
     ));
-    let expected = if photo {
-      Resolution::Passthrough(if landing == post {
-        "https://www.facebook.com/photo/?fbid=616512792270070".into()
-      } else {
-        canonical.into()
-      })
-    } else {
-      // PhotosOnly leaves the gallery input unchanged, rather than selecting an attachment.
-      Resolution::Unsupported {
-        reason: Reason::PhotosOnly,
-      }
-    };
+    let assets = facebook_assets(Some(read_site(source, &fake).await.resolution(source)));
     assert_eq!(
-      read_site(source, &fake).await.resolution(source),
-      expected,
+      assets.len(),
+      if photo { 1 } else { 5 },
       "{source} -> {landing}"
     );
+    assert_eq!(
+      assets[0].id,
+      if landing == post {
+        "616512792270070"
+      } else {
+        "900000000000002"
+      }
+    );
+    assert!(fake.0.lock().unwrap().is_empty());
   }
 }
 
@@ -916,12 +998,9 @@ fn facebook_bound_photos_win_over_misleading_crawler_video_metadata() {
       "616512792270070",
     ),
   ] {
-    assert_eq!(
-      facebook_read(&fixture(file), url),
-      Some(Resolution::Passthrough(format!(
-        "https://www.facebook.com/photo/?fbid={id}"
-      )))
-    );
+    let assets = facebook_assets(facebook_read(&fixture(file), url));
+    assert_eq!(assets.len(), 1);
+    assert_eq!(assets[0].id, id);
   }
 }
 
@@ -1024,7 +1103,7 @@ async fn threads_images_and_mixed_carousels_reuse_the_attachment_model() {
   }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn threads_refuses_redirects_oversized_bodies_and_unbound_previews() {
   let url = "https://www.threads.com/@nasa/post/DXVbTUPl-Qy";
   for response in [
@@ -1040,10 +1119,235 @@ async fn threads_refuses_redirects_oversized_bodies_and_unbound_previews() {
     assert!(matches!(read_site(url, &transport).await, Verdict::Unknown));
     assert!(transport.0.lock().unwrap().is_empty());
   }
+  let share = "https://www.threads.com/share/FJ_5OYZ6-";
+  let canonical = "https://www.threads.com/@nasa/post/SynthVid0001";
+  for (source, location, target, supported) in [
+    (share, canonical, Some(canonical), true),
+    (
+      "https://www.threads.net/share/FJ_5OYZ6-",
+      "https://www.threads.net/@nasa/post/SynthVid0001?tracking=1",
+      Some(canonical),
+      true,
+    ),
+    (share, "/@nasa/post/SynthVid0001", Some(canonical), true),
+    (
+      share,
+      "https://www.threads.com.evil.example/@nasa/post/SynthVid0001",
+      None,
+      false,
+    ),
+    (
+      share,
+      "http://www.threads.com/@nasa/post/SynthVid0001",
+      None,
+      false,
+    ),
+    (share, "https://www.threads.com/login", None, false),
+    (share, share, None, false),
+    (
+      share,
+      "https://www.threads.com/@nasa/post/WrongPost",
+      Some("https://www.threads.com/@nasa/post/WrongPost"),
+      false,
+    ),
+  ] {
+    let mut pages = vec![(source, reply(302, Some(location), b""))];
+    if let Some(target) = target {
+      pages.push((
+        target,
+        reply(
+          200,
+          None,
+          include_bytes!("../../tests/fixtures/threads/video.html"),
+        ),
+      ));
+    }
+    let transport = FakeTransport(std::sync::Mutex::new(pages.into()));
+    let result = read_site(source, &transport).await;
+    if supported {
+      assert_eq!(
+        result.resolution(source),
+        Resolution::Passthrough(
+          "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/synthetic_large.mp4".into()
+        ),
+        "{source} -> {location}"
+      );
+    } else {
+      assert!(matches!(result, Verdict::Unknown), "{source} -> {location}");
+    }
+    assert!(transport.0.lock().unwrap().is_empty());
+  }
+  let second = "https://www.threads.net/share/second";
+  let third = "https://www.threads.com/share/third";
+  let fourth = "https://www.threads.com/share/fourth";
+  for (pages, supported) in [
+    (
+      vec![
+        (share, reply(302, Some(second), b"")),
+        (second, reply(302, Some(canonical), b"")),
+        (
+          canonical,
+          reply(
+            200,
+            None,
+            include_bytes!("../../tests/fixtures/threads/video.html"),
+          ),
+        ),
+      ],
+      true,
+    ),
+    (
+      vec![
+        (share, reply(302, Some(second), b"")),
+        (second, reply(302, Some(share), b"")),
+      ],
+      false,
+    ),
+    (
+      vec![
+        (share, reply(302, Some(second), b"")),
+        (second, reply(302, Some(third), b"")),
+        (third, reply(302, Some(fourth), b"")),
+        (fourth, reply(302, Some(canonical), b"")),
+      ],
+      false,
+    ),
+    (
+      vec![
+        (share, reply(302, Some(canonical), b"")),
+        (
+          canonical,
+          reply(
+            302,
+            Some("https://www.threads.com/@nasa/post/OtherPost"),
+            b"",
+          ),
+        ),
+      ],
+      false,
+    ),
+  ] {
+    let transport = FakeTransport(std::sync::Mutex::new(pages.into()));
+    let result = read_site(share, &transport).await;
+    if supported {
+      assert_eq!(
+        result.resolution(share),
+        Resolution::Passthrough(
+          "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/synthetic_large.mp4".into()
+        )
+      );
+    } else {
+      assert!(matches!(result, Verdict::Unknown));
+    }
+    assert!(transport.0.lock().unwrap().is_empty());
+  }
+  // A share response must establish a canonical post before its body can contribute media.
+  let transport = FakeTransport(std::sync::Mutex::new(
+    [(
+      share,
+      reply(
+        200,
+        None,
+        include_bytes!("../../tests/fixtures/threads/video.html"),
+      ),
+    )]
+    .into(),
+  ));
+  assert!(matches!(
+    read_site(share, &transport).await,
+    Verdict::Unknown
+  ));
+  assert!(transport.0.lock().unwrap().is_empty());
   assert_eq!(
     after_unsupported(url, "ERROR: Unsupported URL:").await,
     None
   );
+  struct Transient {
+    errors: std::sync::Mutex<std::collections::VecDeque<http::FetchError>>,
+    pages: FakeTransport,
+  }
+  impl http::Transport for Transient {
+    async fn admit_media(&self, _: &reqwest::Url) -> Result<(), http::FetchError> {
+      Ok(())
+    }
+    async fn get(
+      &self,
+      url: &reqwest::Url,
+      cap: usize,
+    ) -> Result<http::Response, http::FetchError> {
+      if let Some(error) = self.errors.lock().unwrap().pop_front() {
+        return Err(error);
+      }
+      self.pages.get(url, cap).await
+    }
+  }
+  let source = "https://www.threads.com/@nasa/post/SynthVid0001";
+  let failing = Transient {
+    errors: std::sync::Mutex::new([http::FetchError::Network, http::FetchError::Network].into()),
+    pages: FakeTransport(Default::default()),
+  };
+  let result = read_site(source, &failing).await.resolution(source);
+  assert_eq!(
+    result,
+    Resolution::Failed {
+      failure: Failure::Network
+    }
+  );
+  assert!(failing.errors.lock().unwrap().is_empty());
+  struct Stalled(std::sync::atomic::AtomicUsize);
+  impl http::Transport for Stalled {
+    async fn get(&self, _: &reqwest::Url, _: usize) -> Result<http::Response, http::FetchError> {
+      self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+      std::future::pending().await
+    }
+  }
+  let stalled = Stalled(std::sync::atomic::AtomicUsize::new(0));
+  assert_eq!(
+    read_site(source, &stalled).await.resolution(source),
+    Resolution::Failed {
+      failure: Failure::Timeout
+    }
+  );
+  assert_eq!(stalled.0.load(std::sync::atomic::Ordering::Relaxed), 2);
+  assert_eq!(
+    resolution_timeout(source),
+    Resolution::Failed {
+      failure: Failure::Timeout
+    }
+  );
+  assert_eq!(
+    resolution_timeout("https://example.com/"),
+    Resolution::Passthrough("https://example.com/".into())
+  );
+  let refused = Transient {
+    errors: std::sync::Mutex::new([http::FetchError::Address].into()),
+    pages: FakeTransport(Default::default()),
+  };
+  assert_eq!(
+    read_site(source, &refused).await.resolution(source),
+    Resolution::Passthrough(source.into())
+  );
+  let retrying = Transient {
+    errors: std::sync::Mutex::new([http::FetchError::Network].into()),
+    pages: FakeTransport(std::sync::Mutex::new(
+      [(
+        source,
+        reply(
+          200,
+          None,
+          include_bytes!("../../tests/fixtures/threads/video.html"),
+        ),
+      )]
+      .into(),
+    )),
+  };
+  assert_eq!(
+    read_site(source, &retrying).await.resolution(source),
+    Resolution::Passthrough(
+      "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/synthetic_large.mp4".into()
+    )
+  );
+  assert!(retrying.pages.0.lock().unwrap().is_empty());
   let video = include_str!("../../tests/fixtures/threads/video.html");
   for replacement in [
     "http://scontent.cdninstagram.com/bad.mp4",
@@ -1221,6 +1525,7 @@ async fn every_resolution_variant_needs_public_addresses() {
 #[test]
 fn vimeo_401_retries_chrome_once_and_only_after_that_response() {
   for (url, stderr, retry) in [
+    ("https://player.vimeo.com/video/1084537", "ERROR: [vimeo] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized (caused by <HTTPError 401: Unauthorized>)", true),
     (
       "https://player.vimeo.com/video/123",
       "ERROR: HTTP Error 401: Unauthorized",

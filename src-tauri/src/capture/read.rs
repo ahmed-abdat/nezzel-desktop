@@ -62,13 +62,18 @@ fn preview_plan(url: &str, proxy: bool) -> Vec<Engine> {
     return vec![Engine::Files];
   }
   let gallery_first = crate::extract::registry::gallery_first(url);
+  let readers = crate::extract::registry::readers(url);
+  let facebook = readers.contains(&crate::routing::ReaderId::Facebook);
   let mut plan = Vec::new();
-  if gallery_first {
+  if gallery_first && !facebook {
     plan.push(Engine::Gallery);
   }
-  // Readers fetch public pages without the proxy: with one switched on they are skipped, never bypassed.
-  if !proxy && !crate::extract::registry::readers(url).is_empty() {
+  // Readers fetch public pages without the proxy: never bypass it.
+  if !proxy && !readers.is_empty() {
     plan.push(Engine::Reader);
+  }
+  if gallery_first && facebook {
+    plan.push(Engine::Gallery);
   }
   plan.push(Engine::Ytdlp);
   if !gallery_first {
@@ -89,7 +94,7 @@ async fn preview_item(
   }
   let row = format!("capture-{}", value.id);
   // What yt-dlp reads: the copied link, or the one a reader found for it.
-  let mut target = value.url.clone();
+  let mut target = crate::resolve::ResolvedInput::new(&value.url);
   // The first failure is the one the card explains; later engines are only fallbacks.
   let mut failed: Option<FailReason> = None;
   for engine in preview_plan(&value.url, proxy) {
@@ -108,7 +113,8 @@ async fn preview_item(
         .map(|item| (with_engine(item, FetchEngine::Files), None));
       }
       Engine::Gallery => {
-        match crate::runners::gallery::preview_media(app, &value.url, row.clone(), &network).await {
+        match crate::runners::gallery::preview_media(app, &target.url, row.clone(), &network).await
+        {
           Ok(Some(item)) => return Ok((with_engine(item, FetchEngine::Gallery), None)),
           // A login wall leaves the media type unknown. The foreground fetch must resolve it with
           // consented cookies instead of caching a yt-dlp preview.
@@ -120,18 +126,19 @@ async fn preview_item(
       }
       Engine::Reader => match crate::resolve::resolve(&value.url).await {
         crate::resolve::Resolution::Passthrough(url)
-        | crate::resolve::Resolution::PostMedia { url, .. } => target = url,
+        | crate::resolve::Resolution::PostMedia { url, .. } => target.rewrite(url),
         crate::resolve::Resolution::Attachments { metadata } => {
           return reader_item(&metadata, &row)
             .map(|item| (item, None))
             .ok_or(FailReason::Unknown);
         }
+        crate::resolve::Resolution::Failed { .. } => return Err(FailReason::Network),
         crate::resolve::Resolution::Unsupported { .. } => {
           failed.get_or_insert(FailReason::Unsupported);
         }
       },
       // A reader that found no video (photos only) leaves yt-dlp nothing to read.
-      Engine::Ytdlp if failed.is_some() => {}
+      Engine::Ytdlp if failed.is_some() || crate::resolve::facebook_photo_target(&target.url) => {}
       Engine::Ytdlp => match preview_ytdlp(app, value, &target, &network).await {
         Ok((item, details)) => return Ok((with_engine(item, FetchEngine::Ytdlp), details)),
         Err(reason) => {
@@ -167,10 +174,9 @@ fn with_engine(mut item: serde_json::Value, engine: FetchEngine) -> serde_json::
 async fn preview_ytdlp(
   app: &AppHandle,
   value: &Offer,
-  target: &str,
+  target: &crate::resolve::ResolvedInput,
   network: &crate::state::config_models::NetworkSettings,
 ) -> Result<(serde_json::Value, Option<preview::PreviewDetails>), FailReason> {
-  let process_guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
   let manager = crate::binaries::binaries_manager::BinariesManager::for_app(app);
   let path = manager
     .tool_environment()
@@ -178,11 +184,101 @@ async fn preview_ytdlp(
   let executable = manager
     .tool_path("yt-dlp")
     .map_err(|_| FailReason::Unknown)?;
-  let mut command = preview_command(&executable, network, target).ok_or(FailReason::Unknown)?;
-  command.env("PATH", path);
-  let bytes = preview::read_output_reason(&mut command, process_guard).await?;
+  let mut input = target.clone();
+  input.rewrite(target.url.clone());
+  let mut first_vimeo_reason = None;
+  let started = std::time::Instant::now();
+  let deadline = tokio::time::Instant::now() + READ_LIMIT;
+  let bytes = loop {
+    // URL retries and the fast/full pair all consume the same preview budget.
+    match tokio::time::timeout_at(deadline, async {
+      let read = |fast| {
+        let input = &input;
+        let executable = &executable;
+        let path = &path;
+        async move {
+          let process_guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
+          let mut command = preview_command(executable, network, input, fast)
+            .ok_or((FailReason::Unknown, String::new()))?;
+          command.env("PATH", path);
+          preview::read_output_stderr(&mut command, process_guard).await
+        }
+      };
+      if reqwest::Url::parse(&input.url)
+        .ok()
+        .and_then(|url| url.host_str().and_then(crate::sites::site_of))
+        == Some(crate::sites::SiteId::YouTube)
+      {
+        probe_with_fallback(read(true), || read(false)).await
+      } else {
+        read(false).await
+      }
+    })
+    .await
+    .map_err(|_| FailReason::Slow)?
+    {
+      Ok(bytes) => break bytes,
+      Err((reason, stderr)) => {
+        if input.impersonation_unavailable(&stderr) {
+          return Err(first_vimeo_reason.unwrap_or(reason));
+        }
+        if input.retry_vimeo_401(&stderr) {
+          first_vimeo_reason = Some(reason);
+        } else if !input.retry_original(&stderr) {
+          return Err(reason);
+        }
+      }
+    }
+  };
+  tracing::info!(
+    ms = started.elapsed().as_millis() as u64,
+    "Capture yt-dlp probe"
+  );
   let json = String::from_utf8(bytes).map_err(|_| FailReason::Unknown)?;
   ytdlp_preview(&value.url, &json, value.id)
+}
+
+async fn probe_with_fallback<
+  T,
+  F: std::future::Future<Output = Result<T, (FailReason, String)>>,
+>(
+  fast: impl std::future::Future<Output = Result<T, (FailReason, String)>>,
+  full: impl FnOnce() -> F,
+) -> Result<T, (FailReason, String)> {
+  use crate::parsers::ytdlp_error::{stage_hint, DiagnosticMatcher, YtdlpErrorParser};
+
+  match fast.await {
+    Ok(value) => Ok(value),
+    Err(error) => {
+      // Restoring manifests cannot repair login, availability, transport or access refusals.
+      if error.0 != FailReason::Unknown {
+        return Err(error);
+      }
+      let Ok(matcher) = DiagnosticMatcher::shared() else {
+        return Err(error);
+      };
+      let parser = YtdlpErrorParser::new("capture", "capture", matcher);
+      let retry = error
+        .1
+        .lines()
+        .filter_map(|line| parser.parse_fetch_line(line, false))
+        .any(|event| {
+          matches!(
+            event.code.as_str(),
+            "requestedFormatUnavailable"
+              | "unableToExtractIdOrInfo"
+              | "unableToExtractInitialData"
+              | "nsigExtractionFailed"
+          ) || stage_hint::no_formats(&event.message)
+            || stage_hint::requested_format_unavailable(&event.message)
+        });
+      if retry {
+        full().await
+      } else {
+        Err(error)
+      }
+    }
+  }
 }
 
 /// yt-dlp's dump → the item the download uses (the app's parsed model) and the card facts. The facts
@@ -208,6 +304,7 @@ fn ytdlp_preview(
       let from_item = preview::summarize(&item);
       let details = raw.map(|raw| {
         let mut details = preview::summarize(&raw);
+        details.title = Some(card_title(&raw));
         details.media_kind = from_item.media_kind.clone();
         details.photos = from_item.photos;
         details.thumbnail = details.thumbnail.or(from_item.thumbnail.clone());
@@ -225,10 +322,47 @@ fn ytdlp_preview(
   }
 }
 
+/// yt-dlp's generated social title is a fallback; a post's caption is more useful on the card.
+fn card_title(raw: &serde_json::Value) -> String {
+  let title = raw["title"].as_str().unwrap_or("").trim();
+  let generic = title.is_empty()
+    || ["uploader", "uploader_id", "channel"].iter().any(|key| {
+      raw[*key].as_str().is_some_and(|user| {
+        title == format!("Video by {user}") || title == format!("Post by {user}")
+      })
+    })
+    || title
+      .strip_prefix("Video ")
+      .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+  let noise =
+    |c: char| c.is_whitespace() || matches!(c, '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{200b}');
+  let caption = ["description", "caption"].iter().find_map(|key| {
+    raw[*key]
+      .as_str()?
+      .lines()
+      .map(|line| line.trim_matches(noise))
+      .find(|line| {
+        line.split_whitespace().any(|word| {
+          let word = word.trim_matches(noise);
+          !word.is_empty() && !word.starts_with('#') && !word.starts_with('@')
+        })
+      })
+  });
+  (if generic {
+    caption.unwrap_or(title)
+  } else {
+    title
+  })
+  .chars()
+  .take(300)
+  .collect()
+}
+
 fn preview_command(
   executable: &std::path::Path,
   network: &crate::state::config_models::NetworkSettings,
-  url: &str,
+  input: &crate::resolve::ResolvedInput,
+  fast: bool,
 ) -> Option<tokio::process::Command> {
   // Background previews never load cookies, user yt-dlp config, or engine diagnostics.
   let mut command = crate::runners::tool_process::async_command(executable).ok()?;
@@ -254,7 +388,10 @@ fn preview_command(
   }
   // Same network route as real downloads: never bypass the user's proxy.
   command.args(crate::runners::ytdlp_runner::route_args(network));
-  command.args(["--", url]);
+  if fast {
+    command.args(["--extractor-args", "youtube:skip=hls,dash,translated_subs"]);
+  }
+  command.args(input.args());
   Some(command)
 }
 
@@ -265,7 +402,8 @@ mod login_privacy_tests {
     let command = super::preview_command(
       std::path::Path::new("yt-dlp"),
       &crate::state::config_models::NetworkSettings::default(),
-      "https://example.com/post",
+      &crate::resolve::ResolvedInput::new("https://example.com/post"),
+      false,
     )
     .unwrap();
     let args: Vec<_> = command
@@ -284,6 +422,116 @@ mod login_privacy_tests {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn card_title_prefers_captions_only_over_generated_titles() {
+    for (title, caption, expected) in [
+      (
+        "Video by nasa",
+        "  The weekend ends. The mission keeps going.  \n\nMore",
+        "The weekend ends. The mission keeps going.",
+      ),
+      (
+        "Video by nasa",
+        "\n  رحلة إلى القمر 🚀  \nتفاصيل",
+        "رحلة إلى القمر 🚀",
+      ),
+      ("Post by nasa", "   ", "Post by nasa"),
+      ("Video 1", "First caption", "First caption"),
+      ("Me at the zoo", "Unrelated description", "Me at the zoo"),
+      (
+        "Video by Wes Anderson analysis",
+        "Description",
+        "Video by Wes Anderson analysis",
+      ),
+      ("", "Caption without title", "Caption without title"),
+      (
+        "Video by nasa",
+        "#space @nasa\n  A real caption  ",
+        "A real caption",
+      ),
+      (
+        "Video by nasa",
+        "\u{200e}\u{200f}\u{061c}\u{200b} \nرحلة إلى القمر",
+        "رحلة إلى القمر",
+      ),
+      (
+        "Video by nasa",
+        "\u{200f} #فضاء \u{061c} @nasa\n\u{200e} A real caption \u{200f}",
+        "A real caption",
+      ),
+      (
+        "Video by nasa",
+        "#space @nasa\n\u{200e}\u{200f}\u{061c}\u{200b} ",
+        "Video by nasa",
+      ),
+      (
+        "Video by nasa",
+        "Launch day #space @nasa",
+        "Launch day #space @nasa",
+      ),
+    ] {
+      assert_eq!(
+        card_title(&serde_json::json!({"title":title,"description":caption,"channel":"nasa"})),
+        expected
+      );
+    }
+    assert_eq!(card_title(&serde_json::json!({"title":"Video by nasa","channel":"nasa","description":"ع🚀".repeat(200)})).chars().count(), 300);
+  }
+
+  #[tokio::test]
+  async fn manifest_fallback_keeps_success_or_returns_the_full_probe_failure() {
+    use std::cell::Cell;
+    use std::future::ready;
+    let full_called = Cell::new(false);
+    assert_eq!(
+      probe_with_fallback(ready(Ok::<_, (FailReason, String)>(1)), || {
+        full_called.set(true);
+        ready(Ok(2))
+      })
+      .await,
+      Ok(1)
+    );
+    assert!(!full_called.get());
+    for (stderr, retry) in [
+      ("ERROR: [youtube] Requested format is not available. Use --list-formats for a list of available formats", true),
+      ("ERROR: [youtube] No video formats found!", true),
+      ("ERROR: [youtube] Unable to extract yt initial data", true),
+      ("ERROR: [youtube] Unable to extract video ID", true),
+      ("ERROR: [youtube] Sign in to confirm your age", false),
+      ("ERROR: [youtube] Private video. Sign in if you've been granted access to this video", false),
+      ("ERROR: [youtube] This video is not available in your country", false),
+      ("ERROR: [youtube] This clip is no longer available", false),
+      ("ERROR: [youtube] HTTP Error 429: Too Many Requests", false),
+      ("ERROR: [youtube] DRM protected", false),
+      ("ERROR: Unable to connect to proxy", false),
+      ("ERROR: unrecognised failure", false),
+    ] {
+      full_called.set(false);
+      let error = (preview::fail_reason(stderr), stderr.to_string());
+      let result = probe_with_fallback(ready(Err(error.clone())), || {
+        full_called.set(true);
+        ready(Ok(2))
+      }).await;
+      assert_eq!(result, if retry { Ok(2) } else { Err(error) }, "{stderr}");
+      assert_eq!(full_called.get(), retry, "{stderr}");
+    }
+    let full_error = (
+      FailReason::Login,
+      "HTTP Error 401: Unauthorized".to_string(),
+    );
+    assert_eq!(
+      probe_with_fallback(
+        ready(Err::<(), _>((
+          FailReason::Unknown,
+          "ERROR: No video formats found".into()
+        ))),
+        || ready(Err(full_error.clone()))
+      )
+      .await,
+      Err(full_error)
+    );
+  }
 
   /// The card's facts after a yt-dlp read keep Audio, Smaller and sizes (#36: the row lost Audio).
   #[test]
@@ -314,9 +562,29 @@ mod tests {
     assert_eq!(details.small_height, Some(144));
     assert_eq!(details.size, Some(500));
     assert_eq!(details.views, Some(300));
+    assert_eq!(details.duration, Some(19));
+    assert!(details.thumbnail.is_some());
     assert_eq!(
       item["title"], "Me at the zoo",
       "the stored item stays the parsed model"
+    );
+    let mut captioned = dump;
+    captioned["title"] = "Video by nasa".into();
+    captioned["channel"] = "nasa".into();
+    captioned["description"] = "  Caption first line  \nMore".into();
+    let (cached, details) = ytdlp_preview(
+      "https://www.instagram.com/reel/abc/",
+      &captioned.to_string(),
+      8,
+    )
+    .unwrap();
+    assert_eq!(
+      details.unwrap().title.as_deref(),
+      Some("Caption first line")
+    );
+    assert_eq!(
+      cached["title"], "Video by nasa",
+      "card text never changes the cached download title"
     );
   }
 
@@ -333,12 +601,51 @@ mod tests {
       ("https://www.instagram.com/reel/abc/", vec![Ytdlp, Gallery]),
       (
         "https://facebook.com/nasa/posts/123",
-        vec![Gallery, Reader, Ytdlp],
+        vec![Reader, Gallery, Ytdlp],
+      ),
+      (
+        "https://www.facebook.com/share/p/1EiNJaQ8Yr/",
+        vec![Reader, Gallery, Ytdlp],
+      ),
+      (
+        "https://www.facebook.com/share/p/18nsn8sxfB/",
+        vec![Reader, Gallery, Ytdlp],
+      ),
+      (
+        "https://www.facebook.com/photo/?fbid=1683838639778172",
+        vec![Reader, Gallery, Ytdlp],
       ),
       ("https://drive.google.com/file/d/abc123/view", vec![Files]),
     ] {
       assert_eq!(preview_plan(url, false), plan, "{url}");
     }
+    let mut input = crate::resolve::ResolvedInput::new("https://player.vimeo.com/video/1084537");
+    input.rewrite(input.url.clone());
+    assert!(input.retry_vimeo_401(
+      "ERROR: [vimeo] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized"
+    ));
+    let command = preview_command(
+      std::path::Path::new("yt-dlp"),
+      &Default::default(),
+      &input,
+      false,
+    )
+    .unwrap();
+    let args: Vec<_> = command
+      .as_std()
+      .get_args()
+      .map(|v| v.to_str().unwrap())
+      .collect();
+    assert!(args
+      .windows(2)
+      .any(|pair| pair == ["--referer", "https://vimeo.com/"]));
+    assert!(args
+      .windows(2)
+      .any(|pair| pair == ["--impersonate", "chrome"]));
+    assert_eq!(
+      &args[args.len() - 2..],
+      ["--", "https://player.vimeo.com/video/1084537"]
+    );
     // Readers fetch without the proxy: skipped when it is on, never bypassed.
     assert_eq!(
       preview_plan("https://facebook.com/nasa/posts/123", true),
@@ -369,7 +676,8 @@ mod tests {
       super::preview_command(
         std::path::Path::new("yt-dlp"),
         network,
-        "https://example.com/v",
+        &crate::resolve::ResolvedInput::new("https://example.com/v"),
+        false,
       )
       .map(|command| {
         command
@@ -393,6 +701,31 @@ mod tests {
     assert!(with_proxy.ends_with(&["--".into(), "https://example.com/v".into()]));
     network.proxy = Some(String::new());
     assert!(args(&network).is_none(), "an empty proxy never goes direct");
+
+    let mut input = crate::resolve::ResolvedInput::new("https://example.com/post");
+    input.rewrite("https://www.youtube.com/watch?v=jNQXAC9IVRw".into());
+    let command = preview_command(
+      std::path::Path::new("yt-dlp"),
+      &Default::default(),
+      &input,
+      true,
+    )
+    .unwrap();
+    let args: Vec<_> = command
+      .as_std()
+      .get_args()
+      .map(|v| v.to_str().unwrap())
+      .collect();
+    let flags = args
+      .iter()
+      .position(|arg| *arg == "--extractor-args")
+      .unwrap();
+    assert_eq!(args[flags + 1], "youtube:skip=hls,dash,translated_subs");
+    assert!(
+      args.ends_with(&input.args()),
+      "fast probes retain the source referer and resolved target"
+    );
+    assert!(flags < args.iter().position(|arg| *arg == "--").unwrap());
   }
 
   #[test]
