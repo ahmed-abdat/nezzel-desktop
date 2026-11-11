@@ -193,6 +193,8 @@ pub(super) struct Metadata {
   pub(super) is_locked: bool,
   #[serde(default)]
   pub(super) ytdlp_last_check: Option<u64>,
+  #[serde(default)]
+  pub(super) ytdlp_failure_since: Option<u64>,
 }
 
 #[derive(Default, Serialize, Deserialize, Clone)]
@@ -232,6 +234,7 @@ pub struct BinariesManager {
   pub(super) app: AppHandle<Wry>,
   pub(super) bin_dir: PathBuf,
   pub(super) operation: Arc<tokio::sync::Mutex<()>>,
+  pub(super) update_check: tokio::sync::Mutex<()>,
   pub(super) maintenance: tokio::sync::OnceCell<()>,
   bundled: std::sync::OnceLock<HashMap<String, PathBuf>>,
   pub(super) verified_repairs: std::sync::Mutex<HashMap<(PathBuf, String), bool>>,
@@ -244,6 +247,7 @@ impl BinariesManager {
       app: app.clone(),
       bin_dir: paths_manager.bin_dir().clone(),
       operation: Arc::new(tokio::sync::Mutex::new(())),
+      update_check: tokio::sync::Mutex::new(()),
       maintenance: tokio::sync::OnceCell::new(),
       bundled: std::sync::OnceLock::new(),
       verified_repairs: std::sync::Mutex::new(HashMap::new()),
@@ -872,6 +876,40 @@ mod tests {
     assert!(!path.exists());
     std::fs::write(&path, br#"{"versions":{"yt-dlp":"1"},"is_locked": true,"#).unwrap();
     assert!(read_metadata(&path).await.unwrap().is_locked);
+    // A restart must preserve a seven-day stale streak even before a due update runs.
+    let day = 86400;
+    let read_stale = |now| {
+      super::super::binaries_state::BinariesState::from_metadata(&path, now)
+        .update_stale
+        .load(std::sync::atomic::Ordering::SeqCst)
+    };
+    for (contents, now, stale) in [
+      (
+        br#"{"versions":{},"is_locked":false,"ytdlp_failure_since":100}"#.as_slice(),
+        100 + 7 * day,
+        true,
+      ),
+      (
+        br#"{"versions":{},"is_locked":false,"ytdlp_failure_since":100}"#.as_slice(),
+        99 + 7 * day,
+        false,
+      ),
+      (
+        br#"{"versions":{},"is_locked":false,"ytdlp_failure_since":null}"#.as_slice(),
+        100 + 8 * day,
+        false,
+      ),
+      (
+        br#"{"versions":{},"is_locked":true,"ytdlp_failure_since":100}"#.as_slice(),
+        100 + 8 * day,
+        false,
+      ),
+      (b"{}".as_slice(), 100 + 8 * day, false),
+      (b"{broken".as_slice(), 100 + 8 * day, false),
+    ] {
+      std::fs::write(&path, contents).unwrap();
+      assert_eq!(read_stale(now), stale);
+    }
     std::fs::remove_dir_all(dir).unwrap();
   }
 

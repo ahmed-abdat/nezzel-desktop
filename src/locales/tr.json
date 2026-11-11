@@ -1,4 +1,9 @@
 {
+  "toolsUpdate": {
+    "stale": "Nezzel indirme araçlarını en az 7 gündür güncelleyemedi. Bazı siteler çalışmayabilir",
+    "tryNow": "Şimdi dene",
+    "failed": "İndirme araçları güncellenemedi. Daha sonra yeniden deneyin"
+  },
   "common": {
     "download": "İndir",
     "save": "Kaydet",
@@ -915,6 +920,51 @@
   },
   "errors": {
     "runner": {
+      "networkTimeout": {
+        "shortMessage": "Bağlantı zaman aşımına uğradı",
+        "message": "Site zamanında yanıt vermedi",
+        "action": "Biraz sonra yeniden deneyin"
+      },
+      "diskFull": {
+        "shortMessage": "Disk dolu",
+        "message": "Bu indirmeyi kaydetmek için yeterli alan yok",
+        "action": "İndirme diskinde yer açıp yeniden deneyin"
+      },
+      "outputNameTooLong": {
+        "shortMessage": "Dosya adı çok uzun",
+        "message": "Dosya adı diskin sınırını aşıyor",
+        "action": "Ayarlar’da daha kısa bir dosya adı şablonu kullanıp yeniden deneyin"
+      },
+      "browserCookiesUnreadable": {
+        "shortMessage": "Tarayıcı oturumu okunamadı",
+        "message": "Nezzel tarayıcı oturumunu okuyamadı",
+        "action": "Oturum ayarlarından başka bir tarayıcı seçin"
+      },
+      "browserKeychainDenied": {
+        "shortMessage": "Anahtar Zinciri erişimi reddedildi",
+        "message": "Tarayıcı oturumunun kilidi açılamadı",
+        "action": "Yeniden deneyin ve macOS istediğinde Anahtar Zinciri erişimine izin verin"
+      },
+      "browserSafariAccessDenied": {
+        "shortMessage": "Safari için izin gerekiyor",
+        "message": "macOS Safari oturumuna erişime izin vermedi",
+        "action": "Sistem Ayarları’nda Nezzel’e Tam Disk Erişimi verip yeniden deneyin"
+      },
+      "browserDatabaseLocked": {
+        "shortMessage": "Tarayıcı veritabanı meşgul",
+        "message": "Tarayıcının oturum veritabanı kilitli",
+        "action": "Tarayıcıyı tamamen kapatıp yeniden deneyin"
+      },
+      "browserProfileMissing": {
+        "shortMessage": "Tarayıcı profili bulunamadı",
+        "message": "Tarayıcı veya seçilen profil artık kullanılamıyor",
+        "action": "Oturum ayarlarından yüklü bir tarayıcı profili seçin"
+      },
+      "accountAccessDenied": {
+        "shortMessage": "Hesabınızın erişimi olmayabilir",
+        "message": "Oturumunuz gönderildi ancak site isteği reddetti. Hesabınızın bu içeriğe erişimi olmayabilir",
+        "action": "Erişimi kontrol etmek için gönderiyi tarayıcınızda açın"
+      },
       "internal": {
         "shortMessage": "Dahili hata",
         "message": "Bu öğe işlenirken dahili bir hata oluştu."
@@ -1050,6 +1100,11 @@
       "downloadRetryingFragment": {
         "shortMessage": "Parça yeniden deneniyor",
         "message": "Bir parçanın indirmesi başarısız oldu ve otomatik olarak yeniden denenecek."
+      },
+      "facebookVideoUnavailable": {
+        "shortMessage": "Facebook bu videoyu sağlamadı",
+        "message": "Facebook bu videoyu Nezzel’e sağlamadı. Bağlantıyı tarayıcıda açıp adres çubuğundan kopyalayın veya daha sonra tekrar deneyin.",
+        "action": "Bağlantıyı tarayıcının adres çubuğundan kopyalayın veya daha sonra tekrar deneyin"
       },
       "unknown": {
         "shortMessage": "Bilinmeyen hata",

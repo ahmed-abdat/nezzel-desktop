@@ -42,7 +42,6 @@ pub fn network_down(code: &str, message: &str) -> bool {
     "nodename nor servname",
     "temporary failure in name resolution",
     "getaddrinfo failed",
-    "timed out",
   ]
   .iter()
   .any(|needle| lower.contains(needle))
@@ -58,9 +57,15 @@ pub(crate) mod stage_hint {
   /// The item has no video representation (photo posts, audio-only slideshows).
   pub(crate) fn no_formats(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
-    ["no video formats", "no formats", "no available formats"]
-      .iter()
-      .any(|hint| message.contains(hint))
+    [
+      "no video formats",
+      "no formats",
+      "no available formats",
+      "not a video",
+      "no video could be found in this tweet",
+    ]
+    .iter()
+    .any(|hint| message.contains(hint))
   }
 
   /// The requested selection failed; other formats may still exist.
@@ -257,7 +262,10 @@ impl YtdlpErrorParser {
       .map(|e| e.code)
   }
 
-  pub fn cookie_fetch_failure(&self, stderr: &str) -> CookieFetchFailure {
+  pub fn cookie_fetch_failure(&self, stderr: &str, has_cookies: bool) -> CookieFetchFailure {
+    if !has_cookies {
+      return CookieFetchFailure::Other;
+    }
     let mut failure = CookieFetchFailure::Other;
     for event in stderr.lines().filter_map(|line| self.parse_line(line)) {
       if !matches!(event.level, DiagnosticLevel::Error) {
@@ -301,7 +309,7 @@ impl YtdlpErrorParser {
   pub fn parse_fetch_line(&self, line: &str, has_cookies: bool) -> Option<DiagnosticEvent> {
     let mut event = self.parse_line(line)?;
     if has_cookies && self.login_reason(line).is_some() {
-      event.code = match self.cookie_fetch_failure(line) {
+      event.code = match self.cookie_fetch_failure(line, has_cookies) {
         CookieFetchFailure::Transient
           if event
             .message
@@ -312,7 +320,7 @@ impl YtdlpErrorParser {
         }
         CookieFetchFailure::Transient => "rateLimited429".into(),
         CookieFetchFailure::Other => "unknown".into(),
-        CookieFetchFailure::Refused => event.code,
+        CookieFetchFailure::Refused => "accountAccessDenied".into(),
       };
     }
     event.message = redact_diagnostic(&event.message);
@@ -340,8 +348,19 @@ impl YtdlpErrorParser {
     let (level, rest) = if let Some(msg) = trimmed.strip_prefix("ERROR:") {
       (DiagnosticLevel::Error, msg.trim())
     } else {
-      let msg = trimmed.strip_prefix("WARNING:")?;
-      (DiagnosticLevel::Warning, msg.trim())
+      if let Some(msg) = trimmed.strip_prefix("WARNING:") {
+        (DiagnosticLevel::Warning, msg.trim())
+      } else if (trimmed.starts_with("[in#") || trimmed.starts_with("[hls @"))
+        && self
+          .matcher
+          .match_code(&DiagnosticLevel::Error, None, trimmed)
+          == "drmProtected"
+      {
+        // ffmpeg reports FairPlay key failures before yt-dlp's generic exit-code error.
+        (DiagnosticLevel::Error, trimmed)
+      } else {
+        return None;
+      }
     };
 
     let (component, rest) = split_component(rest);
@@ -531,6 +550,10 @@ fn normalize_skip_message(line: &str) -> Option<String> {
 
 fn split_component(s: &'_ str) -> (Option<String>, Cow<'_, str>) {
   if let Some(rest) = s.strip_prefix('[') {
+    // OS error prefixes are part of the message, not extractor component names.
+    if rest.starts_with("Errno ") || rest.starts_with("WinError ") {
+      return (None, Cow::Borrowed(s));
+    }
     if let Some(end) = rest.find(']') {
       let comp = rest[..end].to_string();
       let msg = rest[end + 1..].trim();
@@ -596,7 +619,7 @@ mod tests {
     ] {
       assert!(parser.login_reason(line).is_none(), "{line}");
       assert_eq!(
-        parser.cookie_fetch_failure(line),
+        parser.cookie_fetch_failure(line, true),
         CookieFetchFailure::Other,
         "{line}"
       );
@@ -650,8 +673,9 @@ mod tests {
       ("WARNING: rate limit reached\nERROR: login required", CookieFetchFailure::Refused),
       ("ERROR: empty media response\nERROR: login required", CookieFetchFailure::Refused),
     ] {
-      assert_eq!(parser.cookie_fetch_failure(stderr), expected, "{stderr}");
-      let streamed = stderr.lines().fold(CookieFetchFailure::Other, |previous, line| previous.combine(parser.cookie_fetch_failure(line)));
+      assert_eq!(parser.cookie_fetch_failure(stderr, true), expected, "{stderr}");
+      assert_eq!(parser.cookie_fetch_failure(stderr, false), CookieFetchFailure::Other, "anonymous: {stderr}");
+      let streamed = stderr.lines().fold(CookieFetchFailure::Other, |previous, line| previous.combine(parser.cookie_fetch_failure(line, true)));
       assert_eq!(streamed, expected, "streamed: {stderr}");
       if expected != CookieFetchFailure::Refused {
         for line in stderr.lines() {
@@ -660,6 +684,13 @@ mod tests {
           }
         }
       }
+    }
+    let refusal = "ERROR: [Instagram] This content isn't available to everyone: It can't be seen by certain audiences.";
+    for (cookies, code) in [(false, "signInRequired"), (true, "accountAccessDenied")] {
+      assert_eq!(
+        parser.parse_fetch_line(refusal, cookies).unwrap().code,
+        code
+      );
     }
     // An empty response plus generic cookie advice does not prove a login requirement.
     assert!(parser
@@ -755,6 +786,8 @@ ERROR: Unsupported URL: https://hackertube.org/";
       DiagnosticMatcher::from_json(include_str!("../diagnostic_rules.json")).unwrap(),
     );
     for (line, expected) in [
+      ("ERROR: [facebook] 123: Cannot parse data; please report this issue", "facebookVideoUnavailable"),
+      ("ERROR: [generic] 123: Cannot parse data", "unknown"),
       (
         "ERROR: [TikTok] 7704010367441161524: Your IP address is blocked from accessing this post",
         "geoBlocked",
@@ -907,6 +940,73 @@ ERROR: Unsupported URL: https://hackertube.org/";
   }
 
   #[test]
+  fn timeouts_are_reportable_failures_but_offline_errors_are_excluded() {
+    let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
+    for (line, code, offline) in [
+      ("ERROR: Connection timed out", "networkTimeout", false),
+      (
+        "ERROR: The read operation timed out",
+        "networkTimeout",
+        false,
+      ),
+      ("ERROR: request timeout", "unknown", false),
+      ("ERROR: HTTP Error 504: Gateway Timeout", "server5xx", false),
+      (
+        "ERROR: HTTP Error 504: connection timed out",
+        "server5xx",
+        false,
+      ),
+      (
+        "ERROR: Network is unreachable",
+        "networkNameResolutionFailed",
+        true,
+      ),
+      (
+        "ERROR: getaddrinfo failed",
+        "networkNameResolutionFailed",
+        true,
+      ),
+    ] {
+      let event = parser.parse_fetch_line(line, false).unwrap();
+      assert_eq!(event.code, code);
+      assert_eq!(network_down(&event.code, &event.message), offline);
+      assert_eq!(
+        crate::diagnostics::send::worth_reporting(&event.code),
+        !offline
+      );
+    }
+  }
+
+  #[test]
+  fn storage_failures_have_actionable_codes() {
+    let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
+    for (line, code) in [
+      (
+        "ERROR: unable to open for writing: [Errno 28] No space left on device",
+        "diskFull",
+      ),
+      ("ERROR: [Errno 36] File name too long", "outputNameTooLong"),
+      ("ERROR: [Errno 63] File name too long", "outputNameTooLong"),
+      ("ERROR: No space left on device", "diskFull"),
+      (
+        "ERROR: [WinError 206] The filename or extension is too long",
+        "outputNameTooLong",
+      ),
+      ("ERROR: [Errno 22] Invalid argument", "unknown"),
+      (
+        "ERROR: [Errno 22] The filename or extension is too long",
+        "outputNameTooLong",
+      ),
+      (
+        "ERROR: [WinError 206] Der Dateiname ist zu lang",
+        "outputNameTooLong",
+      ),
+    ] {
+      assert_eq!(parser.parse_line(line).unwrap().code, code, "{line}");
+    }
+  }
+
+  #[test]
   fn audio_extraction_without_a_track_has_an_actionable_code() {
     let parser = YtdlpErrorParser::new(
       "item",
@@ -932,6 +1032,22 @@ ERROR: Unsupported URL: https://hackertube.org/";
       .parse_line("ERROR: This format is DRM protected; Try selecting another format with --format or add --check-formats to automatically fallback to the next best format")
       .expect("diagnostic");
     assert_eq!(event.code, "drmProtected");
+    let events = parser.parse_lines(
+      vec![
+        "[in#0] Unable to open key file skd://drm",
+        "ERROR: ffmpeg exited with code 183",
+      ],
+      false,
+    );
+    let mut stage = crate::extract::chain::StageResult::<()>::new(
+      crate::extract::outcome::StageId::Ytdlp,
+      crate::extract::outcome::Confidence::High,
+    );
+    stage.record_diagnostics(&events, false, std::time::Instant::now());
+    assert_eq!(
+      crate::extract::precedence::final_code(&stage.attempts),
+      Some("drmProtected")
+    );
   }
 
   #[test]
@@ -982,9 +1098,13 @@ ERROR: Unsupported URL: https://hackertube.org/";
 
   #[test]
   fn ignores_non_skip_download_lines() {
-    assert!(parser()
-      .parse_line("[download] Destination: /tmp/video.mp4")
-      .is_none());
+    for line in [
+      "[download] Destination: /tmp/video.mp4",
+      "[download] Destination: This video is DRM protected.mp4",
+      "[info] This video is DRM protected",
+    ] {
+      assert!(parser().parse_line(line).is_none());
+    }
   }
 
   #[test]

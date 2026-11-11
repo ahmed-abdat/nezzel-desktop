@@ -21,6 +21,35 @@ use std::fmt;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::watch;
 
+/// The row displays the last diagnostic; ffmpeg's exit code must not hide a proven DRM cause.
+fn download_failure_diagnostics(
+  mut events: Vec<crate::models::error::DiagnosticEvent>,
+) -> Vec<crate::models::error::DiagnosticEvent> {
+  if let Some(index) = events.iter().position(|event| event.code == "drmProtected") {
+    let drm = events.remove(index);
+    events.push(drm);
+  }
+  events
+}
+
+/// Preserve the original HTTP failure if this yt-dlp build cannot impersonate Chrome.
+fn retry_vimeo(
+  input: &mut ResolvedInput,
+  stderr: &str,
+  diagnostics: &mut Vec<crate::models::error::DiagnosticEvent>,
+  original: &mut Option<Vec<crate::models::error::DiagnosticEvent>>,
+) -> bool {
+  if input.impersonation_unavailable(stderr) {
+    if let Some(events) = original.as_ref() {
+      diagnostics.clone_from(events);
+    }
+  } else if input.retry_vimeo_401(stderr) {
+    *original = Some(diagnostics.clone());
+    return true;
+  }
+  false
+}
+
 #[derive(Debug)]
 pub enum YtdlpDownloadError {
   ExpiredMedia,
@@ -290,6 +319,7 @@ async fn run_download_attempts(
     }
   };
   let mut generic_tried = false;
+  let mut vimeo_diagnostics = None;
   'attempt: loop {
     if is_cancelled_now(&cancel_rx) {
       return Ok(());
@@ -297,6 +327,7 @@ async fn run_download_attempts(
     login.announce(&app, &entry.id, &entry.group_id);
     // Browser-consent resumes retain both the resolved target and its original page/referer.
     entry.resolved = Some(Box::new(input.clone()));
+    login.has_session = false;
     let cookies = if let Some(cookies) = inherited_cookies
       .as_ref()
       .filter(|_| login.browser == inherited_browser)
@@ -317,20 +348,31 @@ async fn run_download_attempts(
           if is_cancelled_now(&cancel_rx) {
             return Ok(());
           }
-          crate::events::emit(
-            &app,
-            crate::events::MEDIA_FATAL,
-            MediaFatalPayload::with_exit(
-              entry.group_id.clone(),
-              entry.id.clone(),
-              1,
-              "Browser cookies could not be read".into(),
-            ),
-          );
+          if let Some(code) = super::browser_cookies::read_error_code(&error) {
+            let event = super::gallery::error_diagnostic(
+              &entry.group_id,
+              &entry.id,
+              &crate::parsers::gallery::GalleryError::Refused(code),
+              false,
+            );
+            super::gallery::diagnostic(&app, &entry.group_id, &entry.id, event);
+          } else {
+            crate::events::emit(
+              &app,
+              crate::events::MEDIA_FATAL,
+              MediaFatalPayload::with_exit(
+                entry.group_id.clone(),
+                entry.id.clone(),
+                1,
+                format!("Download failed for group {}", entry.group_id),
+              ),
+            );
+          }
           return Err(YtdlpDownloadError::RunnerError(error));
         }
       }
     };
+    login.has_session = cookies.has_session;
     let performance = app.state::<SharedConfig>().load().performance.clone();
     let mut aria = if performance.aria2_enabled && !login.state.native_fallback {
       resolve_aria2(&app)
@@ -358,7 +400,7 @@ async fn run_download_attempts(
         Ok(Some(output)) => {
           let stderr = String::from_utf8_lossy(&output.stderr);
           for line in stderr.lines() {
-            if let Some(event) = error_parser.parse_fetch_line(line, login.uses_cookies()) {
+            if let Some(event) = error_parser.parse_fetch_line(line, login.has_session) {
               tracing::warn!(diagnostic_code = %event.code, "yt-dlp download probe diagnostic");
             }
           }
@@ -371,9 +413,26 @@ async fn run_download_attempts(
             if selected_media_expired(&entry, &input, &stderr) {
               return Err(YtdlpDownloadError::ExpiredMedia);
             }
-            let failure = error_parser.cookie_fetch_failure(&stderr);
-            let diagnostics =
-              error_parser.parse_lines(stderr.lines().collect(), login.uses_cookies());
+            let failure = error_parser.cookie_fetch_failure(&stderr, login.has_session);
+            let mut diagnostics =
+              error_parser.parse_lines(stderr.lines().collect(), login.has_session);
+            if retry_vimeo(
+              &mut input,
+              &stderr,
+              &mut diagnostics,
+              &mut vimeo_diagnostics,
+            ) {
+              continue 'attempt;
+            }
+            let failure_details = if input.impersonation_unavailable(&stderr) {
+              diagnostics
+                .iter()
+                .map(|event| event.raw.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+            } else {
+              redact_diagnostic(&stderr)
+            };
             login.record_failure(&diagnostics, false);
             match login.retry_cookie_fetch(failure, &mut cancel_rx).await {
               CookieRetry::Cancelled => return Ok(()),
@@ -383,7 +442,7 @@ async fn run_download_attempts(
             if input.retry_original(&stderr) {
               continue 'attempt;
             }
-            let reason = if login.uses_cookies() {
+            let reason = if login.has_session {
               (failure == CookieFetchFailure::Refused).then(|| "signInRequired".to_owned())
             } else {
               stderr
@@ -401,7 +460,7 @@ async fn run_download_attempts(
               RetryAction::AskLogin => return Err(YtdlpDownloadError::LoginPending),
               _ => {}
             }
-            for event in login.failure_diagnostics(diagnostics) {
+            for event in download_failure_diagnostics(login.failure_diagnostics(diagnostics)) {
               crate::events::emit(
                 &app,
                 crate::events::MEDIA_DIAGNOSTIC,
@@ -415,7 +474,7 @@ async fn run_download_attempts(
                 entry.group_id.clone(),
                 entry.id.clone(),
                 output.code,
-                redact_diagnostic(&stderr).chars().take(8192).collect(),
+                failure_details.chars().take(8192).collect(),
               ),
             );
             return Err(YtdlpDownloadError::NonZeroExit(output.code));
@@ -553,6 +612,7 @@ async fn run_download_attempts(
     let mut media_expired = false;
     let mut unsupported = false;
     let mut expired = false;
+    let mut vimeo_response = "";
     let mut diagnostics = Vec::new();
     let mut last_error = None;
     let partial_download_duration_secs = entry
@@ -600,10 +660,10 @@ async fn run_download_attempts(
           match event {
             YtdlpCommandEvent::Stdout(line) => {
               let line_str = String::from_utf8_lossy(&line);
-              cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str));
+              cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
               store_log_line(&line_str, &entry, log_state, &app);
               parse_progress_line(&line_str, &mut progress_parser, &app);
-              if let Some(event) = error_parser.parse_fetch_line(&line_str, login.uses_cookies()) {
+              if let Some(event) = error_parser.parse_fetch_line(&line_str, login.has_session) {
                 if matches!(event.level, crate::models::error::DiagnosticLevel::Error) {
                   last_error = Some(event.raw.clone());
                 }
@@ -615,14 +675,16 @@ async fn run_download_attempts(
               unsupported |= resolve::unsupported_url(&line_str);
               // Classify without retaining page contents or potentially sensitive URLs.
               let lower = line_str.to_ascii_lowercase();
+              if lower.contains("http error 401") { vimeo_response = "HTTP Error 401"; }
+              if input.impersonation_unavailable(&line_str) { vimeo_response = "Impersonate target is not available"; }
               expired |= lower.contains("http error 403") || lower.contains("http error 404");
               login_reason = login_reason.or_else(|| error_parser.login_reason(&line_str));
               transport_denied |= aria.is_some() && aria_denied(&line_str);
               media_expired |= selected_media_expired(&entry, &input, &line_str);
-              cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str));
+              cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
               store_log_line(&line_str, &entry, log_state, &app);
               parse_progress_line(&line_str, &mut progress_parser, &app);
-              if let Some(event) = error_parser.parse_fetch_line(&line_str, login.uses_cookies()) {
+              if let Some(event) = error_parser.parse_fetch_line(&line_str, login.has_session) {
                 tracing::warn!(diagnostic_code = %event.code, error = %redact_diagnostic(&line_str).lines().next().unwrap_or_default(), "yt-dlp download diagnostic");
                 if matches!(event.level, crate::models::error::DiagnosticLevel::Error) {
                   last_error = Some(event.raw.clone());
@@ -656,12 +718,16 @@ async fn run_download_attempts(
 
               if is_cancelled_now(&cancel_rx) { return Ok(()); }
               if media_expired { return Err(YtdlpDownloadError::ExpiredMedia); }
+              if retry_vimeo(&mut input, vimeo_response, &mut diagnostics, &mut vimeo_diagnostics) { continue 'attempt; }
+              if input.impersonation_unavailable(vimeo_response) {
+                last_error = diagnostics.iter().rev().find(|event| matches!(event.level, crate::models::error::DiagnosticLevel::Error)).map(|event| event.raw.clone());
+              }
               match login.retry_cookie_fetch(cookie_failure, &mut cancel_rx).await {
                 CookieRetry::Cancelled => return Ok(()),
                 CookieRetry::Retry => continue 'attempt,
                 CookieRetry::GiveUp => {}
               }
-              let login_reason = if login.uses_cookies() {
+              let login_reason = if login.has_session {
                 (cookie_failure == CookieFetchFailure::Refused).then(|| "signInRequired".to_owned())
               } else { login_reason };
               if expired && input.retry_original("HTTP Error 403") { continue 'attempt; }
@@ -685,7 +751,7 @@ async fn run_download_attempts(
                   _ => {}
                 }
               }
-              for event in login.failure_diagnostics(diagnostics) { crate::events::emit(&app, crate::events::MEDIA_DIAGNOSTIC, MediaDiagnosticPayload::from_diagnostic_event(event)); }
+              for event in download_failure_diagnostics(login.failure_diagnostics(diagnostics)) { crate::events::emit(&app, crate::events::MEDIA_DIAGNOSTIC, MediaDiagnosticPayload::from_diagnostic_event(event)); }
               let exit = term.code.unwrap_or(1);
               let mut fatal = MediaFatalPayload::with_exit(
                   entry.group_id.clone(),
@@ -872,6 +938,49 @@ fn parse_clock_secs(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn fairplay_stderr_precedes_the_generic_ffmpeg_exit_in_the_row() {
+    let parser = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap());
+    // Streaming downloads parse each line independently before publishing the batch.
+    let events = [
+      "[in#0] Unable to open key file skd://drm",
+      "ERROR: ffmpeg exited with code 183",
+    ]
+    .iter()
+    .filter_map(|line| parser.parse_fetch_line(line, false))
+    .collect();
+    assert_eq!(
+      download_failure_diagnostics(events).last().unwrap().code,
+      "drmProtected"
+    );
+  }
+
+  #[test]
+  fn vimeo_retry_preserves_the_first_error_when_chrome_is_unavailable() {
+    let mut input = ResolvedInput::new("https://player.vimeo.com/video/123");
+    let parser = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap());
+    let first = "ERROR: [vimeo] 123: Unable to download webpage: HTTP Error 401: Unauthorized";
+    let mut diagnostics = parser.parse_lines(vec![first], false);
+    let original = diagnostics[0].raw.clone();
+    let mut saved = None;
+    assert!(retry_vimeo(&mut input, first, &mut diagnostics, &mut saved));
+    let unavailable = "ERROR: Impersonate target chrome is not available";
+    diagnostics = parser.parse_lines(vec![unavailable], false);
+    assert!(!retry_vimeo(
+      &mut input,
+      unavailable,
+      &mut diagnostics,
+      &mut saved
+    ));
+    assert_eq!(diagnostics[0].raw, original);
+    assert!(!retry_vimeo(
+      &mut input,
+      first,
+      &mut diagnostics,
+      &mut saved
+    ));
+  }
 
   #[test]
   fn expired_selected_cdn_video_returns_to_its_parent_before_login_or_fatal_events() {

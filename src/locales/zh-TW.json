@@ -1,4 +1,9 @@
 {
+  "toolsUpdate": {
+    "stale": "Nezzel 已至少 7 天無法更新下載工具。部分網站可能無法使用",
+    "tryNow": "立即重試",
+    "failed": "無法更新下載工具。請稍後重試"
+  },
   "common": {
     "download": "下載",
     "save": "儲存",
@@ -915,6 +920,51 @@
   },
   "errors": {
     "runner": {
+      "networkTimeout": {
+        "shortMessage": "連線逾時",
+        "message": "網站未及時回應",
+        "action": "請稍後重試"
+      },
+      "diskFull": {
+        "shortMessage": "磁碟已滿",
+        "message": "沒有足夠空間儲存此下載",
+        "action": "請清出下載磁碟的空間後重試"
+      },
+      "outputNameTooLong": {
+        "shortMessage": "檔案名稱太長",
+        "message": "檔案名稱超過磁碟限制",
+        "action": "請在設定使用較短的檔名範本後重試"
+      },
+      "browserCookiesUnreadable": {
+        "shortMessage": "無法讀取瀏覽器登入",
+        "message": "Nezzel 無法讀取瀏覽器的登入資訊",
+        "action": "請在登入設定選擇其他瀏覽器"
+      },
+      "browserKeychainDenied": {
+        "shortMessage": "未允許鑰匙圈存取",
+        "message": "無法解鎖瀏覽器登入資訊",
+        "action": "請重試並在 macOS 詢問時允許存取鑰匙圈"
+      },
+      "browserSafariAccessDenied": {
+        "shortMessage": "Safari 登入需要權限",
+        "message": "macOS 未允許存取 Safari 登入資訊",
+        "action": "請在系統設定授予 Nezzel 完整磁碟存取權後重試"
+      },
+      "browserDatabaseLocked": {
+        "shortMessage": "瀏覽器資料庫忙碌中",
+        "message": "瀏覽器登入資料庫已鎖定",
+        "action": "請完全關閉瀏覽器後重試"
+      },
+      "browserProfileMissing": {
+        "shortMessage": "找不到瀏覽器設定檔",
+        "message": "瀏覽器或所選設定檔已無法使用",
+        "action": "請在登入設定選擇已安裝的瀏覽器設定檔"
+      },
+      "accountAccessDenied": {
+        "shortMessage": "您的帳號可能無權存取",
+        "message": "已傳送登入資訊，但網站仍拒絕。您的帳號可能無權存取此內容",
+        "action": "請在瀏覽器開啟貼文以確認存取權限"
+      },
       "internal": {
         "shortMessage": "內部錯誤",
         "message": "處理此項目時發生內部錯誤。"
@@ -1050,6 +1100,11 @@
       "downloadRetryingFragment": {
         "shortMessage": "正在重試片段",
         "message": "片段下載失敗，將自動重試。"
+      },
+      "facebookVideoUnavailable": {
+        "shortMessage": "Facebook 未提供這部影片",
+        "message": "Facebook 未向 Nezzel 提供這部影片。請在瀏覽器中開啟連結並複製網址列中的連結，或稍後再試。",
+        "action": "複製瀏覽器網址列中的連結，或稍後再試"
       },
       "unknown": {
         "shortMessage": "未知錯誤",

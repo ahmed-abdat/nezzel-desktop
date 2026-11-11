@@ -12,7 +12,7 @@ mod jar;
 mod tests;
 
 use crate::sites::{self, SiteId};
-pub(super) use access::{CookieAccess, CookieContext, COOKIE_READ_ERROR};
+pub(super) use access::{read_error_code, CookieAccess, CookieContext, COOKIE_READ_ERROR};
 pub(super) use hint::{cookie_hint, CookieHint};
 pub(crate) use jar::sweep_cookie_exports;
 use std::collections::{HashMap, HashSet};

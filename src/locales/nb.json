@@ -1,4 +1,9 @@
 {
+  "toolsUpdate": {
+    "stale": "Nezzel har ikke kunnet oppdatere nedlastingsverktøyene på minst 7 dager. Noen nettsteder virker kanskje ikke",
+    "tryNow": "Prøv nå",
+    "failed": "Nedlastingsverktøyene kunne ikke oppdateres. Prøv igjen senere"
+  },
   "common": {
     "download": "Last ned",
     "save": "Lagre",
@@ -915,6 +920,51 @@
   },
   "errors": {
     "runner": {
+      "networkTimeout": {
+        "shortMessage": "Tilkoblingen fikk tidsavbrudd",
+        "message": "Nettstedet svarte ikke i tide",
+        "action": "Prøv igjen om litt"
+      },
+      "diskFull": {
+        "shortMessage": "Disken er full",
+        "message": "Det er ikke nok plass til å lagre nedlastingen",
+        "action": "Frigjør plass på nedlastingsdisken, og prøv igjen"
+      },
+      "outputNameTooLong": {
+        "shortMessage": "Filnavnet er for langt",
+        "message": "Filnavnet overskrider diskens grense",
+        "action": "Bruk en kortere filnavnmal i Innstillinger, og prøv igjen"
+      },
+      "browserCookiesUnreadable": {
+        "shortMessage": "Kunne ikke lese innloggingen",
+        "message": "Nezzel kunne ikke lese nettleserens innlogging",
+        "action": "Velg en annen nettleser i innloggingsinnstillingene"
+      },
+      "browserKeychainDenied": {
+        "shortMessage": "Nøkkelringtilgang ble avvist",
+        "message": "Kunne ikke låse opp nettleserens innlogging",
+        "action": "Prøv igjen og tillat nøkkelringtilgang når macOS spør"
+      },
+      "browserSafariAccessDenied": {
+        "shortMessage": "Safari trenger tillatelse",
+        "message": "macOS tillot ikke tilgang til Safari-innloggingen",
+        "action": "Gi Nezzel full disktilgang i Systeminnstillinger, og prøv igjen"
+      },
+      "browserDatabaseLocked": {
+        "shortMessage": "Nettleserdatabasen er opptatt",
+        "message": "Nettleserens innloggingsdatabase er låst",
+        "action": "Lukk nettleseren helt, og prøv igjen"
+      },
+      "browserProfileMissing": {
+        "shortMessage": "Fant ikke nettleserprofilen",
+        "message": "Nettleseren eller den valgte profilen er ikke lenger tilgjengelig",
+        "action": "Velg en installert nettleserprofil i innloggingsinnstillingene"
+      },
+      "accountAccessDenied": {
+        "shortMessage": "Kontoen din har kanskje ikke tilgang",
+        "message": "Nettstedet avviste etter at innloggingen ble sendt. Kontoen din har kanskje ikke tilgang til innholdet",
+        "action": "Åpne innlegget i nettleseren for å sjekke tilgangen"
+      },
       "internal": {
         "shortMessage": "Intern feil",
         "message": "En intern feil oppstod under behandling av dette elementet."
@@ -1050,6 +1100,11 @@
       "downloadRetryingFragment": {
         "shortMessage": "Prøver igjen med fragment",
         "message": "Nedlasting av et fragment mislyktes og vil bli forsøkt på nytt automatisk."
+      },
+      "facebookVideoUnavailable": {
+        "shortMessage": "Facebook ga ikke tilgang til denne videoen",
+        "message": "Facebook ga ikke Nezzel tilgang til denne videoen. Åpne lenken i en nettleser og kopier lenken fra adressefeltet, eller prøv igjen senere.",
+        "action": "Kopier lenken fra nettleserens adressefelt, eller prøv igjen senere"
       },
       "unknown": {
         "shortMessage": "Ukjent feil",

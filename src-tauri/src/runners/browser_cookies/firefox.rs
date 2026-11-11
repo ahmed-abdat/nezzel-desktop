@@ -1,7 +1,6 @@
 //! Firefox's cookie database: its layout for sign-in hints, and a site-scoped export of its
 //! cookies into the Netscape jar (Firefox values are plain, so no exporter process is needed).
 use super::{
-  access::COOKIE_READ_ERROR,
   hint::HintSchema,
   jar::{allowed_cookie_host, CookieJar, NetscapeRow},
 };
@@ -62,7 +61,7 @@ fn firefox_database(
     .find(|path| {
       profile.as_os_str().is_empty() || Path::new(path).file_name() == profile.file_name()
     })
-    .ok_or(COOKIE_READ_ERROR)?;
+    .ok_or("browserProfileMissing")?;
   Ok((
     Path::new(&directory).join("cookies.sqlite"),
     browser.container.clone(),
@@ -74,7 +73,7 @@ pub(super) fn export_firefox(
   host: &str,
   jar: &CookieJar,
   destination: &mut std::fs::File,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<usize, Box<dyn std::error::Error>> {
   let (database, container) = firefox_database(browser, host)?;
   let container = match container.as_deref() {
     None => None,
@@ -139,6 +138,7 @@ pub(super) fn export_firefox(
       row.get::<_, String>(7)?,
     ))
   })?;
+  let mut count = 0;
   for row in rows {
     let (domain, name, value, path, expiry, secure, http_only, attributes) = row?;
     if !allowed_cookie_host(&domain, host) {
@@ -164,6 +164,7 @@ pub(super) fn export_firefox(
       value: &value,
     }
     .write(destination)?;
+    count += 1;
   }
   drop(statement);
   drop(connection);
@@ -174,5 +175,5 @@ pub(super) fn export_firefox(
       Err(error) => return Err(error.into()),
     }
   }
-  Ok(())
+  Ok(count)
 }

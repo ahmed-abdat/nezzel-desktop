@@ -347,8 +347,8 @@ fn invalid_urls_claim_nothing_and_youtube_exclusivity_is_host_bound() {
 #[test]
 fn video_hosts_try_ytdlp_before_gallery_but_photo_paths_keep_gallery_first() {
   for (url, first) in [
-    ("https://x.com/nasa/status/123", StageId::Ytdlp),
-    ("https://twitter.com/nasa/status/123", StageId::Ytdlp),
+    ("https://x.com/nasa/status/123", StageId::Gallery),
+    ("https://twitter.com/nasa/status/123", StageId::Gallery),
     ("https://www.tiktok.com/@nasa/video/123", StageId::Ytdlp),
     ("https://www.tiktok.com/@nasa/photo/123", StageId::Gallery),
     ("https://www.instagram.com/p/123", StageId::Gallery),

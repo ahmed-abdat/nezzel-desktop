@@ -8,6 +8,9 @@ import { useBinariesStore } from '../../stores/binaries';
 
 export function registerBinaryListeners() {
   const binariesStore = useBinariesStore();
+  void listen<boolean>('binary_update_stale', event => binariesStore.processUpdateStale(event.payload));
+  window.addEventListener('online', binariesStore.refreshUpdateNotice);
+  window.addEventListener('offline', binariesStore.refreshUpdateNotice);
 
   void listen<BinaryDownloadStartPayload>('binary_download_start', (event) => {
     binariesStore.processBinaryDownloadStart(event.payload);

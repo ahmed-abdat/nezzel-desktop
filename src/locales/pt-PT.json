@@ -1,4 +1,9 @@
 {
+  "toolsUpdate": {
+    "stale": "O Nezzel não consegue atualizar as ferramentas de transferência há pelo menos 7 dias. Alguns sites podem não funcionar",
+    "tryNow": "Tentar agora",
+    "failed": "Não foi possível atualizar as ferramentas de transferência. Tente novamente mais tarde"
+  },
   "common": {
     "download": "Transferir",
     "save": "Guardar",
@@ -887,6 +892,51 @@
   },
   "errors": {
     "runner": {
+      "networkTimeout": {
+        "shortMessage": "A ligação expirou",
+        "message": "O site não respondeu a tempo",
+        "action": "Tente novamente dentro de instantes"
+      },
+      "diskFull": {
+        "shortMessage": "O disco está cheio",
+        "message": "Não há espaço suficiente para guardar esta transferência",
+        "action": "Liberte espaço no disco de transferências e tente novamente"
+      },
+      "outputNameTooLong": {
+        "shortMessage": "O nome do ficheiro é demasiado longo",
+        "message": "O nome do ficheiro excede o limite do disco",
+        "action": "Use um modelo de nome mais curto nas Definições e tente novamente"
+      },
+      "browserCookiesUnreadable": {
+        "shortMessage": "Não foi possível ler a sessão",
+        "message": "O Nezzel não conseguiu ler a sessão do navegador",
+        "action": "Escolha outro navegador nas definições de início de sessão"
+      },
+      "browserKeychainDenied": {
+        "shortMessage": "Acesso ao Porta-chaves recusado",
+        "message": "Não foi possível desbloquear a sessão do navegador",
+        "action": "Tente novamente e permita o acesso ao Porta-chaves quando o macOS pedir"
+      },
+      "browserSafariAccessDenied": {
+        "shortMessage": "O Safari precisa de permissão",
+        "message": "O macOS não permitiu aceder à sessão do Safari",
+        "action": "Dê ao Nezzel acesso total ao disco nas Definições do Sistema e tente novamente"
+      },
+      "browserDatabaseLocked": {
+        "shortMessage": "Base do navegador ocupada",
+        "message": "A base de sessões do navegador está bloqueada",
+        "action": "Feche completamente o navegador e tente novamente"
+      },
+      "browserProfileMissing": {
+        "shortMessage": "Perfil do navegador não encontrado",
+        "message": "O navegador ou perfil escolhido já não está disponível",
+        "action": "Escolha um perfil de navegador instalado nas definições de início de sessão"
+      },
+      "accountAccessDenied": {
+        "shortMessage": "A sua conta pode não ter acesso",
+        "message": "O site recusou após receber a sua sessão. A sua conta pode não ter acesso a este conteúdo",
+        "action": "Abra a publicação no navegador para verificar o acesso"
+      },
       "internal": {
         "shortMessage": "Erro interno",
         "message": "Ocorreu um erro interno ao processar este item."
@@ -1022,6 +1072,11 @@
       "downloadRetryingFragment": {
         "shortMessage": "A tentar novamente o fragmento",
         "message": "A transferência de um fragmento falhou e será repetida automaticamente."
+      },
+      "facebookVideoUnavailable": {
+        "shortMessage": "O Facebook não disponibilizou este vídeo",
+        "message": "O Facebook não disponibilizou este vídeo ao Nezzel. Abra a ligação num navegador e copie a ligação da barra de endereços ou tente novamente mais tarde.",
+        "action": "Copie a ligação da barra de endereços do navegador ou tente novamente mais tarde"
       },
       "unknown": {
         "shortMessage": "Erro desconhecido",

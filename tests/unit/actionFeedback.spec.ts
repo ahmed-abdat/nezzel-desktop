@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { defineComponent } from 'vue';
+import TheToaster from '../../src/components/TheToaster.vue';
 import TheUpdater from '../../src/components/TheUpdater.vue';
 import InstallView from '../../src/views/full/InstallView.vue';
 import AppStatusBar from '../../src/components/shell/AppStatusBar.vue';
@@ -30,6 +31,67 @@ afterEach(() => {
 });
 
 describe('action failure feedback', () => {
+  it.each(['en', 'ar', 'fr'] as const)('shows one quiet stale-tools notice and retries immediately in %s', async (locale) => {
+    i18n.global.locale.value = locale;
+    const store = useBinariesStore();
+    const toasts = useToastStore();
+    const calls: string[] = [];
+    installTauriMock({ binaries_update_now: () => {
+      calls.push('update');
+    } });
+    const wrapper = mount(TheToaster, { global: { plugins: [i18n] } });
+    store.processUpdateStale(true);
+    store.processUpdateStale(true);
+    await flushPromises();
+    expect(toasts.toasts).toHaveLength(1);
+    expect(toasts.toasts[0].duration).toBe(0);
+    expect(wrapper.get('[role="status"]').text()).toContain(i18n.global.t('toolsUpdate.stale'));
+    await wrapper.get('button').trigger('click');
+    await flushPromises();
+    expect(calls).toEqual(['update']);
+    expect(toasts.toasts).toHaveLength(0);
+    store.processUpdateStale(true);
+    expect(toasts.toasts).toHaveLength(0);
+    wrapper.unmount();
+  });
+
+  it('keeps a manual tool-update failure visible with a concrete next step', async () => {
+    installTauriMock({ binaries_update_now: () => Promise.reject('/Users/PrivatePerson/tools/file.zip') });
+    const store = useBinariesStore();
+    const wrapper = mount(TheToaster, { global: { plugins: [i18n] } });
+    store.processUpdateStale(true);
+    await flushPromises();
+    await wrapper.get('button').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('[role="status"]').text()).toContain(i18n.global.t('toolsUpdate.failed'));
+    expect(wrapper.text()).not.toContain('PrivatePerson');
+    wrapper.unmount();
+  });
+
+  it('hides the stale-tools notice offline and removes it after recovery', () => {
+    const store = useBinariesStore();
+    const toasts = useToastStore();
+    const online = vi.spyOn(navigator, 'onLine', 'get');
+    online.mockReturnValue(false);
+    store.processUpdateStale(true);
+    expect(toasts.toasts).toHaveLength(0);
+    online.mockReturnValue(true);
+    store.refreshUpdateNotice();
+    expect(toasts.toasts).toHaveLength(1);
+    online.mockReturnValue(false);
+    store.refreshUpdateNotice();
+    expect(toasts.toasts).toHaveLength(0);
+    online.mockReturnValue(true);
+    store.refreshUpdateNotice();
+    expect(toasts.toasts).toHaveLength(1);
+    store.processUpdateStale(false);
+    online.mockReturnValue(true);
+    store.refreshUpdateNotice();
+    expect(toasts.toasts).toHaveLength(0);
+    store.processUpdateStale(true);
+    expect(toasts.toasts).toHaveLength(1);
+  });
+
   it.each([
     ['download', 'Download', 'Couldn\'t download the update'],
     ['install', 'Install', 'Couldn\'t install the update'],

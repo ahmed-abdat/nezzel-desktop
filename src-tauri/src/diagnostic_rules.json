@@ -1,6 +1,25 @@
 {
   "rules": [
     {
+      "code": "diskFull",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "[Errno 28]" },
+        { "kind": "substr", "value": "No space left on device" }
+      ]
+    },
+    {
+      "code": "outputNameTooLong",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "[Errno 36]" },
+        { "kind": "substr", "value": "[Errno 63]" },
+        { "kind": "substr", "value": "[WinError 206]" },
+        { "kind": "substr", "value": "The filename or extension is too long" },
+        { "kind": "substr", "value": "File name too long" }
+      ]
+    },
+    {
       "code": "unableToExtractIdOrInfo",
       "appliesTo": "error",
       "patterns": [
@@ -194,6 +213,13 @@
       ]
     },
     {
+      "code": "networkTimeout",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "timed out" }
+      ]
+    },
+    {
       "code": "rateLimited429",
       "appliesTo": "error",
       "patterns": [
@@ -231,8 +257,15 @@
       "appliesTo": "error",
       "patterns": [
         { "kind": "substr", "value": "is DRM protected" },
-        { "kind": "substr", "value": "This video is DRM protected" }
+        { "kind": "substr", "value": "This video is DRM protected" },
+        { "kind": "substr", "value": "Unable to open key file skd:" }
       ]
+    },
+    {
+      "code": "facebookVideoUnavailable",
+      "component": "facebook",
+      "appliesTo": "error",
+      "patterns": [{ "kind": "substr", "value": "Cannot parse data" }]
     },
     {
       "code": "embedOnly",
@@ -276,7 +309,13 @@
       "code": "networkNameResolutionFailed",
       "appliesTo": "error",
       "patterns": [
-        { "kind": "substr", "value": "getaddrinfo failed" }
+        { "kind": "substr", "value": "getaddrinfo failed" },
+        { "kind": "substr", "value": "network is unreachable" },
+        { "kind": "substr", "value": "network unreachable" },
+        { "kind": "substr", "value": "connection refused" },
+        { "kind": "substr", "value": "name or service not known" },
+        { "kind": "substr", "value": "nodename nor servname" },
+        { "kind": "substr", "value": "temporary failure in name resolution" }
       ]
     },
     {

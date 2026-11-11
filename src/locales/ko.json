@@ -1,4 +1,9 @@
 {
+  "toolsUpdate": {
+    "stale": "최소 7일 동안 다운로드 도구를 업데이트하지 못했어요. 일부 사이트가 작동하지 않을 수 있어요",
+    "tryNow": "지금 시도",
+    "failed": "다운로드 도구를 업데이트하지 못했어요. 나중에 다시 시도하세요"
+  },
   "common": {
     "download": "다운로드",
     "save": "저장",
@@ -1012,6 +1017,51 @@
   },
   "errors": {
     "runner": {
+      "networkTimeout": {
+        "shortMessage": "연결 시간이 초과됐어요",
+        "message": "사이트가 제시간에 응답하지 않았어요",
+        "action": "잠시 후 다시 시도하세요"
+      },
+      "diskFull": {
+        "shortMessage": "디스크가 가득 찼어요",
+        "message": "다운로드를 저장할 공간이 부족해요",
+        "action": "다운로드 디스크의 공간을 확보한 뒤 다시 시도하세요"
+      },
+      "outputNameTooLong": {
+        "shortMessage": "파일 이름이 너무 길어요",
+        "message": "파일 이름이 디스크 제한을 초과했어요",
+        "action": "설정에서 더 짧은 파일 이름 서식을 사용한 뒤 다시 시도하세요"
+      },
+      "browserCookiesUnreadable": {
+        "shortMessage": "브라우저 로그인을 읽지 못했어요",
+        "message": "Nezzel이 브라우저 로그인 정보를 읽지 못했어요",
+        "action": "로그인 설정에서 다른 브라우저를 선택하세요"
+      },
+      "browserKeychainDenied": {
+        "shortMessage": "키체인 접근이 허용되지 않았어요",
+        "message": "브라우저 로그인 잠금을 해제하지 못했어요",
+        "action": "다시 시도하고 macOS 요청 시 키체인 접근을 허용하세요"
+      },
+      "browserSafariAccessDenied": {
+        "shortMessage": "Safari 로그인에 권한이 필요해요",
+        "message": "macOS에서 Safari 로그인 접근을 허용하지 않았어요",
+        "action": "시스템 설정에서 Nezzel에 전체 디스크 접근 권한을 부여한 뒤 다시 시도하세요"
+      },
+      "browserDatabaseLocked": {
+        "shortMessage": "브라우저 데이터베이스가 사용 중이에요",
+        "message": "브라우저 로그인 데이터베이스가 잠겨 있어요",
+        "action": "브라우저를 완전히 종료한 뒤 다시 시도하세요"
+      },
+      "browserProfileMissing": {
+        "shortMessage": "브라우저 프로필을 찾지 못했어요",
+        "message": "브라우저나 선택한 프로필을 사용할 수 없어요",
+        "action": "로그인 설정에서 설치된 브라우저 프로필을 선택하세요"
+      },
+      "accountAccessDenied": {
+        "shortMessage": "계정에 접근 권한이 없을 수 있어요",
+        "message": "로그인 정보를 보냈지만 사이트에서 거부했어요. 계정에 이 콘텐츠를 볼 권한이 없을 수 있어요",
+        "action": "브라우저에서 게시물을 열어 접근 권한을 확인하세요"
+      },
       "internal": {
         "shortMessage": "내부 오류",
         "message": "이 항목을 처리하는 중 내부 오류가 발생했습니다."
@@ -1151,6 +1201,11 @@
       "downloadRetryingFragment": {
         "shortMessage": "조각 재시도 중",
         "message": "조각 다운로드에 실패하여 자동으로 재시도합니다."
+      },
+      "facebookVideoUnavailable": {
+        "shortMessage": "Facebook에서 이 동영상을 제공하지 않았습니다",
+        "message": "Facebook에서 Nezzel에 이 동영상을 제공하지 않았습니다. 브라우저에서 링크를 열고 주소 표시줄의 링크를 복사하거나 나중에 다시 시도하세요.",
+        "action": "브라우저 주소 표시줄의 링크를 복사하거나 나중에 다시 시도하세요"
       },
       "unknown": {
         "shortMessage": "알 수 없는 오류",

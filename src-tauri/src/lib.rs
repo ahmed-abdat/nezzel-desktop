@@ -158,7 +158,12 @@ pub fn run() {
       handle.manage(DownloadSender(download_dispatcher.sender()));
 
       // setup binaries
-      handle.manage(BinariesState::default());
+      handle.manage(BinariesState::from_metadata(
+        &path_handle.bin_dir().join("metadata.json"),
+        std::time::SystemTime::now()
+          .duration_since(std::time::UNIX_EPOCH)
+          .map_or(0, |duration| duration.as_secs()),
+      ));
       handle.manage(BinariesManager::new(handle));
       // set up stronghold
       let app_path = path_handle.app_dir();
@@ -242,6 +247,8 @@ pub fn run() {
       preferences_reset,
       preferences_set,
       binaries_check,
+      binaries_update_status,
+      binaries_update_now,
       binaries_ensure,
       updater_check,
       updater_download,
@@ -265,6 +272,11 @@ pub fn run() {
     .expect("error while running tauri application");
 
   app.run(|_app_handle, _event| {
+    // The clipboard plugin drops its handle while exiting; a read after that panics inside the plugin.
+    // Only on the final Exit: ExitRequested can be declined while the app lives on in the tray.
+    if matches!(_event, tauri::RunEvent::Exit) {
+      capture::clipboard::stop_reads();
+    }
     if matches!(_event, tauri::RunEvent::Exit) {
       runners::ytdlp_process::terminate_all_live(std::time::Duration::from_millis(1500));
       diagnostics::on_clean_exit(_app_handle);

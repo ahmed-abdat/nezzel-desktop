@@ -252,9 +252,34 @@ impl Drop for JobHandle {
   }
 }
 
+/// Where Unix systems keep one PEM file of trusted roots, most common first.
+#[cfg(unix)]
+const CA_BUNDLES: [&str; 5] = [
+  "/etc/ssl/cert.pem",
+  "/etc/ssl/certs/ca-certificates.crt",
+  "/etc/pki/tls/certs/ca-bundle.crt",
+  "/etc/ssl/ca-bundle.pem",
+  "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+];
+
+/// The bundled ffmpeg links OpenSSL statically and knows no certificate store on this machine, so every
+/// transfer it fetches itself (clips, live and some HLS streams) failed with "certificate verify failed".
+/// Point it at the system roots unless the user already chose a file.
+#[cfg(unix)]
+fn ca_bundle(already_set: bool, exists: impl Fn(&str) -> bool) -> Option<&'static str> {
+  if already_set {
+    return None;
+  }
+  CA_BUNDLES.into_iter().find(|path| exists(path))
+}
+
 pub fn configure_command(command: &mut Command) -> io::Result<()> {
   #[cfg(unix)]
   {
+    let set = std::env::var_os("SSL_CERT_FILE").is_some_and(|value| !value.is_empty());
+    if let Some(bundle) = ca_bundle(set, |path| std::path::Path::new(path).is_file()) {
+      command.env("SSL_CERT_FILE", bundle);
+    }
     unsafe {
       command.pre_exec(|| {
         let result = libc::setpgid(0, 0);
@@ -415,6 +440,19 @@ fn create_job_for_child(child: &std::process::Child) -> io::Result<JobHandle> {
 
 #[cfg(all(test, unix))]
 mod tests {
+  #[cfg(unix)]
+  #[test]
+  fn ffmpeg_gets_the_system_roots_unless_the_user_chose_a_file() {
+    let fedora = |path: &str| path == "/etc/pki/tls/certs/ca-bundle.crt";
+    assert_eq!(
+      super::ca_bundle(false, fedora),
+      Some("/etc/pki/tls/certs/ca-bundle.crt")
+    );
+    assert_eq!(super::ca_bundle(false, |_| true), Some("/etc/ssl/cert.pem"));
+    assert_eq!(super::ca_bundle(true, |_| true), None);
+    assert_eq!(super::ca_bundle(false, |_| false), None);
+  }
+
   use super::*;
   use std::io::Read;
   use std::process::{Child, Stdio};

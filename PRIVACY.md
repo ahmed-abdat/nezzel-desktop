@@ -6,7 +6,7 @@ Nezzel Desktop has no ads and no account. Everything you save is processed on yo
 
 - **Saving media:** requests go from your computer to the site you're saving from and its content servers. Before handing a link to yt-dlp, Nezzel may read the public page itself (Facebook, LinkedIn, Telegram, Reddit, Threads, Snapchat, Vimeo) to find the media. These requests go only to the site of the link you gave it.
 - **Download tools:** yt-dlp, ffmpeg, ffprobe, Deno, gallery-dl and aria2 come inside the installer, so nothing is downloaded on first run. Each bundled file is checked against a SHA-256 hash pinned at build time.
-- **Tool updates:** while **Update download tools automatically** is on (the default), Nezzel checks the yt-dlp releases on GitHub at most once a day and checks a new version against the SHA-256 list published with that release.
+- **Tool updates:** while **Update download tools automatically** is on (the default), Nezzel checks the yt-dlp releases on GitHub at most once a day (and once more whenever you press **Try now** on the notice that the tools could not update) and checks a new version against the SHA-256 list published with that release.
 - **App updates:** while **Update Nezzel automatically** is on (the default), Nezzel checks `github.com/ahmed-abdat/nezzel-desktop/releases` for a newer version when it starts. Updates are signed, and the app checks the signature before installing. Portable, Microsoft Store and Snap builds skip this check.
 - GitHub sees your IP address for these requests. No cookies, account or device identifiers are sent with them.
 

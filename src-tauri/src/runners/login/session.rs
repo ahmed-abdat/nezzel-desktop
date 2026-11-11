@@ -52,6 +52,8 @@ pub struct LoginSession {
   pub(super) fetch_resolved_url: Option<String>,
   pub state: RetryState,
   pub browser: Option<String>,
+  /// True only after preparation found site-scoped cookie rows for this attempt.
+  pub has_session: bool,
   pub(super) auth: AuthSettings,
   pub(super) host: String,
   pub(super) cookie_fetch_retried: bool,
@@ -132,6 +134,7 @@ impl LoginSession {
         .cloned()
         .collect(),
       browser: accepted,
+      has_session: false,
       auth,
       host,
       cookie_fetch_retried: false,
@@ -300,6 +303,9 @@ impl LoginSession {
         matches!(event.level, DiagnosticLevel::Error)
           && crate::parsers::ytdlp_error::network_down(&event.code, &event.message)
       });
+    if self.network_down {
+      crate::diagnostics::send::network_response_failed();
+    }
     let current = diagnostics
       .iter()
       .filter(|event| matches!(event.level, DiagnosticLevel::Error))
@@ -468,8 +474,13 @@ impl LoginSession {
     find: impl FnOnce(Option<&str>) -> Vec<LoginCandidate>,
   ) -> (RetryAction, Vec<LoginCandidate>) {
     let automatic = browsers::automatic(&self.auth);
+    let timed_out = self
+      .best_failure
+      .as_ref()
+      .is_some_and(|event| matches!(event.code.as_str(), "networkTimeout" | "fetchTimeout"));
     if cancelled
       || self.network_down
+      || timed_out
       || aria_denied
       || reason.is_none()
       || !automatic
@@ -484,7 +495,7 @@ impl LoginSession {
           login: reason.is_some(),
           aria_denied,
           used_cookies: self.uses_cookies(),
-          network_down: self.network_down,
+          network_down: self.network_down || timed_out,
         },
       );
       if action == RetryAction::Anonymous {
@@ -590,6 +601,12 @@ fn diagnostic_priority(code: &str) -> u8 {
     | "unableToExtractInitialData"
     | "imageSourceUnavailable" => 0,
     "urlNotSupported" | "urlUnsupported" | "unknownUrlType" | "photosOnly" => 1,
+    "accountAccessDenied"
+    | "browserCookiesUnreadable"
+    | "browserKeychainDenied"
+    | "browserSafariAccessDenied"
+    | "browserDatabaseLocked"
+    | "browserProfileMissing" => 4,
     "signInRequired"
     | "signInRequiredForBotDetection"
     | "membersOnly"

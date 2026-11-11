@@ -74,12 +74,20 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
     };
   }
   let (outcome, code) = match code {
+    "networkTimeout" => (Outcome::Network(scope), "networkTimeout"),
     "fetchTimeout" => (Outcome::Network(scope), "fetchTimeout"),
     "fileNetwork" => (Outcome::Network(scope), "fileNetwork"),
     "fileProxy" => (Outcome::Network(scope), "fileProxy"),
     "fileNotPublic" => (Outcome::Forbidden, "fileNotPublic"),
     "fileRateLimited" => (Outcome::RateLimited, "fileRateLimited"),
     "fileNotFile" => (Outcome::Unsupported, "fileNotFile"),
+    "browserCookiesUnreadable" => (Outcome::Unknown, "browserCookiesUnreadable"),
+    "browserKeychainDenied" => (Outcome::Unknown, "browserKeychainDenied"),
+    "browserSafariAccessDenied" => (Outcome::Unknown, "browserSafariAccessDenied"),
+    "browserDatabaseLocked" => (Outcome::Unknown, "browserDatabaseLocked"),
+    "browserProfileMissing" => (Outcome::Unknown, "browserProfileMissing"),
+    "diskFull" => (Outcome::Unknown, "diskFull"),
+    "outputNameTooLong" => (Outcome::Unknown, "outputNameTooLong"),
     "fileState" => (Outcome::Unknown, "fileState"),
     "fileAddressRefused" => (Outcome::Forbidden, "fileAddressRefused"),
     "fileEncoding" => (Outcome::Unknown, "fileEncoding"),
@@ -94,6 +102,7 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
     "livestreamNotStarted" => (Outcome::LiveNotStarted, "livestreamNotStarted"),
     "notPremieredYet" => (Outcome::LiveNotStarted, "notPremieredYet"),
     "membersOnly" => (Outcome::Paid, "membersOnly"),
+    "accountAccessDenied" => (Outcome::Private, "accountAccessDenied"),
     "signInRequired" => (Outcome::Login, "signInRequired"),
     "signInRequiredForBotDetection" => (Outcome::Login, "signInRequiredForBotDetection"),
     "ageRestricted" => (Outcome::AgeRestricted, "ageRestricted"),
@@ -127,6 +136,7 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
     // Processing media needs the same wait-and-retry policy as a scheduled live event.
     "mediaNotReady" => (Outcome::LiveNotStarted, "mediaNotReady"),
     "mediaUnavailable" => (Outcome::Unknown, "mediaUnavailable"),
+    "facebookVideoUnavailable" => (Outcome::Forbidden, "facebookVideoUnavailable"),
     "imageEngineUnavailable" => (Outcome::ExtractFailed, "imageEngineUnavailable"),
     "imageSourceUnavailable" => (Outcome::NoMedia, "imageSourceUnavailable"),
     "noMediaFound" => (Outcome::NoMedia, "noMediaFound"),

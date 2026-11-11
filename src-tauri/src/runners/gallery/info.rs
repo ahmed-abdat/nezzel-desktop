@@ -38,18 +38,26 @@ pub(super) fn image_post(
 pub(crate) async fn photo_info(
   app: &AppHandle,
   entry: &FetchEntry,
-  browser: Option<&str>,
+  login: &mut LoginSession,
 ) -> Result<Option<ParsedMedia>, GalleryError> {
+  login.has_session = false;
   let runner = GalleryRunner::new(
     app,
     entry.overrides.as_ref(),
-    browser,
+    login.browser.as_deref(),
     &entry.url,
     &entry.group_id,
   )
   .await?;
+  login.has_session = runner
+    ._cookies
+    .as_ref()
+    .is_some_and(|cookies| cookies.has_session);
   let result = runner.probe(&entry.url, &entry.group_id).await;
-  Ok(image_post(result)?.map(|post| ParsedMedia::Single(post.into_media(entry.id.clone()))))
+  Ok(image_post(result)?.map(|post| {
+    crate::diagnostics::send::network_response_received();
+    ParsedMedia::Single(post.into_media(entry.id.clone()))
+  }))
 }
 
 pub(super) fn preview_from_post(
@@ -77,9 +85,16 @@ pub async fn preview_media(
   preview_from_post(result.map_err(|_| GalleryError::Unavailable)?, id)
 }
 
-pub(crate) fn error_diagnostic(group: &str, id: &str, error: &GalleryError) -> DiagnosticEvent {
+pub(crate) fn error_diagnostic(
+  group: &str,
+  id: &str,
+  error: &GalleryError,
+  has_cookies: bool,
+) -> DiagnosticEvent {
   let code = match error {
+    GalleryError::Login if has_cookies => "accountAccessDenied",
     GalleryError::Login => "signInRequired",
+    GalleryError::NetworkDown => "networkNameResolutionFailed",
     GalleryError::Unavailable => "imageEngineUnavailable",
     GalleryError::Refused(FETCH_TIMEOUT) => "unknown",
     GalleryError::Refused(code) => code,
@@ -149,12 +164,12 @@ pub(crate) async fn run_gallery_info(
     Ok(outcome) => outcome,
     Err(Interrupted::Cancelled) => Some(Outcome::Cancelled),
     Err(Interrupted::Timeout) => {
-      stage.record_timeout(login.uses_cookies(), start);
+      stage.record_timeout(login.has_session, start);
       None
     }
   };
   if let Some(outcome) = outcome {
-    stage = stage.finish(outcome, login.uses_cookies(), start);
+    stage = stage.finish(outcome, login.has_session, start);
   }
   stage.login = Some(login);
   stage
@@ -169,6 +184,7 @@ pub(super) async fn gallery_info_attempts(
   loop {
     let attempt_start = Instant::now();
     login.announce(app, &entry.id, &entry.group_id);
+    login.has_session = false;
     let (result, cookies) = match GalleryRunner::new(
       app,
       entry.overrides.as_ref(),
@@ -179,18 +195,23 @@ pub(super) async fn gallery_info_attempts(
     .await
     {
       Ok(runner) => {
+        login.has_session = runner
+          ._cookies
+          .as_ref()
+          .is_some_and(|cookies| cookies.has_session);
         let result = runner.probe(&entry.url, &entry.group_id).await;
         (result, runner._cookies.clone())
       }
       Err(error) => (Err(error), None),
     };
     if matches!(result, Err(GalleryError::Unsupported)) {
-      stage.record_code("urlNotSupported", "", login.uses_cookies(), attempt_start);
+      stage.record_code("urlNotSupported", "", login.has_session, attempt_start);
       return None;
     }
     match image_post(result) {
       Ok(None) => return Some(Outcome::NoMatch),
       Ok(Some(post)) => {
+        crate::diagnostics::send::network_response_received();
         let mixed = post
           .assets
           .iter()
@@ -241,7 +262,7 @@ pub(super) async fn gallery_info_attempts(
       }
       Err(GalleryError::Cancelled) => return Some(Outcome::Cancelled),
       Err(GalleryError::Refused(FETCH_TIMEOUT)) => {
-        stage.record_timeout(login.uses_cookies(), attempt_start);
+        stage.record_timeout(login.has_session, attempt_start);
         return None;
       }
       Err(error) => {
@@ -249,19 +270,24 @@ pub(super) async fn gallery_info_attempts(
         if !*cancel.borrow() {
           return Some(Outcome::Cancelled);
         }
-        let diagnostics = vec![error_diagnostic(&entry.group_id, &entry.id, &error)];
+        let diagnostics = vec![error_diagnostic(
+          &entry.group_id,
+          &entry.id,
+          &error,
+          login.has_session,
+        )];
         if error == GalleryError::NetworkDown {
           stage.record_code(
             "networkNameResolutionFailed",
             "",
-            login.uses_cookies(),
+            login.has_session,
             attempt_start,
           );
         } else {
-          stage.record_diagnostics(&diagnostics, login.uses_cookies(), attempt_start);
+          stage.record_diagnostics(&diagnostics, login.has_session, attempt_start);
         }
         match login
-          .retry_cookie_fetch(error.cookie_fetch_failure(), &mut cancel)
+          .retry_cookie_fetch(error.cookie_fetch_failure(login.has_session), &mut cancel)
           .await
         {
           CookieRetry::Cancelled => return Some(Outcome::Cancelled),

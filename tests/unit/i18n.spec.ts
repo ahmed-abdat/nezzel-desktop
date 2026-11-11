@@ -25,6 +25,18 @@ describe('download error copy', () => {
     for (const text of [copy.shortMessage, copy.action, copy.message]) expect(text ?? '').not.toMatch(ENGINE_WORDS);
   });
 
+  it('provides every new failure and update-notice key in all shipped locales', () => {
+    const locales = import.meta.glob('../../src/locales/*.json', { eager: true, import: 'default' }) as Record<string, {
+      errors: { runner: Record<string, RunnerCopy> }; toolsUpdate: { stale: string; tryNow: string; failed: string };
+    }>;
+    for (const [locale, messages] of Object.entries(locales)) {
+      for (const code of ['facebookVideoUnavailable', 'accountAccessDenied', 'browserCookiesUnreadable', 'browserKeychainDenied', 'browserSafariAccessDenied', 'browserDatabaseLocked', 'browserProfileMissing', 'diskFull', 'outputNameTooLong', 'networkTimeout']) {
+        for (const key of ['shortMessage', 'message', 'action'] as const) expect(messages.errors.runner[code]?.[key]?.trim(), `${locale}: ${code}.${key}`).toBeTruthy();
+      }
+      for (const key of ['stale', 'tryNow', 'failed'] as const) expect(messages.toolsUpdate?.[key]?.trim(), `${locale}: toolsUpdate.${key}`).toBeTruthy();
+    }
+  });
+
   it('has the same error codes in every locale', () => {
     const codes = Object.keys(en.errors.runner).sort();
     for (const messages of Object.values(runnerLocales)) expect(Object.keys(messages.errors.runner).sort()).toEqual(codes);

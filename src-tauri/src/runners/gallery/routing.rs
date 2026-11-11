@@ -142,6 +142,34 @@ mod tests {
   }
 
   #[test]
+  fn x_gallery_hands_video_only_to_ytdlp_and_keeps_photo_and_mixed_posts() {
+    let source = "https://x.com/user/status/123";
+    for (extensions, expected) in [
+      (vec!["mp4"], 0),
+      (vec!["jpg"], 1),
+      (vec!["mp4", "jpg", "png"], 3),
+    ] {
+      let records: Vec<_> = extensions
+        .iter()
+        .enumerate()
+        .map(|(i, ext)| json!([3, format!("https://cdn.example/{i}.{ext}"), {"extension": ext}]))
+        .collect();
+      let result = image_post(parse_output(
+        0,
+        serde_json::to_vec(&records).unwrap().as_slice(),
+        b"",
+        source,
+      ))
+      .unwrap();
+      assert_eq!(
+        result.map_or(0, |post| post.assets.len()),
+        expected,
+        "{extensions:?}"
+      );
+    }
+  }
+
+  #[test]
   fn routing_gallery_fetch_is_independent_of_batch_size_and_selected_format() {
     let mut entry = FetchEntry {
       group_id: "group".into(),

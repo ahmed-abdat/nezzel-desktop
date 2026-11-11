@@ -2,7 +2,7 @@
 //! or a private jar scoped to the link's site, exported from the consented browser.
 use super::{
   exporter, firefox,
-  jar::{private_directory, private_file, CookieJar, COOKIE_HEADER},
+  jar::{private_directory, private_file, scoped_rows, CookieJar, COOKIE_HEADER},
 };
 use crate::runners::browsers::{CookieSource, CookieStore};
 use std::path::PathBuf;
@@ -11,6 +11,7 @@ use std::path::PathBuf;
 #[derive(Clone)]
 pub(in crate::runners) struct CookieAccess {
   pub args: Vec<String>,
+  pub has_session: bool,
   _jar: Option<std::sync::Arc<CookieJar>>,
 }
 
@@ -41,7 +42,7 @@ impl CookieContext {
     })
   }
 }
-pub(in crate::runners) const COOKIE_READ_ERROR: &str = "Browser cookies could not be read";
+pub(in crate::runners) const COOKIE_READ_ERROR: &str = "browserCookiesUnreadable";
 
 impl CookieAccess {
   pub async fn prepare(
@@ -57,11 +58,22 @@ impl CookieAccess {
       CookieSource::Anonymous => {
         return Ok(Self {
           args: vec![],
+          has_session: false,
           _jar: None,
         })
       }
       CookieSource::File(file) => {
         return Ok(Self {
+          has_session: scoped_rows(
+            std::path::Path::new(&file),
+            &reqwest::Url::parse(source)
+              .ok()
+              .and_then(|url| url.host_str().map(str::to_owned))
+              .ok_or(COOKIE_READ_ERROR)?,
+            &mut std::io::sink(),
+          )
+          .map_err(|_| COOKIE_READ_ERROR)?
+            > 0,
           args: vec!["--cookies".into(), file],
           _jar: None,
         })
@@ -92,8 +104,19 @@ impl CookieAccess {
     scoped
       .write_all(COOKIE_HEADER.as_bytes())
       .map_err(|_| COOKIE_READ_ERROR)?;
-    if browser.kind.store() == CookieStore::Firefox {
-      firefox::export_firefox(&browser, &host, &jar, &mut scoped).map_err(|_| COOKIE_READ_ERROR)?;
+    let rows = if browser.kind.store() == CookieStore::Firefox {
+      firefox::export_firefox(&browser, &host, &jar, &mut scoped).map_err(|error| {
+        if error
+          .downcast_ref::<std::io::Error>()
+          .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+        {
+          "browserProfileMissing"
+        } else {
+          let message = error.to_string();
+          read_error_code(&message)
+            .unwrap_or_else(|| exporter::classify_error(browser.kind, &message))
+        }
+      })?
     } else {
       exporter::export(
         context,
@@ -104,12 +127,25 @@ impl CookieAccess {
         budget,
         &mut cancel,
       )
-      .await?;
-    }
+      .await?
+    };
     scoped.flush().map_err(|_| COOKIE_READ_ERROR)?;
     Ok(Self {
       args: vec!["--cookies".into(), path.to_string_lossy().into_owned()],
+      has_session: rows > 0,
       _jar: Some(std::sync::Arc::new(jar)),
     })
+  }
+}
+
+/// Recognize only our fixed vocabulary, never forward arbitrary runner error text.
+pub(in crate::runners) fn read_error_code(error: &str) -> Option<&'static str> {
+  match error {
+    "browserKeychainDenied" => Some("browserKeychainDenied"),
+    "browserSafariAccessDenied" => Some("browserSafariAccessDenied"),
+    "browserDatabaseLocked" => Some("browserDatabaseLocked"),
+    "browserProfileMissing" => Some("browserProfileMissing"),
+    COOKIE_READ_ERROR => Some(COOKIE_READ_ERROR),
+    _ => None,
   }
 }

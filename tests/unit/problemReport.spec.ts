@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { downloadReportContext } from '../../src/helpers/reportContext';
 import { logFrontendError, stripOrigins } from '../../src/tauri/errorLog';
 import { reportFailedDownload } from '../../src/stores/report';
@@ -41,6 +41,18 @@ describe('stripOrigins', () => {
 });
 
 describe('best-effort IPC', () => {
+  it.each([false, true])('queues a timeout report only while the existing online signal is true (%s)', (online) => {
+    const signal = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(online);
+    const send = vi.fn();
+    installTauriMock({ diagnostics_download_failed: send });
+    try {
+      reportFailedDownload({ context: { errorCode: 'networkTimeout', exitCode: 1, attempts: [] }, url: null, extractor: null });
+      expect(send).toHaveBeenCalledTimes(online ? 1 : 0);
+    } finally {
+      signal.mockRestore();
+    }
+  });
+
   it('never throws or leaves a rejection when the backend fails', async () => {
     installTauriMock({
       diagnostics_log: () => {

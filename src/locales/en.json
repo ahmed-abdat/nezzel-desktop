@@ -1,4 +1,9 @@
 {
+  "toolsUpdate": {
+    "stale": "Nezzel hasn’t been able to update the download tools for at least 7 days. Some sites may not work",
+    "tryNow": "Try now",
+    "failed": "The download tools could not update. Try again later"
+  },
   "usage": {
     "setting": {
       "label": "Help improve Nezzel",
@@ -1046,6 +1051,51 @@
   },
   "errors": {
     "runner": {
+      "networkTimeout": {
+        "shortMessage": "The connection timed out",
+        "message": "The site did not respond before the connection timed out",
+        "action": "Try again in a moment"
+      },
+      "diskFull": {
+        "shortMessage": "The disk is full",
+        "message": "There is not enough space to save this download",
+        "action": "Free space on the download disk, then try again"
+      },
+      "outputNameTooLong": {
+        "shortMessage": "The file name is too long",
+        "message": "The file name exceeds the disk’s limit",
+        "action": "Use a shorter file name template in Settings, then try again"
+      },
+      "browserCookiesUnreadable": {
+        "shortMessage": "Browser login could not be read",
+        "message": "Nezzel could not read the browser login",
+        "action": "Try another browser in Login settings"
+      },
+      "browserKeychainDenied": {
+        "shortMessage": "Keychain access was not allowed",
+        "message": "The browser login could not be unlocked",
+        "action": "Try again and allow Keychain access when macOS asks"
+      },
+      "browserSafariAccessDenied": {
+        "shortMessage": "Safari login needs permission",
+        "message": "macOS did not allow access to Safari’s login",
+        "action": "Give Nezzel Full Disk Access in System Settings, then try again"
+      },
+      "browserDatabaseLocked": {
+        "shortMessage": "The browser database is busy",
+        "message": "The browser login database is locked",
+        "action": "Close the browser completely, then try again"
+      },
+      "browserProfileMissing": {
+        "shortMessage": "Browser profile was not found",
+        "message": "The browser or its selected profile is no longer available",
+        "action": "Choose an installed browser profile in Login settings"
+      },
+      "accountAccessDenied": {
+        "shortMessage": "Your account may not have access",
+        "message": "The site still refused after your login was sent. Your account may not have access to this content",
+        "action": "Open the post in your browser to check access"
+      },
       "loginConsentDeclined": {
         "shortMessage": "Browser login wasn't allowed",
         "message": "You didn't allow the browser login. Try again to continue",
@@ -1306,6 +1356,11 @@
         "message": "A fragment download failed and will be retried automatically",
         "action": "Nothing to do: Nezzel retries it"
       },
+      "facebookVideoUnavailable": {
+        "shortMessage": "Facebook didn't provide this video",
+        "message": "Facebook did not provide this video to Nezzel. Open the link in a browser and copy the link from the address bar, or try again later.",
+        "action": "Copy the browser's address-bar link, or try again later"
+      },
       "unknown": {
         "shortMessage": "Couldn't download",
         "message": "Nezzel couldn't finish this download. Try again. If it keeps happening, report the problem; the details are attached for us.",
@@ -1492,12 +1547,12 @@
       "use": "Use it",
       "notNow": "Not now",
       "useBrowser": "Use {browser}",
-      "stillFailing": "Your {browser} login didn't work here. Open the site in {browser}, log in, then try again",
+      "stillFailing": "The site received your {browser} login. Your account may not have access to this content. Open the post in {browser} to check",
       "privacy": "Nezzel reads that browser's login only for this download. It is never saved or sent anywhere but the site",
       "keychain": "macOS may ask once to let Nezzel read the browser's login",
       "tryAnother": "Try another browser",
       "settings": "Login settings",
-      "refusedBrowser": "{site} didn't accept your {browser} login. Log in to {site} in {browser}, or try another browser",
+      "refusedBrowser": "{site} received your {browser} login. Your account may not have access to this content. Open the post in {browser} to check",
       "noBrowser": "This site wants you to log in (on some networks it asks everyone). Sign in to it in your browser, or add a cookies file in Login settings",
       "noBrowserWindows": "This site wants you to log in (on some networks it asks everyone). Sign in with Firefox, or add a cookies file in Login settings",
       "turnedOff": "{site} needs you to be logged in. Browser logins are off in Login settings",

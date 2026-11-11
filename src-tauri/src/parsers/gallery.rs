@@ -42,8 +42,14 @@ pub(crate) fn cdn_failure(message: &str) -> GalleryError {
 }
 
 impl GalleryError {
-  pub fn cookie_fetch_failure(&self) -> crate::parsers::ytdlp_error::CookieFetchFailure {
+  pub fn cookie_fetch_failure(
+    &self,
+    has_cookies: bool,
+  ) -> crate::parsers::ytdlp_error::CookieFetchFailure {
     use crate::parsers::ytdlp_error::CookieFetchFailure;
+    if !has_cookies {
+      return CookieFetchFailure::Other;
+    }
     match self {
       Self::Login => CookieFetchFailure::Refused,
       Self::Refused("rateLimited429" | "unableToExtractIdOrInfo") => CookieFetchFailure::Transient,
@@ -106,6 +112,20 @@ pub fn failure(message: &str) -> GalleryError {
     return GalleryError::NetworkDown;
   }
   let lower = message.to_ascii_lowercase();
+  if [
+    "http error 500",
+    "http error 502",
+    "http error 503",
+    "http error 504",
+  ]
+  .iter()
+  .any(|status| lower.contains(status))
+  {
+    return GalleryError::Refused("server5xx");
+  }
+  if lower.contains("timed out") {
+    return GalleryError::Refused("networkTimeout");
+  }
   // Generic cookie advice appended to an empty/throttled response is not a refused session.
   if !lower.contains("authenticationerror") && !lower.contains("authorizationerror") {
     if lower.contains("empty media response") {
@@ -914,7 +934,37 @@ mod tests {
 
   #[test]
   fn embedded_errors_are_failures_even_when_the_process_exits_zero() {
+    for (cookies, code) in [(false, "signInRequired"), (true, "accountAccessDenied")] {
+      assert_eq!(
+        GalleryError::Login.cookie_fetch_failure(cookies),
+        if cookies {
+          super::super::ytdlp_error::CookieFetchFailure::Refused
+        } else {
+          super::super::ytdlp_error::CookieFetchFailure::Other
+        }
+      );
+      assert_eq!(
+        crate::runners::gallery::error_diagnostic("group", "item", &GalleryError::Login, cookies)
+          .code,
+        code
+      );
+    }
+    assert_eq!(
+      crate::runners::gallery::error_diagnostic("group", "item", &GalleryError::NetworkDown, false)
+        .code,
+      "networkNameResolutionFailed"
+    );
+
     assert_eq!(parse_output(0, br#"[[-1,{"error":"AbortExtraction","message":"HTTP redirect to login page (https://www.instagram.com/accounts/login/)"}]]"#, b"", "https://instagram.com/p/example").unwrap_err(), GalleryError::Login);
+    for (message, code) in [
+      ("HTTP Error 504: Gateway Timeout", "server5xx"),
+      ("HTTP Error 504: connection timed out", "server5xx"),
+      ("The read operation timed out", "networkTimeout"),
+      ("Connection timed out", "networkTimeout"),
+      ("timeout setting is invalid", "imageSourceUnavailable"),
+    ] {
+      assert_eq!(failure(message), GalleryError::Refused(code), "{message}");
+    }
     assert_eq!(
       failure("post 429123 could not be read"),
       GalleryError::Refused("imageSourceUnavailable")

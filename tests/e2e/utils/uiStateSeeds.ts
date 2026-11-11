@@ -11,6 +11,7 @@ import { useMediaGroupStore } from '../../../src/stores/media/group';
 import { useMediaProgressStore } from '../../../src/stores/media/progress';
 import { useMediaDestinationStore } from '../../../src/stores/media/destination';
 import { useMediaDiagnosticsStore } from '../../../src/stores/media/diagnostics';
+import { useMediaSizeStore } from '../../../src/stores/media/size';
 import { useMediaOptionsStore } from '../../../src/stores/media/options';
 import { useLoginStore } from '../../../src/stores/login';
 import { useDownloadSheetStore } from '../../../src/stores/downloadSheet';
@@ -157,6 +158,21 @@ function mixedList() {
   addRow(done({ title: title(3) }));
 }
 
+/** Marketing shots: believable titles per locale; thumbnails are served from NZ_THUMBS_DIR by the spec. */
+const MARKETING_TITLES = {
+  en: ['Simple homemade bread recipe', 'Documentary: life in the desert', 'Evening acoustic song', 'Travel photos: a week by the sea', 'Mountain sunrise in 4K', 'Course notes, week 4'],
+  ar: ['وصفة خبز منزلي بسيطة', 'وثائقي: الحياة في الصحراء', 'أغنية هادئة للمساء', 'صور رحلة: أسبوع على الشاطئ', 'شروق الشمس في الجبال بدقة 4K', 'ملاحظات الدورة، الأسبوع ٤'],
+  fr: ['Recette simple de pain maison', 'Documentaire : la vie dans le désert', 'Chanson acoustique du soir', 'Photos de voyage : une semaine au bord de la mer', 'Lever de soleil en montagne en 4K', 'Notes de cours, semaine 4'],
+};
+const mTitle = (i: number) => MARKETING_TITLES[i18n.global.locale.value as keyof typeof MARKETING_TITLES][i];
+const mThumb = (i: number) => `https://thumbs.nezzel.test/thumb-${i + 1}.jpg`;
+const mRow = (i: number, extra: Omit<RowSeed, 'title' | 'thumbnail'>) => addRow({ ...extra, title: mTitle(i), thumbnail: mThumb(i) });
+
+/** What a real install has: the default output folder (status bar link, the sheet's "Save to", shown as ~/Downloads/Nezzel). */
+const marketingSetup = () => {
+  useSettingsStore().settings.output.downloadDir = '/Users/me/Downloads/Nezzel';
+};
+
 function loginRow(state: MediaState, host = 'www.instagram.com') {
   return addRow({ title: 'Instagram post by @nezzel', url: `https://${host}/p/abc123/`, extractor: 'instagram', state, kind: 'video' });
 }
@@ -170,6 +186,26 @@ function loginRequest(ids: { groupId: string; itemId: string }, host = 'www.inst
 /** Every gallery state. A seed may return the route to show. */
 export const seeds: Record<string, () => unknown> = {
   'list-empty': () => undefined,
+  'marketing-list': () => {
+    marketingSetup();
+    mRow(0, { state: MediaState.downloading, height: 1080, percent: 42, speedBps: 3_400_000, etaSecs: 75 });
+    // Added first among the finished rows so it lists last (rows list newest first): it fills a 750x650 window down to the status bar.
+    addRow(done({ title: mTitle(5), kind: 'file', extractor: 'generic', url: 'https://example.com/course-notes-week-4.pdf', height: undefined, filesize: 2_400_000, destination: '/Users/me/Downloads/Nezzel/course-notes.pdf' }));
+    mRow(1, done({ height: undefined, destination: '/Users/me/Downloads/Nezzel/desert.mp4' }));
+    mRow(2, done({ audio: true, kind: 'audio', extractor: 'soundcloud', url: 'https://soundcloud.com/nezzel/evening', destination: '/Users/me/Downloads/Nezzel/evening.m4a' }));
+    mRow(3, done({ kind: 'carousel', extractor: 'instagram', url: 'https://www.instagram.com/p/abc123/', attachments: [1, 2, 3, 4].map(n => ({ id: `p${n}`, kind: 'image' as const, url: `https://example.com/${n}.jpg`, thumbnail: mThumb(3) })), destination: '/Users/me/Downloads/Nezzel/sea' }));
+    mRow(4, done({ height: 2160, formats: [{ id: 'f2160', height: 2160, fps: 30, audioCodecs: [], videoCodecs: [] }, ...VIDEO_FORMATS], destination: '/Users/me/Downloads/Nezzel/sunrise.mp4' }));
+  },
+  'marketing-sheet': () => {
+    marketingSetup();
+    const { groupId, itemId } = mRow(0, { state: MediaState.configure });
+    // The "About N MB" line: the size the engine reported for the best format (what the sheet stores for "Best quality").
+    useMediaSizeStore().processMediaSizePayload({
+      groupId, item: { id: itemId, filesize: 187_000_000 },
+      format: { trackType: TrackType.both, ...VIDEO_FORMATS[0] },
+    } as never);
+    useDownloadSheetStore().show(groupId);
+  },
   'list-search-empty': () => mixedList(),
   'list-filter-all': () => mixedList(),
   'list-filter-active': () => (mixedList(), router().push({ name: 'home', query: { status: 'active' } })),

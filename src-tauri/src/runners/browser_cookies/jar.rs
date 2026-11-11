@@ -145,30 +145,39 @@ pub(super) fn filter_export(
   full: &Path,
   host: &str,
   scoped: &mut std::fs::File,
-) -> std::io::Result<()> {
-  use std::io::{BufRead, Write};
-  let result = (|| {
-    for line in std::io::BufReader::new(std::fs::File::open(full)?).lines() {
-      let line = line?;
-      let fields = line.strip_prefix("#HttpOnly_").unwrap_or(&line);
-      if fields.starts_with('#') || fields.is_empty() {
-        continue;
-      }
-      let parts: Vec<_> = fields.split('\t').collect();
-      if parts.len() != 7
-        || !matches!(parts[1], "TRUE" | "FALSE")
-        || !matches!(parts[3], "TRUE" | "FALSE")
-        || parts[4].parse::<i64>().is_err()
-      {
-        return Err(std::io::ErrorKind::InvalidData.into());
-      }
-      if allowed_cookie_host(parts[0], host) {
-        writeln!(scoped, "{line}")?;
-      }
-    }
-    Ok(())
-  })();
+) -> std::io::Result<usize> {
+  let result = scoped_rows(full, host, scoped);
   // Never keep the unscoped export, including on a parse/write failure.
-  let removed = std::fs::remove_file(full);
-  result.and(removed)
+  std::fs::remove_file(full)?;
+  result
+}
+
+/// Count only validated rows for this site, also for a user-managed jar.
+pub(super) fn scoped_rows(
+  full: &Path,
+  host: &str,
+  scoped: &mut impl std::io::Write,
+) -> std::io::Result<usize> {
+  use std::io::BufRead;
+  let mut count = 0;
+  for line in std::io::BufReader::new(std::fs::File::open(full)?).lines() {
+    let line = line?;
+    let fields = line.strip_prefix("#HttpOnly_").unwrap_or(&line);
+    if fields.starts_with('#') || fields.is_empty() {
+      continue;
+    }
+    let parts: Vec<_> = fields.split('\t').collect();
+    if parts.len() != 7
+      || !matches!(parts[1], "TRUE" | "FALSE")
+      || !matches!(parts[3], "TRUE" | "FALSE")
+      || parts[4].parse::<i64>().is_err()
+    {
+      return Err(std::io::ErrorKind::InvalidData.into());
+    }
+    if allowed_cookie_host(parts[0], host) {
+      writeln!(scoped, "{line}")?;
+      count += 1;
+    }
+  }
+  Ok(count)
 }

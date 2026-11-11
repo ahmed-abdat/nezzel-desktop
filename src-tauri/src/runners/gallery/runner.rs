@@ -137,7 +137,8 @@ impl GalleryRunner {
       .map_err(|error| match error {
         "cancelled" => GalleryError::Cancelled,
         FETCH_TIMEOUT => GalleryError::Refused(FETCH_TIMEOUT),
-        _ => GalleryError::Invalid,
+        _ => super::super::browser_cookies::read_error_code(error)
+          .map_or(GalleryError::Invalid, GalleryError::Refused),
       })?;
     let mut runner = Self::configured(path, &secrets, &network, source)?;
     runner.args.extend(cookies.args.iter().cloned());

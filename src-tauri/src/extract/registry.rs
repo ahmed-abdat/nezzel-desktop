@@ -284,8 +284,8 @@ pub(crate) fn stages_for(raw: &str) -> Vec<StageId> {
       stages.push(stage);
     }
   }
-  // A status URL is usually a video. The chain still hands photo-only/no-format
-  // results to gallery, including TikTok's audio-only slideshow representation.
+  // TikTok video URLs may expose only a slideshow soundtrack; those still hand off to gallery.
+  // X status URLs keep gallery first so a video cannot hide accompanying photos.
   if video_first(raw) {
     prefer_ytdlp(&mut stages);
   }
@@ -307,8 +307,7 @@ fn prefer_ytdlp(stages: &mut Vec<StageId>) {
 fn video_first(raw: &str) -> bool {
   Url::parse(raw).is_ok_and(|url| {
     let host = url.host_str().unwrap_or_default();
-    (X_ROUTE_HOSTS.contains(&host) && url.path().contains("/status/"))
-      || (site_by_domain(host) == Some(SiteId::TikTok) && url.path().contains("/video/"))
+    site_by_domain(host) == Some(SiteId::TikTok) && url.path().contains("/video/")
   })
 }
 

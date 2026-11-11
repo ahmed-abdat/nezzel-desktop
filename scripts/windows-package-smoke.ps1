@@ -93,7 +93,10 @@ if (Test-Path $exe) {
   $title = ($ps | Where-Object { $_.MainWindowTitle } | Select-Object -First 1).MainWindowTitle
   Check ([bool]$title) 'main window opened' 'no window title within 45 s'
   Info "window title: $title"
-  Check (@(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count -ge 1) 'WebView2 process started for the window'
+  # The first titled window can be the single-instance helper, so give the webview its own wait.
+  $deadline = (Get-Date).AddSeconds(30)
+  while ((@(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count -lt 1) -and ((Get-Date) -lt $deadline)) { Start-Sleep 2 }
+  Check (@(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count -ge 1) 'WebView2 process started for the window' 'none within 30 s'
 
   $before = (Get-NezzelProcesses).Count
   Start-Process $exe | Out-Null

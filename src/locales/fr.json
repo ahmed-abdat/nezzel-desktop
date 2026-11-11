@@ -1,4 +1,9 @@
 {
+  "toolsUpdate": {
+    "stale": "Nezzel n’a pas pu mettre à jour les outils de téléchargement depuis au moins 7 jours. Certains sites peuvent ne pas fonctionner",
+    "tryNow": "Essayer maintenant",
+    "failed": "Les outils de téléchargement n’ont pas pu être mis à jour. Réessayez plus tard"
+  },
   "usage": {
     "setting": {
       "label": "Aider à améliorer Nezzel",
@@ -949,6 +954,51 @@
   },
   "errors": {
     "runner": {
+      "networkTimeout": {
+        "shortMessage": "Le site a mis trop de temps à répondre",
+        "message": "Le site a mis trop de temps à répondre. Réessayez",
+        "action": "Réessayez"
+      },
+      "diskFull": {
+        "shortMessage": "Le disque est plein",
+        "message": "Il n’y a pas assez d’espace pour enregistrer ce téléchargement",
+        "action": "Libérez de l’espace sur le disque de téléchargement, puis réessayez"
+      },
+      "outputNameTooLong": {
+        "shortMessage": "Le nom du fichier est trop long",
+        "message": "Le nom du fichier dépasse la limite du disque",
+        "action": "Utilisez un modèle de nom plus court dans les Réglages, puis réessayez"
+      },
+      "browserCookiesUnreadable": {
+        "shortMessage": "Connexion du navigateur illisible",
+        "message": "Nezzel n’a pas pu lire la connexion du navigateur",
+        "action": "Choisissez un autre navigateur dans les réglages de connexion"
+      },
+      "browserKeychainDenied": {
+        "shortMessage": "Accès au trousseau refusé",
+        "message": "La connexion du navigateur n’a pas pu être déverrouillée",
+        "action": "Réessayez et autorisez l’accès au trousseau quand macOS le demande"
+      },
+      "browserSafariAccessDenied": {
+        "shortMessage": "Safari nécessite une autorisation",
+        "message": "macOS n’a pas autorisé l’accès à la connexion Safari",
+        "action": "Accordez à Nezzel l’accès complet au disque dans les Réglages Système, puis réessayez"
+      },
+      "browserDatabaseLocked": {
+        "shortMessage": "Base du navigateur occupée",
+        "message": "La base de connexion du navigateur est verrouillée",
+        "action": "Fermez complètement le navigateur, puis réessayez"
+      },
+      "browserProfileMissing": {
+        "shortMessage": "Profil de navigateur introuvable",
+        "message": "Le navigateur ou le profil choisi n’est plus disponible",
+        "action": "Choisissez un profil de navigateur installé dans les réglages de connexion"
+      },
+      "accountAccessDenied": {
+        "shortMessage": "Votre compte n’a peut-être pas accès",
+        "message": "Le site a refusé après l’envoi de votre connexion. Votre compte n’a peut-être pas accès à ce contenu",
+        "action": "Ouvrez la publication dans votre navigateur pour vérifier l’accès"
+      },
       "loginConsentDeclined": {
         "shortMessage": "La connexion par le navigateur n'a pas été autorisée",
         "message": "Vous n'avez pas autorisé la connexion du navigateur. Réessayez pour continuer",
@@ -1203,6 +1253,11 @@
         "shortMessage": "Une partie du téléchargement a échoué",
         "message": "Un fragment a échoué et sera automatiquement retéléchargé",
         "action": "Rien à faire : Nezzel réessaie"
+      },
+      "facebookVideoUnavailable": {
+        "shortMessage": "Facebook n’a pas fourni cette vidéo",
+        "message": "Facebook n’a pas fourni cette vidéo à Nezzel. Ouvrez le lien dans un navigateur et copiez le lien depuis la barre d’adresse, ou réessayez plus tard.",
+        "action": "Copiez le lien depuis la barre d’adresse du navigateur, ou réessayez plus tard"
       },
       "unknown": {
         "shortMessage": "Téléchargement impossible",
@@ -1496,12 +1551,12 @@
       "use": "L'utiliser",
       "notNow": "Pas maintenant",
       "useBrowser": "Utiliser {browser}",
-      "stillFailing": "La connexion de {browser} n'a pas suffi. Ouvrez le site dans {browser}, connectez-vous, puis réessayez",
+      "stillFailing": "Le site a reçu votre connexion de {browser}. Votre compte n’a peut-être pas accès à ce contenu. Ouvrez la publication dans {browser} pour vérifier",
       "privacy": "Nezzel lit la connexion de ce navigateur pour ce téléchargement seulement. Elle n'est jamais enregistrée ni envoyée ailleurs qu'au site",
       "keychain": "macOS peut demander une fois l'autorisation de lire la connexion du navigateur",
       "tryAnother": "Essayer un autre navigateur",
       "settings": "Réglages de connexion",
-      "refusedBrowser": "{site} n'a pas accepté votre connexion {browser}. Connectez-vous à {site} dans {browser}, ou essayez un autre navigateur",
+      "refusedBrowser": "{site} a reçu votre connexion de {browser}. Votre compte n’a peut-être pas accès à ce contenu. Ouvrez la publication dans {browser} pour vérifier",
       "noBrowser": "Ce site vous demande de vous connecter (sur certains réseaux, il le demande à tout le monde). Connectez-vous dans votre navigateur, ou ajoutez un fichier de cookies dans les paramètres de connexion",
       "noBrowserWindows": "Ce site vous demande de vous connecter (sur certains réseaux, il le demande à tout le monde). Connectez-vous avec Firefox, ou ajoutez un fichier de cookies dans les paramètres de connexion",
       "turnedOff": "{site} nécessite une connexion. Les connexions du navigateur sont désactivées dans les réglages de connexion",

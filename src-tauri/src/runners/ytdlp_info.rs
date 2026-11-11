@@ -102,12 +102,12 @@ async fn run_with_resolution(
     Ok(outcome) => outcome,
     Err(Interrupted::Cancelled) => Some(Outcome::Cancelled),
     Err(Interrupted::Timeout) => {
-      stage.record_timeout(login.uses_cookies(), start);
+      stage.record_timeout(login.has_session, start);
       None
     }
   };
   if let Some(outcome) = outcome {
-    stage = stage.finish(outcome, login.uses_cookies(), start);
+    stage = stage.finish(outcome, login.has_session, start);
   }
   stage.login = Some(login);
   stage
@@ -124,7 +124,7 @@ async fn run_attempts(
   let matcher = match DiagnosticMatcher::shared() {
     Ok(matcher) => matcher,
     Err(error) => {
-      stage.record_code("unknown", "", login.uses_cookies(), start);
+      stage.record_code("unknown", "", login.has_session, start);
       stage.error = Some(YtdlpInfoFetchError::InvalidDiagnosticRules(error));
       return None;
     }
@@ -155,6 +155,9 @@ async fn run_attempts(
   if !*cancel.borrow() {
     return Some(Outcome::Cancelled);
   }
+  if reader_handoff(&resolution, stage, login.has_session, start) {
+    return None;
+  }
   let mut post_metadata = None;
   match resolution {
     Resolution::Passthrough(url) => input.rewrite(url),
@@ -171,7 +174,7 @@ async fn run_attempts(
       let mut media = match serde_json::from_str::<crate::models::ParsedSingleVideo>(&metadata) {
         Ok(media) => media,
         Err(error) => {
-          stage.record_code("unableToExtractIdOrInfo", "", login.uses_cookies(), start);
+          stage.record_code("unableToExtractIdOrInfo", "", login.has_session, start);
           stage.error = Some(YtdlpInfoFetchError::ParseFailed(error.to_string()));
           return None;
         }
@@ -183,7 +186,7 @@ async fn run_attempts(
     }
     Resolution::Unsupported { reason } => {
       stage.error = Some(YtdlpInfoFetchError::Unsupported(reason));
-      stage.record_code(reason.code(), "", login.uses_cookies(), start);
+      stage.record_code(reason.code(), "", login.has_session, start);
       return None;
     }
   }
@@ -216,23 +219,26 @@ async fn run_attempts(
       .with_network_args(entry.overrides.as_ref())
       .with_args(["-J", "--flat-playlist"])
       .with_resolved_input(&input);
+    login.has_session = false;
     let timeout = runner.info_timeout();
     let output = match runner.output_with_timeout(&entry.group_id, timeout).await {
       Ok(Some(output)) => output,
       Ok(None) => return Some(Outcome::Cancelled),
       Err(error) if error == FETCH_TIMEOUT => {
-        stage.record_timeout(login.uses_cookies(), attempt_start);
+        stage.record_timeout(login.has_session, attempt_start);
         return None;
       }
       Err(error) => {
+        let code = super::browser_cookies::read_error_code(&error).unwrap_or("unknown");
         stage.error = Some(YtdlpInfoFetchError::RunnerFailed(error));
-        stage.record_code("unknown", "", login.uses_cookies(), attempt_start);
+        stage.record_code(code, "", login.has_session, attempt_start);
         return None;
       }
     };
     if !*cancel.borrow() {
       return Some(Outcome::Cancelled);
     }
+    login.has_session = output.has_session;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let redacted_stderr = redact_diagnostic(&stderr);
@@ -242,12 +248,16 @@ async fn run_attempts(
       redacted_stderr.lines(),
     );
     if output.code != 0 {
-      let cookie_failure = parser.cookie_fetch_failure(&stderr);
-      let diagnostics = parser.parse_lines(stderr.lines().collect(), login.uses_cookies());
+      // The initial 401 is already recorded. An unsupported curl_cffi target adds no evidence.
+      if input.impersonation_unavailable(&stderr) {
+        return None;
+      }
+      let cookie_failure = parser.cookie_fetch_failure(&stderr, login.has_session);
+      let diagnostics = parser.parse_lines(stderr.lines().collect(), login.has_session);
       let first_error = diagnostics
         .iter()
         .find(|event| matches!(event.level, crate::models::error::DiagnosticLevel::Error));
-      stage.record_diagnostics(&diagnostics, login.uses_cookies(), attempt_start);
+      stage.record_diagnostics(&diagnostics, login.has_session, attempt_start);
       for event in diagnostics
         .iter()
         .filter(|event| matches!(event.level, crate::models::error::DiagnosticLevel::Warning))
@@ -259,12 +269,7 @@ async fn run_attempts(
         );
       }
       login.record_failure(&diagnostics, false);
-      log_info_failure(
-        first_error,
-        login.uses_cookies(),
-        cookie_failure,
-        output.code,
-      );
+      log_info_failure(first_error, login.has_session, cookie_failure, output.code);
       if !*cancel.borrow() {
         return Some(Outcome::Cancelled);
       }
@@ -273,10 +278,10 @@ async fn run_attempts(
         CookieRetry::Retry => continue,
         CookieRetry::GiveUp => {}
       }
-      if input.retry_original(&stderr) {
+      if input.retry_vimeo_401(&stderr) || input.retry_original(&stderr) {
         continue;
       }
-      let reason = if login.uses_cookies() {
+      let reason = if login.has_session {
         (cookie_failure == CookieFetchFailure::Refused).then(|| "signInRequired".to_owned())
       } else {
         stderr.lines().find_map(|line| parser.login_reason(line))
@@ -304,10 +309,10 @@ async fn run_attempts(
     {
       let photo_start = Instant::now();
       let gallery = finish_photo_fetch(
-        crate::runners::gallery::photo_info(app, entry, login.browser.as_deref()).await,
+        crate::runners::gallery::photo_info(app, entry, login).await,
         &entry.group_id,
         &entry.id,
-        login.uses_cookies(),
+        login.has_session,
         photo_start,
       );
       if gallery.media.is_some() {
@@ -331,7 +336,7 @@ async fn run_attempts(
             stage.record_code(
               "unableToExtractIdOrInfo",
               "",
-              login.uses_cookies(),
+              login.has_session,
               attempt_start,
             );
             return None;
@@ -350,6 +355,7 @@ async fn run_attempts(
             }
           }
         }
+        crate::diagnostics::send::network_response_received();
         input.retain_fetch_target(&mut media);
         login.succeeded(app, &entry.group_id);
         stage.media = Some(media);
@@ -360,12 +366,40 @@ async fn run_attempts(
         stage.record_code(
           "unableToExtractIdOrInfo",
           "",
-          login.uses_cookies(),
+          login.has_session,
           attempt_start,
         );
         None
       }
     };
+  }
+}
+
+fn reader_handoff(
+  resolution: &Resolution,
+  stage: &mut StageResult,
+  has_session: bool,
+  start: Instant,
+) -> bool {
+  match resolution {
+    Resolution::Passthrough(url) if resolve::facebook_photo_target(url) => {
+      stage.resolved_url = Some(url.clone());
+      stage.record_code("photosOnly", "", has_session, start);
+      true
+    }
+    Resolution::Unsupported { reason } => {
+      stage.terminal = !matches!(reason, Reason::PhotosOnly);
+      stage.error = Some(YtdlpInfoFetchError::Unsupported(*reason));
+      stage.record_code(reason.code(), "", has_session, start);
+      if matches!(reason, Reason::NoMedia) {
+        // Only the Reddit reader proves an empty link/text post; preserve that provenance.
+        if let Some(attempt) = stage.attempts.last_mut() {
+          attempt.stage = StageId::Reader(crate::routing::ReaderId::Reddit);
+        }
+      }
+      true
+    }
+    _ => false,
   }
 }
 
@@ -419,7 +453,10 @@ fn finish_photo_fetch(
   };
   gallery.record_diagnostics(
     &[crate::runners::gallery::error_diagnostic(
-      group_id, id, &error,
+      group_id,
+      id,
+      &error,
+      has_cookies,
     )],
     has_cookies,
     start,
@@ -456,6 +493,54 @@ pub(super) fn emit_unsupported(app: &AppHandle, group_id: &str, id: &str, reason
 mod tests {
   use super::*;
   use crate::parsers::gallery::GalleryError;
+
+  #[test]
+  fn reader_verdicts_handoff_photos_and_stop_verified_empty_posts() {
+    for (resolution, code, terminal, target) in [
+      (
+        Resolution::Passthrough("https://www.facebook.com/photo/?fbid=555".into()),
+        "photosOnly",
+        false,
+        Some("https://www.facebook.com/photo/?fbid=555"),
+      ),
+      (
+        Resolution::Unsupported {
+          reason: Reason::PhotosOnly,
+        },
+        "photosOnly",
+        false,
+        None,
+      ),
+      (
+        Resolution::Unsupported {
+          reason: Reason::NoMedia,
+        },
+        "noMediaFound",
+        true,
+        None,
+      ),
+    ] {
+      let mut stage = StageResult::new(StageId::Ytdlp, Confidence::High);
+      assert!(reader_handoff(
+        &resolution,
+        &mut stage,
+        false,
+        Instant::now()
+      ));
+      if code == "noMediaFound" {
+        assert_eq!(
+          stage.attempts[0].stage,
+          StageId::Reader(crate::routing::ReaderId::Reddit)
+        );
+      }
+      assert_eq!(stage.terminal, terminal);
+      assert_eq!(stage.resolved_url.as_deref(), target);
+      assert_eq!(
+        crate::extract::precedence::final_code(&stage.attempts),
+        Some(code)
+      );
+    }
+  }
 
   #[test]
   fn info_failure_trace_omits_titles_channel_names_and_raw_engine_output() {

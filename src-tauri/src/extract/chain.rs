@@ -61,6 +61,8 @@ pub struct StageResult<T = ParsedMedia> {
   pub login: Option<LoginSession>,
   pub error: Option<YtdlpInfoFetchError>,
   pub resolved_url: Option<String>,
+  /// A reader proved a terminal content verdict; no other engine should probe it.
+  pub terminal: bool,
   stage: StageId,
   confidence: Confidence,
 }
@@ -72,6 +74,7 @@ impl<T> StageResult<T> {
       login: None,
       error: None,
       resolved_url: None,
+      terminal: false,
       stage,
       confidence,
     }
@@ -319,6 +322,7 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
   loop {
     let phase_start = attempts.len();
     let mut stopped = false;
+    let mut reader_terminal = false;
     let mut gallery_tried = false;
     let candidates = registry::stages_for(
       resolved_url
@@ -346,6 +350,7 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
                   && matches!(
                     a.outcome,
                     Outcome::Unsupported
+                      | Outcome::Forbidden
                       | Outcome::ExtractFailed
                       | Outcome::KindMismatch
                       | Outcome::Network(NetworkScope::StageLocal)
@@ -419,43 +424,56 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
               || resolved_url.as_deref().is_some_and(drm_may_be_login)))
         })
         .collect();
-      stopped = stops(&evidence, exclusive) || Deadline::now() >= row_deadline;
+      reader_terminal = result.terminal;
+      stopped = reader_terminal || stops(&evidence, exclusive) || Deadline::now() >= row_deadline;
       gallery_tried |= result.attempts.iter().any(|a| a.stage == StageId::Gallery);
       attempts.extend(result.attempts);
       if media.is_some() || stopped {
         break;
       }
     }
-    if media.is_some() {
+    if media.is_some() || reader_terminal {
       break;
     }
     if stopped && (phase != Phase::Login || stops(&attempts[phase_start..], false)) {
       break;
     }
     if phase == Phase::Login {
-      // NoMedia is final only after other login-capable stages have had their chance.
-      // It is content evidence, not a cookie failure that permits an anonymous degrade.
-      if attempts[phase_start..]
-        .iter()
-        .any(|attempt| attempt.auth != AuthUsed::Anonymous && attempt.outcome == Outcome::NoMedia)
+      // LinkedIn can hide a public video from yt-dlp when cookies are supplied.
+      let linkedin_cookie_no_media =
+        reqwest::Url::parse(resolved_url.as_deref().unwrap_or(original)).is_ok_and(|url| {
+          url.host_str().and_then(crate::sites::site_of) == Some(crate::sites::SiteId::LinkedIn)
+        }) && attempts[phase_start..].iter().any(|attempt| {
+          attempt.auth != AuthUsed::Anonymous
+            && attempt.stage == StageId::Ytdlp
+            && attempt
+              .code
+              .is_some_and(|code| code.as_str() == "imageSourceUnavailable")
+        });
+      // Other NoMedia evidence stays final after all login-capable stages had their chance.
+      if !linkedin_cookie_no_media
+        && attempts[phase_start..]
+          .iter()
+          .any(|attempt| attempt.auth != AuthUsed::Anonymous && attempt.outcome == Outcome::NoMedia)
       {
         break;
       }
       // U0: a cookie failure gets one anonymous degrade, without another consent or clock reset.
-      let cookie_failure = attempts[phase_start..].iter().any(|attempt| {
-        attempt.auth != AuthUsed::Anonymous
-          && matches!(
-            attempt.outcome,
-            Outcome::Unknown
-              | Outcome::Unsupported
-              | Outcome::ExtractFailed
-              | Outcome::Forbidden
-              | Outcome::Blocked
-              | Outcome::RateLimited
-              | Outcome::KindMismatch
-              | Outcome::Network(NetworkScope::StageLocal)
-          )
-      });
+      let cookie_failure = linkedin_cookie_no_media
+        || attempts[phase_start..].iter().any(|attempt| {
+          attempt.auth != AuthUsed::Anonymous
+            && matches!(
+              attempt.outcome,
+              Outcome::Unknown
+                | Outcome::Unsupported
+                | Outcome::ExtractFailed
+                | Outcome::Forbidden
+                | Outcome::Blocked
+                | Outcome::RateLimited
+                | Outcome::KindMismatch
+                | Outcome::Network(NetworkScope::StageLocal)
+            )
+        });
       if !degraded && cookie_failure && login.as_ref().is_some_and(LoginSession::uses_cookies) {
         if let Some(session) = &mut login {
           session.degrade_fetch();
@@ -655,9 +673,16 @@ pub async fn run(
           result
         }
         ChainStep::Stage(StageId::Gallery) => {
+          let mut gallery_entry = entry.clone();
+          if let Some(url) = resolved_url
+            .as_deref()
+            .filter(|url| crate::resolve::facebook_photo_target(url))
+          {
+            gallery_entry.url = url.to_owned();
+          }
           crate::runners::gallery::run_gallery_info(
             app,
-            entry,
+            &gallery_entry,
             login,
             gallery_claim(&entry.url, resolved_url.as_deref()),
           )
@@ -776,6 +801,17 @@ mod tests {
 
   // Wrong URL priorities can silently save one video instead of a complete album.
   #[test]
+  fn x_photo_only_ytdlp_error_is_a_gallery_handoff() {
+    let diagnostic = classify_stage(
+      StageId::Ytdlp,
+      "unknown",
+      "ERROR: [twitter] 123: No video could be found in this tweet",
+      NetworkScope::StageLocal,
+    );
+    assert_eq!(diagnostic.outcome, Outcome::KindMismatch);
+  }
+
+  #[test]
   fn matrix_url_shapes_have_stable_routing() {
     for row in include_str!("fixtures/routing.tsv")
       .lines()
@@ -844,21 +880,26 @@ mod tests {
 
   #[tokio::test]
   async fn album_claim_prevents_a_partial_ytdlp_success_from_winning() {
-    let report = coordinate("https://imgur.com/a/VemXvh0", |step, _, _| async move {
-      let ChainStep::Stage(stage) = step else {
-        panic!("unexpected login")
-      };
-      let mut result = StageResult::new(stage, Confidence::High);
-      match stage {
-        StageId::Files => return result.finish(Outcome::NoMatch, false, Instant::now()),
-        StageId::Gallery => result.media = Some(vec![1, 2, 3, 4]),
-        StageId::Ytdlp => result.media = Some(vec![1]),
-        _ => panic!("unexpected fallback"),
-      }
-      result.finish(Outcome::Verified, false, Instant::now())
-    })
-    .await;
-    assert_eq!(report.media, Some(vec![1, 2, 3, 4]));
+    for url in [
+      "https://imgur.com/a/VemXvh0",
+      "https://x.com/AeroGazette/status/1757319514281140602",
+    ] {
+      let report = coordinate(url, |step, _, _| async move {
+        let ChainStep::Stage(stage) = step else {
+          panic!("unexpected login")
+        };
+        let mut result = StageResult::new(stage, Confidence::High);
+        match stage {
+          StageId::Files => return result.finish(Outcome::NoMatch, false, Instant::now()),
+          StageId::Gallery => result.media = Some(vec![1, 2, 3, 4]),
+          StageId::Ytdlp => result.media = Some(vec![1]),
+          _ => panic!("unexpected fallback"),
+        }
+        result.finish(Outcome::Verified, false, Instant::now())
+      })
+      .await;
+      assert_eq!(report.media, Some(vec![1, 2, 3, 4]));
+    }
   }
 
   fn failed(stage: StageId, code: &str, login: bool) -> StageResult<()> {
@@ -1180,6 +1221,41 @@ mod tests {
         None,
       ),
       (
+        "X video-only post falls back from gallery to yt-dlp",
+        "https://x.com/user/status/123",
+        vec![(StageId::Gallery, "noMatch"), (StageId::Ytdlp, "verified")],
+        None,
+        true,
+        None,
+      ),
+      (
+        "X photo-only post stops at gallery",
+        "https://x.com/user/status/123",
+        vec![(StageId::Gallery, "verified")],
+        None,
+        true,
+        None,
+      ),
+      (
+        "verified Facebook album hands off to gallery",
+        "https://www.facebook.com/story.php?story_fbid=123&id=42",
+        vec![
+          (StageId::Ytdlp, "readerPhotosOnly"),
+          (StageId::Gallery, "verified"),
+        ],
+        None,
+        true,
+        None,
+      ),
+      (
+        "verified Reddit text post fails fast without gallery",
+        "https://www.reddit.com/comments/abc123/",
+        vec![(StageId::Ytdlp, "readerNoMedia")],
+        Some("noMediaFound"),
+        false,
+        None,
+      ),
+      (
         "gallery unsupported hands off",
         high,
         vec![
@@ -1213,6 +1289,40 @@ mod tests {
         ],
         None,
         true,
+        None,
+      ),
+      (
+        "Flickr not-a-video tries gallery",
+        "https://www.flickr.com/photos/gsfc/55529808082/",
+        vec![
+          (StageId::Ytdlp, "ERROR: [Flickr] 123: not a video"),
+          (StageId::Gallery, "verified"),
+        ],
+        None,
+        true,
+        None,
+      ),
+      (
+        "Tumblr forbidden tries gallery",
+        "https://example.tumblr.com/post/123/photo",
+        vec![
+          (StageId::Ytdlp, "accessForbidden403"),
+          (StageId::Gallery, "verified"),
+        ],
+        None,
+        true,
+        None,
+      ),
+      (
+        "forbidden survives unsupported gallery",
+        "https://example.tumblr.com/post/123/photo",
+        vec![
+          (StageId::Ytdlp, "accessForbidden403"),
+          (StageId::Gallery, "urlNotSupported"),
+          (StageId::PageScan, "noMatch"),
+        ],
+        Some("accessForbidden403"),
+        false,
         None,
       ),
       (
@@ -1579,6 +1689,19 @@ mod tests {
           return std::future::ready(result);
         }
         match code {
+          "readerPhotosOnly" | "readerNoMedia" => {
+            result.terminal = code == "readerNoMedia";
+            result.record_code(
+              if code == "readerPhotosOnly" {
+                "photosOnly"
+              } else {
+                "noMediaFound"
+              },
+              "",
+              false,
+              Instant::now(),
+            );
+          }
           "verified" => {
             result.media = Some(());
             result = result.finish(Outcome::Verified, false, Instant::now());
@@ -1957,42 +2080,53 @@ mod tests {
 
   #[tokio::test]
   async fn cookie_failure_degrades_once_and_anonymous_success_keeps_browser_memory() {
-    let (_tx, cancel) = watch::channel(true);
-    let mut session = crate::runners::login::test_consented_session();
-    session.begin_fetch(Phase::Login);
-    let mut cookie_stages = 0;
-    let mut anonymous_stages = 0;
-    let result = coordinate_row(
-      "https://youtube.com/watch?v=123",
-      Duration::from_secs(60),
-      RowState {
-        phase: Phase::Login,
-        attempts: Vec::new(),
-        login: Some(session),
-        resolved_url: None,
-      },
-      cancel,
-      |step, login, _| {
-        let ChainStep::Stage(stage) = step else {
-          panic!("degrade asked consent");
-        };
-        let login = login.unwrap();
-        let result = if login.uses_cookies() {
-          cookie_stages += 1;
-          failed(stage, "unableToExtractIdOrInfo", true)
-        } else {
-          anonymous_stages += 1;
-          let mut result = StageResult::new(stage, Confidence::Medium);
-          result.media = Some(());
-          result.finish(Outcome::Verified, false, Instant::now())
-        };
-        std::future::ready(result)
-      },
-    )
-    .await;
-    assert_eq!((cookie_stages, anonymous_stages), (1, 1));
-    assert!(result.media.is_some());
-    assert!(!result.login.unwrap().uses_cookies());
+    for (url, code) in [
+      ("https://youtube.com/watch?v=123", "unableToExtractIdOrInfo"),
+      (
+        "https://www.linkedin.com/posts/person_video-123",
+        "imageSourceUnavailable",
+      ),
+    ] {
+      let (_tx, cancel) = watch::channel(true);
+      let mut session = crate::runners::login::test_consented_session();
+      session.begin_fetch(Phase::Login);
+      let mut cookie_stages = 0;
+      let mut anonymous_stages = 0;
+      let result = coordinate_row(
+        url,
+        Duration::from_secs(60),
+        RowState {
+          phase: Phase::Login,
+          attempts: Vec::new(),
+          login: Some(session),
+          resolved_url: None,
+        },
+        cancel,
+        |step, login, _| {
+          let ChainStep::Stage(stage) = step else {
+            panic!("degrade asked consent");
+          };
+          let login = login.unwrap();
+          let result = if login.uses_cookies() {
+            if stage == StageId::Gallery {
+              return std::future::ready(failed(stage, "imageSourceUnavailable", true));
+            }
+            cookie_stages += 1;
+            failed(stage, code, true)
+          } else {
+            anonymous_stages += 1;
+            let mut result = StageResult::new(stage, Confidence::Medium);
+            result.media = Some(());
+            result.finish(Outcome::Verified, false, Instant::now())
+          };
+          std::future::ready(result)
+        },
+      )
+      .await;
+      assert_eq!((cookie_stages, anonymous_stages), (1, 1));
+      assert!(result.media.is_some());
+      assert!(!result.login.unwrap().uses_cookies());
+    }
   }
 
   #[tokio::test]

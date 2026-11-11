@@ -68,11 +68,13 @@ pub enum Resolution {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
   PhotosOnly,
+  NoMedia,
 }
 impl Reason {
   pub fn code(self) -> &'static str {
     match self {
       Self::PhotosOnly => "photosOnly",
+      Self::NoMedia => "noMediaFound",
     }
   }
 }
@@ -163,6 +165,13 @@ async fn read_facebook<T: http::Transport>(url: &str, transport: &T) -> Verdict 
     return Verdict::Unknown;
   };
   facebook::read(html, &identity, &requested)
+}
+
+/// Only the reader's bounded single-photo route can bypass yt-dlp for gallery-dl.
+pub(crate) fn facebook_photo_target(raw: &str) -> bool {
+  facebook::Identity::parse(raw).is_some_and(|identity| {
+    identity.photo_id.is_some() && identity.url.as_str() == raw && identity.url.path() == "/photo/"
+  })
 }
 
 pub fn unsupported_url(stderr: &str) -> bool {
@@ -276,6 +285,7 @@ pub struct ResolvedInput {
   pub url: String,
   pub source_page: Option<String>,
   original_retried: bool,
+  vimeo_impersonated: bool,
 }
 impl ResolvedInput {
   pub fn new(url: &str) -> Self {
@@ -284,6 +294,7 @@ impl ResolvedInput {
       url: url.into(),
       source_page: None,
       original_retried: false,
+      vimeo_impersonated: false,
     }
   }
   pub fn rewrite(&mut self, url: String) {
@@ -297,6 +308,9 @@ impl ResolvedInput {
     let mut args = Vec::new();
     if let Some(page) = &self.source_page {
       args.extend(["--referer", page.as_str()]);
+    }
+    if self.vimeo_impersonated {
+      args.extend(["--impersonate", "chrome"]);
     }
     args.extend(["--", self.url.as_str()]);
     args
@@ -316,6 +330,27 @@ impl ResolvedInput {
       _ => {}
     }
   }
+  /// Vimeo sometimes rejects yt-dlp's TLS fingerprint. Retry only that response, once.
+  pub(crate) fn retry_vimeo_401(&mut self, stderr: &str) -> bool {
+    if self.vimeo_impersonated
+      || !vimeo::drm_may_be_login(&self.url)
+      || !stderr.to_ascii_lowercase().contains("http error 401")
+    {
+      return false;
+    }
+    self.vimeo_impersonated = true;
+    true
+  }
+
+  pub(crate) fn impersonation_unavailable(&self, stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    self.vimeo_impersonated
+      && lower.contains("impersonat")
+      && ["not available", "unavailable", "not found", "not supported"]
+        .iter()
+        .any(|hint| lower.contains(hint))
+  }
+
   pub fn retry_original(&mut self, stderr: &str) -> bool {
     if self.original_retried
       || self.url == self.original

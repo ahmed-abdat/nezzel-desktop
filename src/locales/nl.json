@@ -1,4 +1,9 @@
 {
+  "toolsUpdate": {
+    "stale": "Nezzel kon de downloadhulpmiddelen al minstens 7 dagen niet bijwerken. Sommige sites werken mogelijk niet",
+    "tryNow": "Nu proberen",
+    "failed": "De downloadhulpmiddelen konden niet worden bijgewerkt. Probeer het later opnieuw"
+  },
   "common": {
     "download": "Downloaden",
     "save": "Opslaan",
@@ -915,6 +920,51 @@
   },
   "errors": {
     "runner": {
+      "networkTimeout": {
+        "shortMessage": "De verbinding is verlopen",
+        "message": "De site heeft niet op tijd geantwoord",
+        "action": "Probeer het zo opnieuw"
+      },
+      "diskFull": {
+        "shortMessage": "De schijf is vol",
+        "message": "Er is niet genoeg ruimte om deze download op te slaan",
+        "action": "Maak ruimte vrij op de downloadschijf en probeer opnieuw"
+      },
+      "outputNameTooLong": {
+        "shortMessage": "De bestandsnaam is te lang",
+        "message": "De bestandsnaam overschrijdt de schijflimiet",
+        "action": "Gebruik een korter naamsjabloon in Instellingen en probeer opnieuw"
+      },
+      "browserCookiesUnreadable": {
+        "shortMessage": "Browseraanmelding niet leesbaar",
+        "message": "Nezzel kon de browseraanmelding niet lezen",
+        "action": "Kies een andere browser in de aanmeldinstellingen"
+      },
+      "browserKeychainDenied": {
+        "shortMessage": "Sleutelhangertoegang geweigerd",
+        "message": "De browseraanmelding kon niet worden ontgrendeld",
+        "action": "Probeer opnieuw en sta sleutelhangertoegang toe wanneer macOS erom vraagt"
+      },
+      "browserSafariAccessDenied": {
+        "shortMessage": "Safari heeft toestemming nodig",
+        "message": "macOS stond geen toegang tot de Safari-aanmelding toe",
+        "action": "Geef Nezzel volledige schijftoegang in Systeeminstellingen en probeer opnieuw"
+      },
+      "browserDatabaseLocked": {
+        "shortMessage": "Browserdatabase is bezet",
+        "message": "De aanmelddatabase van de browser is vergrendeld",
+        "action": "Sluit de browser volledig en probeer opnieuw"
+      },
+      "browserProfileMissing": {
+        "shortMessage": "Browserprofiel niet gevonden",
+        "message": "De browser of het gekozen profiel is niet meer beschikbaar",
+        "action": "Kies een geïnstalleerd browserprofiel in de aanmeldinstellingen"
+      },
+      "accountAccessDenied": {
+        "shortMessage": "Uw account heeft mogelijk geen toegang",
+        "message": "De site weigerde nadat uw sessie was verstuurd. Uw account heeft mogelijk geen toegang tot deze inhoud",
+        "action": "Open het bericht in uw browser om de toegang te controleren"
+      },
       "internal": {
         "shortMessage": "Interne fout",
         "message": "Er is een interne fout opgetreden tijdens het verwerken van dit item."
@@ -1050,6 +1100,11 @@
       "downloadRetryingFragment": {
         "shortMessage": "Fragment opnieuw proberen",
         "message": "Het downloaden van een fragment is mislukt en wordt automatisch opnieuw geprobeerd."
+      },
+      "facebookVideoUnavailable": {
+        "shortMessage": "Facebook heeft deze video niet verstrekt",
+        "message": "Facebook heeft deze video niet aan Nezzel verstrekt. Open de link in een browser en kopieer de link uit de adresbalk, of probeer het later opnieuw.",
+        "action": "Kopieer de link uit de adresbalk van de browser, of probeer het later opnieuw"
       },
       "unknown": {
         "shortMessage": "Onbekende fout",

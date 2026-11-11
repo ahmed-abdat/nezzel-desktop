@@ -5,6 +5,11 @@
  *   pnpm exec playwright test tests/e2e/ui-states.spec.ts --workers=1
  * Output: $NZ_UI_STATES_DIR, default /private/tmp/nezzel-ui-states (macOS) or <tmp>/nezzel-ui-states.
  * NZ_RESPONSIVE=1: only the main screens (RESPONSIVE_STATES), light theme, at the common screen sizes.
+ * Marketing shots: NZ_LOCALES=ar,en,fr NZ_STATES=marketing-list,marketing-sheet,marketing-bar,marketing-card NZ_SIZE=750x650 NZ_DPR=2
+ * NZ_PLATFORM=macos NZ_THUMBS_DIR=<folder with thumb-1.jpg ... thumb-5.jpg> (all optional;
+ * NZ_SIZE replaces the size set of non-window states, NZ_DPR is the device scale factor).
+ * NZ_CHROME=macos draws the three traffic lights of the native overlay title bar over main-window shots (not the
+ * frameless quick bar and card). Unset = shots unchanged.
  */
 import { expect, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
@@ -19,9 +24,10 @@ test.describe.configure({ timeout: 180_000 });
 
 const OUT = process.env.NZ_UI_STATES_DIR
   ?? (process.platform === 'darwin' ? '/private/tmp/nezzel-ui-states' : path.join(os.tmpdir(), 'nezzel-ui-states'));
+const THUMBS = process.env.NZ_THUMBS_DIR;
 const FRAGMENTS = path.join(OUT, '.index');
 
-const LOCALES = ['en', 'ar'] as const;
+const LOCALES = (process.env.NZ_LOCALES ? process.env.NZ_LOCALES.split(',') : ['en', 'ar']) as Locale[];
 const THEMES = ['light', 'dark'] as const;
 /** tauri.conf.json: default 800x900, minimum 750x650. */
 const SIZES = { default: { width: 800, height: 900 }, min: { width: 750, height: 650 } } as const;
@@ -36,14 +42,14 @@ const RESPONSIVE_STATES = new Set(['welcome', 'list-empty', 'row-downloading', '
   'sheet-video', 'media-detail', 'settings-general', 'settings-advanced', 'settings-logins-auto', 'settings-about-idle', 'report-dialog', 'install-failed']);
 const CAPTURE_SIZES = { 'capture-bar': { width: 620, height: 230 }, 'capture-card': { width: 360, height: 160 } } as const;
 
-type Locale = typeof LOCALES[number];
+type Locale = 'en' | 'ar' | 'fr';
 interface GalleryState {
   name: string;
   /** Seed from tests/e2e/utils/uiStateSeeds.ts; defaults to `name` for main-window states. */
   seed?: string | false;
   path?: string;
   window?: keyof typeof CAPTURE_SIZES;
-  mockData?: MockData;
+  mockData?: MockData | ((locale: Locale) => MockData);
   /** Fake time to let pass after seeding (slow hints, countdowns). */
   advanceMs?: number;
   act?: (page: Page, locale: Locale) => Promise<void>;
@@ -64,6 +70,40 @@ const aboutCheck = async (page: Page) => {
 
 const capture = (window: keyof typeof CAPTURE_SIZES, name: string, data: MockData['capture'], extra: Partial<GalleryState> = {}): GalleryState => ({
   name: `${window}-${name}`, window, seed: false, mockData: { capture: data }, ...extra,
+});
+/** First marketing video (same as the marketing-* seeds); its thumbnail comes from NZ_THUMBS_DIR. */
+const MARKETING_TITLES = { en: 'Simple homemade bread recipe', ar: 'وصفة خبز منزلي بسيطة', fr: 'Recette simple de pain maison' };
+/** Formats a read link offers (Rust `CardChoice`): with two or more the card's button reads "Download best" and shows the caret. */
+const MARKETING_CHOICES = [
+  { choice: { kind: 'video' as const, height: 1080 }, size: 120_000_000 },
+  { choice: { kind: 'video' as const, height: 720 }, size: 48_000_000 },
+  { choice: { kind: 'video' as const, height: 360 }, size: 22_000_000 },
+  { choice: { kind: 'audio' as const, kbps: 128 }, size: 4_200_000 },
+];
+const marketingOffer = (locale: Locale) => ({
+  ...VIDEO_OFFER, title: MARKETING_TITLES[locale], read: true, remoteImages: true,
+  details: { ...VIDEO_OFFER.details, thumbnail: 'https://thumbs.nezzel.test/thumb-1.jpg', choices: MARKETING_CHOICES },
+});
+/** The link field is focused on first load (and while the sheet closes); the idle window shows no focus ring or caret. */
+const blurActive = async (page: Page) => {
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+};
+/** Native overlay title bar (tauri.macos.conf.json trafficLightPosition): 12 px lights, centres x = 25/45/65, y = 28 css px
+ *  from the physical top-left, in RTL too. Measured on design/site/real-shots/en-light-list.png (2x). */
+const CHROME = process.env.NZ_CHROME;
+const drawTrafficLights = (page: Page) => page.evaluate(() => {
+  if (document.getElementById('nz-traffic-lights')) return;
+  const box = document.createElement('div');
+  box.id = 'nz-traffic-lights';
+  box.setAttribute('dir', 'ltr');
+  box.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;z-index:2147483647;pointer-events:none';
+  const lights: [string, string][] = [['#ed6a5e', '#d24f43'], ['#f4bf4f', '#d19c36'], ['#62c554', '#4ea343']];
+  lights.forEach(([fill, ring], index) => {
+    const dot = document.createElement('div');
+    dot.style.cssText = `position:absolute;top:22px;left:${19 + index * 20}px;width:12px;height:12px;border-radius:50%;background:${fill};box-shadow:inset 0 0 0 0.5px ${ring}`;
+    box.append(dot);
+  });
+  document.body.append(box);
 });
 const VIDEO_OFFER = {
   url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', site: 'youtube.com', title: 'How to make bread at home — full recipe',
@@ -142,6 +182,7 @@ const ALL_STATES: GalleryState[] = [
     capture(window, 'loading', { offer: LOADING_OFFER }),
     capture(window, 'slow', { offer: LOADING_OFFER }, { advanceMs: 6_000 }),
     capture(window, 'ready-video', { offer: VIDEO_OFFER }),
+    capture(window, 'ready-read', { offer: { ...VIDEO_OFFER, read: true } }),
     capture(window, 'ready-photo', { offer: PHOTO_OFFER }),
     capture(window, 'ready-file', { offer: FILE_OFFER }),
     capture(window, 'ready-single', { offer: SINGLE_OFFER }),
@@ -155,18 +196,26 @@ const ALL_STATES: GalleryState[] = [
       act: async page => page.locator(window === 'capture-bar' ? 'button[type=submit]' : 'section button').last().click(),
     }),
   ]),
+  ...(['capture-bar', 'capture-card'] as const).map((window): GalleryState => ({
+    name: `marketing-${window.slice(8)}`, window, seed: false, mockData: locale => ({ capture: { offer: marketingOffer(locale) } }),
+  })),
+  { name: 'marketing-list', act: blurActive }, { name: 'marketing-sheet' },
   capture('capture-bar', 'unsupported', { offer: {} }, { act: fill('#capture-url', 'just some words') }),
   capture('capture-bar', 'empty', { offer: {} }),
 ];
 
-const STATES = RESPONSIVE ? ALL_STATES.filter(state => RESPONSIVE_STATES.has(state.name)) : ALL_STATES;
+const PICKED = process.env.NZ_STATES?.split(',');
+const PICKED_SIZE = process.env.NZ_SIZE?.match(/^(\d+)x(\d+)$/)?.slice(1).map(Number);
+const STATES = (RESPONSIVE ? ALL_STATES.filter(state => RESPONSIVE_STATES.has(state.name)) : ALL_STATES)
+  .filter(state => !PICKED || PICKED.includes(state.name));
+if (process.env.NZ_DPR) test.use({ deviceScaleFactor: Number(process.env.NZ_DPR) });
 
 interface IndexEntry { state: string; locale: string; theme: string; size: string; file: string }
 
 async function shoot(page: Page, state: GalleryState, locale: Locale, entries: IndexEntry[]) {
   const sizes = RESPONSIVE
     ? RESPONSIVE_SIZES
-    : state.window ? { native: CAPTURE_SIZES[state.window] } : WIDE_STATES.has(state.name) ? { ...SIZES, ...WIDE_SIZES } : SIZES;
+    : state.window ? { native: CAPTURE_SIZES[state.window] } : PICKED_SIZE ? { picked: { width: PICKED_SIZE[0], height: PICKED_SIZE[1] } } : WIDE_STATES.has(state.name) ? { ...SIZES, ...WIDE_SIZES } : SIZES;
   for (const theme of RESPONSIVE ? (['light'] as const) : THEMES) {
     await page.evaluate(t => document.body.setAttribute('data-theme', t), theme);
     for (const [size, viewport] of Object.entries(sizes)) {
@@ -177,6 +226,7 @@ async function shoot(page: Page, state: GalleryState, locale: Locale, entries: I
         const overflow = await page.evaluate(() => document.scrollingElement!.scrollHeight - window.innerHeight);
         expect(overflow, `${state.name} ${size}: page scrolls`).toBeLessThanOrEqual(0);
       }
+      if (CHROME === 'macos' && !state.window) await drawTrafficLights(page);
       const file = `${state.name}-${locale}-${theme}-${size}.png`;
       await page.screenshot({ path: path.join(OUT, file), animations: 'disabled', caret: 'hide' });
       entries.push({ state: state.name, locale, theme, size, file });
@@ -199,10 +249,11 @@ for (const state of STATES) {
     const entries: IndexEntry[] = [];
     // Thumbnails and favicons point at real sites: never leave the machine.
     await page.route(/^https?:\/\/(?!localhost)/, route => route.abort());
+    if (THUMBS) await page.route('https://thumbs.nezzel.test/**', route => route.fulfill({ path: path.join(THUMBS, path.basename(new URL(route.request().url()).pathname)) }));
     if (state.advanceMs) await page.clock.install();
 
     for (const locale of LOCALES) {
-      const data: MockData = { ...state.mockData, settings: { appearance: { language: locale, theme: 'light' } } };
+      const data: MockData = { ...(typeof state.mockData === 'function' ? state.mockData(locale) : state.mockData), ...(process.env.NZ_PLATFORM ? { platform: process.env.NZ_PLATFORM as MockData['platform'] } : {}), settings: { appearance: { language: locale, theme: 'light' } } };
       await page.addInitScript((d) => {
         window.E2E = d;
         localStorage.clear(); // each load starts fresh (cleared rows, UI prefs persist otherwise)
