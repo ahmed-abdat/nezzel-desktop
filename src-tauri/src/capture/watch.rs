@@ -24,24 +24,66 @@ pub(super) async fn data_control(app: &AppHandle) -> bool {
     .await
 }
 
+/// Only use the optional helper when the built-in data-control reader is unavailable.
+pub(super) async fn wl_paste(app: &AppHandle) -> &clipboard::WlPaste {
+  app
+    .state::<CaptureState>()
+    .inner()
+    .wl_paste
+    .get_or_init(|| async {
+      if crate::platform::current_session() == crate::platform::Session::Wayland
+        && !data_control(app).await
+      {
+        clipboard::WlPaste::probe().await
+      } else {
+        clipboard::WlPaste::default()
+      }
+    })
+    .await
+}
+
 pub(super) async fn watch_clipboard(app: AppHandle) {
   let session = crate::platform::current_session();
   let data_control = data_control(&app).await;
-  let order = clipboard::read_order(session, data_control);
+  let tool = wl_paste(&app).await;
+  let fallback = tool.background;
+  let order = if fallback {
+    &[
+      clipboard::Reader::WlPaste,
+      clipboard::Reader::Gtk,
+      clipboard::Reader::Plugin,
+    ][..]
+  } else {
+    clipboard::read_order(session, data_control)
+  };
+  // Observe before UI readiness or feature switches: stale launch text never becomes a new copy.
+  let input = app.state::<SharedConfig>().load().input.clone();
+  let mut baselined = if input.watch_clipboard || input.auto_fill_clipboard {
+    let text = startup_baseline(|| async { clipboard::read_text(&app, order).await.0 }).await;
+    app
+      .state::<CaptureState>()
+      .policy
+      .lock()
+      .unwrap()
+      .baseline(&text);
+    true
+  } else {
+    false
+  };
   let desktop = crate::platform::current_desktop_blocking().await;
   tracing::info!(
     session = ?session,
     data_control,
-    background = clipboard::background_clipboard(session, data_control),
+    background = clipboard::background_clipboard(session, data_control) || tool.background,
     readers = ?order,
     desktop = desktop.as_str(),
     "Clipboard watch started"
   );
-  let background = clipboard::background_clipboard(session, data_control);
+  let background = clipboard::background_clipboard(session, data_control) || tool.background;
   let mut diag = clipboard::Diagnostics::default();
   let mut last_prefill = String::new();
   let mut failures = ShowFailures::default();
-  let mut tick = tokio::time::interval(Duration::from_millis(500));
+  let mut tick = tokio::time::interval(Duration::from_millis(if fallback { 1000 } else { 500 }));
   // A slow read (bounded by READ_LIMIT) skips the ticks it overran instead of firing them in a burst.
   tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
   loop {
@@ -64,29 +106,53 @@ pub(super) async fn watch_clipboard(app: AppHandle) {
     let enabled = cfg.input.watch_clipboard || cfg.input.auto_fill_clipboard;
     diag.note("enabled", if enabled { "true" } else { "false" });
     if !enabled {
+      // Turning capture on later must baseline what was copied while it was off.
+      baselined = false;
       continue;
     }
     // Clipboard failures are expected (empty, non-text, locked by another process).
-    let (read, reader) = clipboard::read_text(&app, order).await;
+    // GTK/Xwayland can return stale text without focus. In the background only the helper is safe.
+    let focused = state.main_is_focused.load(Ordering::Relaxed);
+    let readers = if fallback && !focused {
+      &[clipboard::Reader::WlPaste][..]
+    } else {
+      order
+    };
+    let (read, reader) = clipboard::read_text(&app, readers).await;
     diag.note(
       "read",
       match (&read, reader) {
         (Ok(_), Some(clipboard::Reader::Gtk)) => "ok-gtk",
+        (Ok(_), Some(clipboard::Reader::WlPaste)) => "ok-wl-paste",
         (Ok(_), _) => "ok-plugin",
         (Err(e), _) => e.kind(),
       },
     );
-    if !background && !state.main_is_focused.load(Ordering::Relaxed) {
+    if session == crate::platform::Session::Wayland
+      && !data_control
+      && reader != Some(clipboard::Reader::WlPaste)
+      && !state.main_is_focused.load(Ordering::Relaxed)
+    {
       continue;
     }
     let (candidate, prefill) = match read {
       Ok(text) => {
         // Lock after reading: capture_write_clipboard records its own write under this lock first.
         let mut policy = state.policy.lock().unwrap();
+        if !baselined {
+          policy.baseline(&text);
+          baselined = true;
+          continue;
+        }
         let prefill = supported_url(&text).map(|(url, _)| url).unwrap_or_default();
         let decision = policy.decide(&text, state.started.elapsed());
         diag.note("policy", decision.kind());
         (decision.offer().map(|candidate| (candidate, text)), prefill)
+      }
+      Err(clipboard::ReadError::Empty) => {
+        state.policy.lock().unwrap().baseline("");
+        baselined = true;
+        (None, String::new())
       }
       Err(_) => (None, String::new()),
     };
@@ -145,6 +211,26 @@ pub(super) async fn watch_clipboard(app: AppHandle) {
   }
 }
 
+/// Briefly retry a locked launch clipboard. Exhaustion baselines empty text now, never a later copy.
+async fn startup_baseline<F, Fut>(mut read: F) -> String
+where
+  F: FnMut() -> Fut,
+  Fut: std::future::Future<Output = Result<String, clipboard::ReadError>>,
+{
+  let gap = Duration::from_millis(200);
+  for attempt in 0..3 {
+    match tokio::time::timeout(gap, read()).await {
+      Ok(Ok(text)) => return text,
+      Ok(Err(clipboard::ReadError::Empty)) => return String::new(),
+      _ => {}
+    }
+    if attempt < 2 {
+      tokio::time::sleep(gap).await;
+    }
+  }
+  String::new()
+}
+
 /// A copied link whose card failed to show is retried a few times, spaced out, instead of every tick.
 #[derive(Default)]
 struct ShowFailures {
@@ -189,7 +275,15 @@ impl ShowFailures {
 /// Raw clipboard text through the session's readers. Async on purpose: a sync command runs on the main
 /// thread, where arboard can deadlock on Linux and GTK could not answer its own selection.
 pub(super) async fn read_current(app: &AppHandle) -> Result<String, clipboard::ReadError> {
-  let order = clipboard::read_order(crate::platform::current_session(), data_control(app).await);
+  let order = if wl_paste(app).await.background {
+    &[
+      clipboard::Reader::WlPaste,
+      clipboard::Reader::Gtk,
+      clipboard::Reader::Plugin,
+    ][..]
+  } else {
+    clipboard::read_order(crate::platform::current_session(), data_control(app).await)
+  };
   clipboard::read_text(app, order).await.0
 }
 
@@ -271,8 +365,51 @@ fn same_site(a: &str, b: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-  use super::ShowFailures;
+  use super::{startup_baseline, ShowFailures};
+  use crate::capture::{
+    clipboard::ReadError,
+    policy::{CapturePolicy, Decision},
+  };
   use std::time::{Duration, Instant};
+
+  #[tokio::test(start_paused = true)]
+  async fn launch_baseline_retries_transient_failures_without_swallowing_later_copies() {
+    let old = "https://youtu.be/old";
+    let new = "https://youtu.be/new";
+    for reads in [
+      vec![Err(ReadError::Occupied), Ok(old.to_owned())],
+      vec![
+        Err(ReadError::Occupied),
+        Err(ReadError::Other),
+        Err(ReadError::Timeout),
+      ],
+      vec![Err(ReadError::Empty)],
+    ] {
+      let mut reads = std::collections::VecDeque::from(reads);
+      let baseline = startup_baseline(|| std::future::ready(reads.pop_front().unwrap())).await;
+      assert!(reads.is_empty());
+      let mut policy = CapturePolicy::default();
+      policy.baseline(&baseline);
+      if !baseline.is_empty() {
+        assert_eq!(policy.decide(old, Duration::ZERO), Decision::Unchanged);
+      }
+      assert!(policy.decide(new, Duration::ZERO).offer().is_some());
+    }
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn hung_launch_baseline_has_a_bounded_retry_window() {
+    let mut attempts = 0;
+    let start = tokio::time::Instant::now();
+    let baseline = startup_baseline(|| {
+      attempts += 1;
+      async { std::future::pending::<Result<String, ReadError>>().await }
+    })
+    .await;
+    assert!(baseline.is_empty());
+    assert_eq!(attempts, 3);
+    assert_eq!(start.elapsed(), Duration::from_secs(1));
+  }
 
   #[test]
   fn failed_card_retries_spaced_out_and_gives_up() {

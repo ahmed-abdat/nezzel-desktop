@@ -1209,11 +1209,6 @@
         "shortMessage": "Reintentando fragmento",
         "message": "La descarga de un fragmento falló y se reintentará automáticamente."
       },
-      "facebookVideoUnavailable": {
-        "shortMessage": "Facebook no proporcionó este vídeo",
-        "message": "Facebook no proporcionó este vídeo a Nezzel. Abra el enlace en un navegador y copie el enlace de la barra de direcciones, o inténtelo de nuevo más tarde.",
-        "action": "Copie el enlace de la barra de direcciones del navegador o inténtelo más tarde"
-      },
       "unknown": {
         "shortMessage": "Error desconocido",
         "message": "Ocurrió un error desconocido al procesar este elemento."

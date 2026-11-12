@@ -6,7 +6,7 @@
     "showOrHide": "إظهار/إخفاء النافذة",
     "addToQueue": "إضافة من الحافظة",
     "addAndDownload": "إضافة وتنزيل من الحافظة",
-    "downloadQueue": "تنزيل قائمة الانتظار",
+    "downloadQueue": "تنزيل العناصر في قائمة الانتظار",
     "shortcuts": {
       "ctrlShiftV": "Ctrl + Shift + V",
       "ctrlShiftD": "Ctrl + Shift + D",
@@ -55,6 +55,7 @@
   },
   "files": {
     "errors": {
+      "notFound404": "لم يُعثر على هذا الملف. قد يكون خاصا أو محذوفا. تحقق من الرابط مع مالكه.",
       "fileNotPublic": "هذا الملف غير متاح للعامة. اطلب من مالكه إتاحته لكل من لديه الرابط.",
       "fileRateLimited": "يحد هذا الموقع من التنزيلات حاليا. حاول مرة أخرى لاحقا.",
       "fileCancelled": "تم إيقاف التنزيل مؤقتا.",

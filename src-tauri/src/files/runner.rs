@@ -38,11 +38,28 @@ struct Cached {
 static PROBES: LazyLock<Mutex<HashMap<String, Cached>>> =
   LazyLock::new(|| Mutex::new(HashMap::new()));
 #[derive(Clone)]
-struct Partial {
+pub(super) struct Partial {
   engine: Engine,
   directory: PathBuf,
   identity: String,
   owner: String,
+}
+impl Partial {
+  pub(super) fn new(engine: Engine, directory: PathBuf, url: &str, owner: &str) -> Self {
+    let identity = engine.request_identity(url);
+    Self {
+      engine,
+      directory,
+      identity,
+      owner: state::identity(owner),
+    }
+  }
+  pub(super) async fn discard(self) -> Result<()> {
+    self
+      .engine
+      .discard(self.directory, self.identity, self.owner)
+      .await
+  }
 }
 static PARTIALS: LazyLock<Mutex<HashMap<String, Vec<Partial>>>> =
   LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -54,11 +71,7 @@ pub(crate) fn discard_group(group: &str) {
     .unwrap_or_default();
   for partial in partials {
     tauri::async_runtime::spawn(async move {
-      if let Err(error) = partial
-        .engine
-        .discard(partial.directory, partial.identity, partial.owner)
-        .await
-      {
+      if let Err(error) = partial.discard().await {
         tracing::warn!(code = error.code(), "File partial cleanup failed");
       }
     });
@@ -130,7 +143,7 @@ async fn info_impl(
   entry: &FetchEntry,
   unsupported: bool,
 ) -> Option<Result<ParsedMedia>> {
-  let shared = super::hosts::is_share(&entry.url);
+  let shared = super::hosts::plan(&entry.url, super::hosts::Export::Pdf).is_some();
   if !(shared
     || probe::should_probe_metadata(&entry.url, entry.total, entry.format.is_some())
     || unsupported && entry.total <= 1 && entry.format.is_none() && probe::should_probe(&entry.url))
@@ -161,17 +174,12 @@ async fn info_impl(
     }
   }
   let cancel = subscribe_group(&entry.group_id);
-  let mut probe = match probe_metadata_impl(
-    &Engine::new().ok()?,
-    &entry.url,
-    cancel.clone(),
-    unsupported,
-  )
-  .await?
-  {
-    Ok(p) => p,
-    Err(error) => return Some(Err(error)),
-  };
+  let engine = Engine::new().ok()?;
+  let mut probe =
+    match probe_metadata_impl(&engine, &entry.url, cancel.clone(), unsupported).await? {
+      Ok(p) => p,
+      Err(error) => return Some(Err(error)),
+    };
   if !*cancel.borrow() {
     return None;
   }
@@ -182,7 +190,7 @@ async fn info_impl(
     entry.id.clone(),
     Cached {
       group: entry.group_id.clone(),
-      identity: state::identity(&entry.url),
+      identity: engine.request_identity(&entry.url),
       created,
       probe,
     },
@@ -212,8 +220,11 @@ async fn probe_metadata_impl(
   cancel: tokio::sync::watch::Receiver<bool>,
   unsupported: bool,
 ) -> Option<Result<Probe>> {
-  if super::hosts::is_share(url) {
-    return Some(engine.probe(url, cancel).await);
+  if super::hosts::plan(url, super::hosts::Export::Pdf).is_some() {
+    return match engine.probe(url, cancel).await {
+      Err(Error::NotFile | Error::Network) if super::hosts::archive_details(url) => None,
+      result => Some(result),
+    };
   }
   match tokio::time::timeout(Duration::from_secs(5), engine.probe(url, cancel)).await {
     Ok(Ok(mut probe)) if probe.kind == Kind::File || unsupported && probe.kind == Kind::Unknown => {
@@ -275,11 +286,26 @@ async fn attempt(
     return Err(Error::Proxy);
   }
   let dir = root(app, entry)?;
+  // Keep installed/portable resume keys stable; only the developer host isolates state.
+  #[cfg(feature = "link-matrix")]
+  let state_directory = app
+    .state::<crate::paths::PathsManager>()
+    .app_dir()
+    .join("file-engine");
+  #[cfg(not(feature = "link-matrix"))]
+  let state_directory = app
+    .path()
+    .app_data_dir()
+    .map_err(|_| Error::Io)?
+    .join("file-engine");
+  let engine = Engine::new()?
+    .for_file_row()
+    .with_state_directory(state_directory);
   let probe = PROBES
     .lock()
     .map_err(|_| Error::State)?
     .remove(&entry.id)
-    .filter(|p| p.created.elapsed() < TTL && p.identity == state::identity(&entry.url))
+    .filter(|p| p.created.elapsed() < TTL && p.identity == engine.request_identity(&entry.url))
     .map(|p| p.probe);
   crate::events::emit(
     app,
@@ -290,13 +316,6 @@ async fn attempt(
       stage: ProgressStage::Downloading,
     },
   );
-  let engine = Engine::new()?.for_file_row().with_state_directory(
-    app
-      .path()
-      .app_data_dir()
-      .map_err(|_| Error::Io)?
-      .join("file-engine"),
-  );
   {
     // Registration and the cancellation recheck share the cleanup registry's mutex:
     // remove cannot miss a transfer that was between its first check and registration.
@@ -304,12 +323,7 @@ async fn attempt(
     if !*cancel.borrow() {
       return Err(Error::Cancelled);
     }
-    let partial = Partial {
-      engine: engine.clone(),
-      directory: dir.clone(),
-      identity: state::identity(&entry.url),
-      owner: state::identity(&entry.id),
-    };
+    let partial = Partial::new(engine.clone(), dir.clone(), &entry.url, &entry.id);
     let group = partials.entry(entry.group_id.clone()).or_default();
     group.retain(|p| {
       p.identity != partial.identity || p.owner != partial.owner || p.directory != partial.directory
@@ -359,7 +373,7 @@ async fn attempt(
   }
   if let Ok(mut partials) = PARTIALS.lock() {
     if let Some(group) = partials.get_mut(&entry.group_id) {
-      let identity = state::identity(&entry.url);
+      let identity = engine.request_identity(&entry.url);
       let owner = state::identity(&entry.id);
       group.retain(|p| p.identity != identity || p.owner != owner || p.directory != dir);
       if group.is_empty() {
@@ -382,6 +396,7 @@ async fn attempt(
       destination: MediaDestinationPath {
         confidence: 100,
         path: path.to_string_lossy().into_owned(),
+        already_downloaded: false,
       },
     },
   );

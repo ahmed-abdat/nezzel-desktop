@@ -1108,11 +1108,6 @@
         "shortMessage": "Prøver igjen med fragment",
         "message": "Nedlasting av et fragment mislyktes og vil bli forsøkt på nytt automatisk."
       },
-      "facebookVideoUnavailable": {
-        "shortMessage": "Facebook ga ikke tilgang til denne videoen",
-        "message": "Facebook ga ikke Nezzel tilgang til denne videoen. Åpne lenken i en nettleser og kopier lenken fra adressefeltet, eller prøv igjen senere.",
-        "action": "Kopier lenken fra nettleserens adressefelt, eller prøv igjen senere"
-      },
       "unknown": {
         "shortMessage": "Ukjent feil",
         "message": "En ukjent feil oppstod under behandlingen av dette elementet."

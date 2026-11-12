@@ -7,6 +7,7 @@
         <span>{{ card.request.changeOnly ? t('downloads.login.changeProfile') : siteLabel ? t('downloads.login.needs', { site: siteLabel }) : t('downloads.login.needsGeneric') }}</span>
       </p>
       <p class="mt-0.5 ps-5 text-[12px] leading-relaxed text-pretty">{{ t('downloads.login.privacy') }}</p>
+      <p v-if="cookieRemedy" class="mt-1 ps-5 text-[12px] leading-relaxed text-pretty">{{ cookieRemedy }}</p>
       <p v-if="isMac" class="ps-5 text-[12px] leading-relaxed text-pretty">{{ t('downloads.login.keychain') }}</p>
       <p v-if="card.request.reason === LOGIN_APP_BOUND_REASON" class="mt-1 ps-5 text-[12px]">{{ appBoundMessage }}</p>
       <div class="mt-2 flex flex-wrap items-center gap-2 ps-5">
@@ -69,7 +70,7 @@ import { useSettingsStore } from '../../stores/settings';
 import { usePlatform } from '../../composables/usePlatform';
 import { COOKIE_BROWSER_AUTOMATIC, COOKIE_BROWSER_NEVER, LOGIN_APP_BOUND_REASON } from '@/generated/contract';
 
-const props = defineProps<{ card: LoginCard; site?: string; details?: string }>();
+const props = defineProps<{ card: LoginCard; site?: string; details?: string; diagnosticCode?: string }>();
 const emit = defineEmits<{ retry: [] }>();
 
 const { t, locale } = useI18n();
@@ -109,10 +110,19 @@ const appBoundMessage = computed(() => {
     : t('downloads.login.windowsAppBound');
 });
 
+// Local cookie access failed before the site could receive a login.
+const cookieRemedy = computed(() => {
+  const code = props.diagnosticCode;
+  if (!code || !['browserCookiesUnreadable', 'browserKeychainDenied', 'browserDpapiFailed', 'browserAppBound', 'browserSafariAccessDenied', 'browserDatabaseLocked', 'browserProfileMissing'].includes(code)) return '';
+  return t('errors.rowLine', { what: t(`errors.runner.${code}.shortMessage`), action: t(`errors.runner.${code}.action`) });
+});
+
 const failedMessage = computed(() => {
   if (props.card.kind !== 'failed') return '';
   const site = siteLabel.value ?? t('downloads.login.thisSite');
   const { reason, browser: triedBrowser } = props.card.failure;
+  if (cookieRemedy.value && (reason === 'exhausted' || reason === 'refused')) return cookieRemedy.value;
+  if (props.card.failure.hint === 'browserLoginRemedy') return t('downloads.login.embeddedRemedy');
   if (props.card.failure.hint === LOGIN_APP_BOUND_REASON) return appBoundMessage.value;
   if (reason === 'exhausted') {
     return triedBrowser

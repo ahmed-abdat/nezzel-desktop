@@ -28,6 +28,8 @@ const allowedCommands: Set<string> = new Set([
     'media_login_accept',
     'media_login_choices',
     'media_login_dismiss',
+    'library_record_failure',
+    'media_login_notice',
     'engine_availability',
     'media_fatal',
     'media_diagnostic',

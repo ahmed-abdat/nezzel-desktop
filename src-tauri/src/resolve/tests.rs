@@ -350,6 +350,114 @@ fn reply(status: u16, location: Option<&str>, body: &[u8]) -> http::Response {
   }
 }
 
+struct HeadTransport(FakeTransport);
+impl http::Transport for HeadTransport {
+  async fn admit_media(&self, url: &reqwest::Url) -> Result<(), http::FetchError> {
+    assert!(
+      url
+        .host_str()
+        .is_some_and(|host| host == "tiktok.com" || host.ends_with(".tiktok.com")),
+      "external hop reached DNS admission"
+    );
+    Ok(())
+  }
+  async fn head(&self, url: &reqwest::Url) -> Result<http::Response, http::FetchError> {
+    http::Transport::get(&self.0, url, 0).await
+  }
+  async fn get(
+    &self,
+    _url: &reqwest::Url,
+    _cap: usize,
+  ) -> Result<http::Response, http::FetchError> {
+    panic!("a conclusive HEAD must not fetch the page body")
+  }
+}
+
+#[tokio::test]
+async fn url_pattern_rewrites_reach_canonical_posts() {
+  for row in include_str!("../extract/fixtures/url-patterns.tsv").lines() {
+    let fields: Vec<_> = row.split('\t').collect();
+    let [site, shape, input, _, _, target, redirect @ ..] = fields.as_slice() else {
+      continue;
+    };
+    if row.starts_with('#') {
+      continue;
+    }
+    let responses = if *site == "tiktok" {
+      let redirected = redirect.first().unwrap_or(target);
+      vec![
+        (*input, reply(302, Some(redirected), b"")),
+        (*redirected, reply(200, None, b"")),
+      ]
+    } else {
+      vec![]
+    };
+    let fake = FakeTransport(std::sync::Mutex::new(responses.into()));
+    let verdict = if *shape == "t-redirect" {
+      read_site(input, &HeadTransport(fake)).await
+    } else {
+      // FakeTransport refuses HEAD, exercising the bounded GET fallback as well.
+      read_site(input, &fake).await
+    };
+    match verdict.resolution(input) {
+      Resolution::Passthrough(url) => assert_eq!(url, *target, "{input}"),
+      Resolution::Unsupported { reason } => assert_eq!(reason.code(), *target, "{input}"),
+      result => panic!("unexpected resolution for {input}: {result:?}"),
+    }
+  }
+  for input in [
+    "https://player.bilibili.com/player.html?aid=abc",
+    "https://player.bilibili.com/player.html?aid=1&aid=2",
+    "https://player.bilibili.com/player.html?bvid=not-a-bv-id",
+    "https://player.bilibili.com.evil.test/player.html?aid=1",
+    "https://vt.tiktok.com.evil.test/abc/",
+    "https://vt.tiktok.com/abc/extra",
+    "https://user@vt.tiktok.com/abc/",
+    "https://tiktok.com/t/",
+  ] {
+    let fake = FakeTransport(std::sync::Mutex::new(Default::default()));
+    assert_eq!(
+      read_site(input, &fake).await.resolution(input),
+      Resolution::Passthrough(input.into())
+    );
+  }
+}
+
+#[tokio::test]
+async fn tiktok_redirects_reject_external_hosts_and_non_post_targets() {
+  let short = "https://vt.tiktok.com/abc/";
+  for target in [
+    "https://tiktok.com.evil.test/@nasa/video/123",
+    "https://example.com/@nasa/video/123",
+    "https://www.tiktok.com/login",
+    "http://www.tiktok.com/@nasa/video/123",
+    short,
+  ] {
+    let mut responses = vec![(short, reply(302, Some(target), b""))];
+    if target == "https://www.tiktok.com/login" {
+      responses.push((target, reply(200, None, b"")));
+    }
+    // Refuse an external hop before requesting it.
+    let fake = FakeTransport(std::sync::Mutex::new(responses.into()));
+    assert_eq!(
+      read_site(short, &fake).await.resolution(short),
+      Resolution::Passthrough(short.into()),
+      "{target}"
+    );
+  }
+  let head = HeadTransport(FakeTransport(std::sync::Mutex::new(
+    vec![(
+      short,
+      reply(302, Some("https://example.com/@nasa/video/123"), b""),
+    )]
+    .into(),
+  )));
+  assert_eq!(
+    read_site(short, &head).await.resolution(short),
+    Resolution::Passthrough(short.into()),
+  );
+}
+
 // These exercise the real redirect state machine, without any network calls.
 #[tokio::test]
 async fn redirects_resolve_shortlinks_but_refuse_loops_downgrades_and_extra_hops() {
@@ -806,6 +914,21 @@ async fn snapchat_bare_spotlight_uses_only_canonical_for_the_same_id() {
   }
 }
 
+fn assert_threads_video_metadata(result: Resolution, source: &str) {
+  let Resolution::Attachments { metadata } = result else {
+    panic!("post metadata expected")
+  };
+  let media: crate::models::ParsedSingleVideo = serde_json::from_str(&metadata).unwrap();
+  assert_eq!(media.url.as_deref(), Some(source));
+  assert_eq!(media.title.as_deref(), Some("Synthetic caption"));
+  assert_eq!(media.uploader.as_deref(), Some("synthetic_user"));
+  assert!(media.thumbnail.is_some());
+  assert_eq!(
+    media.attachments[0].url,
+    "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/synthetic_large.mp4"
+  );
+}
+
 // A Threads video must resolve through the same site dispatch used by metadata/download.
 #[tokio::test]
 async fn threads_video_uses_the_largest_progressive_variant() {
@@ -817,16 +940,15 @@ async fn threads_video_uses_the_largest_progressive_variant() {
     )]
     .into(),
   ));
-  assert_eq!(
-    read_site(
-      "https://www.threads.net/@synthetic_user/post/SynthVid0001",
-      &transport
-    )
-    .await
-    .resolution("original"),
-    Resolution::Passthrough(
-      "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/synthetic_large.mp4".into()
-    )
+  let result = read_site(
+    "https://www.threads.net/@synthetic_user/post/SynthVid0001",
+    &transport,
+  )
+  .await
+  .resolution("original");
+  assert_threads_video_metadata(
+    result,
+    "https://www.threads.com/@synthetic_user/post/SynthVid0001",
   );
 }
 
@@ -872,7 +994,7 @@ fn threads_reads_the_bound_posts_linked_inline_video() {
   let page = include_str!("../../tests/fixtures/threads/linked-inline-video.html");
   assert_eq!(
     threads::parse(page, "DXVbTUPl-Qy")
-      .and_then(|p| p.video)
+      .and_then(|p| p.attachments.first().map(|a| a.url.clone()))
       .as_deref(),
     Some("https://scontent.cdninstagram.com/v/inline.mp4")
   );
@@ -983,6 +1105,33 @@ async fn facebook_photo_handoff_uses_single_photo_ids() {
   }
 }
 
+#[test]
+fn facebook_photo_metadata_includes_the_caption_before_any_download() {
+  let page = fixture("photo-post.html").replace(
+    "<head>",
+    "<head><meta property='og:description' content='Photo caption&#10;More details'>",
+  );
+  let Resolution::Attachments { metadata } = facebook_read(&page, POST).unwrap() else {
+    panic!("photos expected")
+  };
+  let media: crate::models::ParsedSingleVideo = serde_json::from_str(&metadata).unwrap();
+  assert_eq!(media.title.as_deref(), Some("Photo caption"));
+  for generic in [
+    "www.facebook.com",
+    "https://www.facebook.com/photo/?fbid=123",
+  ] {
+    let page = fixture("photo-post.html").replace(
+      "<head>",
+      &format!("<head><meta property='og:description' content='{generic}'>"),
+    );
+    let Resolution::Attachments { metadata } = facebook_read(&page, POST).unwrap() else {
+      panic!("photos expected")
+    };
+    let media: crate::models::ParsedSingleVideo = serde_json::from_str(&metadata).unwrap();
+    assert!(media.title.is_none());
+  }
+}
+
 // These recorded post roots are photos; crawler og:type=video.other must not override them.
 #[test]
 fn facebook_bound_photos_win_over_misleading_crawler_video_metadata() {
@@ -1066,6 +1215,18 @@ async fn threads_images_and_mixed_carousels_reuse_the_attachment_model() {
       "mixed",
       4,
     ),
+    (
+      include_str!("../../tests/fixtures/threads/carousel-videos.html"),
+      "SynthCarr01",
+      "carousel",
+      2,
+    ),
+    (
+      include_str!("../../tests/fixtures/threads/linked-inline-mixed.html"),
+      "SynthCarr01",
+      "mixed",
+      4,
+    ),
   ] {
     let requested: &'static str =
       Box::leak(format!("https://www.threads.com/@synthetic_user/post/{code}").into_boxed_str());
@@ -1085,12 +1246,58 @@ async fn threads_images_and_mixed_carousels_reuse_the_attachment_model() {
     assert_eq!(media.uploader.as_deref(), Some("synthetic_user"));
     assert_eq!(
       value["attachments"][0]["url"],
-      if kind == "image" {
+      if fixture == include_str!("../../tests/fixtures/threads/carousel-videos.html") {
+        "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/clip_large.mp4"
+      } else if kind == "image" {
         "https://scontent.cdninstagram.com/v/t51/synthetic_full.jpg?oe=6F000000"
       } else {
         "https://scontent.cdninstagram.com/v/t51/slide_a.jpg?oe=6F000000"
       }
     );
+    // The default download manifest retains every attachment, in source order.
+    // clip_later's equal-size variants intentionally retain the first candidate.
+    let ids: Vec<_> = media.attachments.iter().map(|a| a.id.clone()).collect();
+    let expected_urls: Vec<&str> = if kind == "mixed" {
+      vec![
+        "https://scontent.cdninstagram.com/v/t51/slide_a.jpg?oe=6F000000",
+        "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/clip_large.mp4",
+        "https://scontent.cdninstagram.com/v/t51/slide_b.jpg?oe=6F000000",
+        "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/clip_later_small.mp4",
+      ]
+    } else if fixture == include_str!("../../tests/fixtures/threads/carousel-videos.html") {
+      vec![
+        "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/clip_large.mp4",
+        "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/clip_later_small.mp4",
+      ]
+    } else if kind == "image" {
+      vec!["https://scontent.cdninstagram.com/v/t51/synthetic_full.jpg?oe=6F000000"]
+    } else {
+      vec![
+        "https://scontent.cdninstagram.com/v/t51/slide_a.jpg?oe=6F000000",
+        "https://scontent.cdninstagram.com/v/t51/slide_b.jpg?oe=6F000000",
+      ]
+    };
+    let post = crate::parsers::gallery::GalleryPost::from_attachments(
+      media.attachments.clone(),
+      requested,
+      media.title.clone(),
+      media.uploader.clone(),
+    )
+    .unwrap();
+    for selection in [None, Some(ids.as_slice())] {
+      let selected = post.selected(selection).unwrap();
+      assert_eq!(
+        selected
+          .iter()
+          .map(|a| a.item.url.as_str())
+          .collect::<Vec<_>>(),
+        expected_urls
+      );
+      assert_eq!(
+        selected.iter().map(|a| &a.item.id).collect::<Vec<_>>(),
+        ids.iter().collect::<Vec<_>>()
+      );
+    }
     if kind == "mixed" {
       assert_eq!(value["attachments"][1]["kind"], "video");
       assert_eq!(
@@ -1099,6 +1306,173 @@ async fn threads_images_and_mixed_carousels_reuse_the_attachment_model() {
       );
       assert_eq!(value["attachments"][2]["kind"], "image");
       assert_eq!(value["attachments"][3]["kind"], "video");
+    }
+  }
+}
+
+// Reduced anonymous TargetQuery capture, 2026-11-12; see fixtures/threads/RECORDED.md.
+#[tokio::test]
+async fn threads_real_screenrant_carousel_preserves_all_attachments_in_order() {
+  let url = "https://www.threads.com/@screenrant/post/DeacP2wjhPx";
+  let fixture = include_bytes!("../../tests/fixtures/threads/screenrant-carousel-real.html");
+  let transport = FakeTransport(std::sync::Mutex::new(
+    [(url, reply(200, None, fixture))].into(),
+  ));
+  let Resolution::Attachments { metadata } = read_site(url, &transport).await.resolution(url)
+  else {
+    panic!("expected the real post's complete carousel");
+  };
+  let media: crate::models::parsed::ParsedSingleVideo = serde_json::from_str(&metadata).unwrap();
+  let expected = [
+    (
+      "4006638824515843566",
+      "847048899_17992849068105609_1169999574823443031_n.jpg",
+    ),
+    (
+      "4006638824348119456",
+      "840951618_17992849095105609_5023453215604800428_n.jpg",
+    ),
+    (
+      "4006638823609902904",
+      "840346708_17992849086105609_2489929366399749860_n.jpg",
+    ),
+    (
+      "4006638826076174473",
+      "838514713_17992849077105609_3171392912334315918_n.jpg",
+    ),
+    (
+      "4006638825455411559",
+      "848043304_17992849161105609_179098604309553260_n.jpg",
+    ),
+    (
+      "4006638824457157759",
+      "839913699_17992849113105609_8577699891069811317_n.jpg",
+    ),
+    (
+      "4006638824088072367",
+      "838804312_17992849104105609_2126486864300907763_n.jpg",
+    ),
+  ];
+  assert_eq!(media.id, "DeacP2wjhPx");
+  assert!(matches!(
+    media.media_kind,
+    Some(crate::models::parsed::MediaKind::Carousel)
+  ));
+  assert_eq!(media.attachments.len(), expected.len());
+  for (item, (id, filename)) in media.attachments.iter().zip(expected) {
+    assert_eq!(item.id, id);
+    assert!(matches!(
+      item.kind,
+      crate::models::parsed::AttachmentKind::Image
+    ));
+    let source = reqwest::Url::parse(&item.url).unwrap();
+    assert_eq!(source.path().rsplit('/').next(), Some(filename));
+    assert!(source.query().is_none());
+    assert_eq!((item.width, item.height), (Some(1080), Some(1350)));
+  }
+  let post = crate::parsers::gallery::GalleryPost::from_attachments(
+    media.attachments,
+    url,
+    media.title,
+    media.uploader,
+  )
+  .unwrap();
+  assert_eq!(
+    post
+      .selected(None)
+      .unwrap()
+      .iter()
+      .map(|a| a.item.id.as_str())
+      .collect::<Vec<_>>(),
+    expected.map(|(id, _)| id)
+  );
+}
+
+#[tokio::test]
+async fn threads_carousels_refuse_partial_attachment_sets() {
+  let url = "https://www.threads.com/@synthetic_user/post/SynthCarr01";
+  for fixture in [
+    include_str!("../../tests/fixtures/threads/carousel-mixed.html"),
+    include_str!("../../tests/fixtures/threads/linked-inline-mixed.html"),
+  ] {
+    // Both variants of the last video are inadmissible; the first three items remain valid.
+    let body = fixture
+      .replace("clip_later_small.mp4", "clip_later_small.webm")
+      .replace("clip_later.mp4", "clip_later.webm");
+    let transport = FakeTransport(std::sync::Mutex::new(
+      [(url, reply(200, None, body.as_bytes()))].into(),
+    ));
+    assert!(matches!(read_site(url, &transport).await, Verdict::Unknown));
+  }
+}
+
+#[tokio::test]
+async fn threads_text_posts_report_no_media_only_with_bound_empty_media() {
+  let url = "https://www.threads.com/@nasa/post/DYFY0HtlAeg";
+  let page = include_str!("../../tests/fixtures/threads/no-media.html");
+  let prefix = page.find("{\"__bbox\":").unwrap();
+  let mut root = serde_json::Deserializer::from_str(&page[prefix..])
+    .into_iter::<serde_json::Value>()
+    .next()
+    .unwrap()
+    .unwrap();
+  let media = root.pointer_mut("/__bbox/result/data/media").unwrap();
+  let original = media.clone();
+  for case in [
+    "external-link",
+    "text-only",
+    "missing-inline",
+    "hidden-media",
+    "unavailable",
+    "tombstone",
+    "empty-carousel",
+    "wrong-code",
+  ] {
+    *media = original.clone();
+    match case {
+      "text-only" => {
+        media["text_post_app_info"]
+          .as_object_mut()
+          .unwrap()
+          .remove("link_preview_attachment");
+      }
+      "missing-inline" => {
+        media["text_post_app_info"]
+          .as_object_mut()
+          .unwrap()
+          .remove("linked_inline_media");
+      }
+      "hidden-media" => {
+        media["video_versions"] =
+          serde_json::json!([{"url":"https://scontent.cdninstagram.com/v/hidden.mp4"}])
+      }
+      "unavailable" => media["text_post_app_info"]["is_post_unavailable"] = true.into(),
+      "tombstone" => {
+        media["text_post_app_info"]["attachment_tombstone_info"] =
+          serde_json::json!({"text":"Unavailable"})
+      }
+      "empty-carousel" => {
+        media["media_type"] = 8.into();
+        media["carousel_media"] = serde_json::json!([]);
+      }
+      "wrong-code" => media["code"] = "WrongPost".into(),
+      _ => {}
+    }
+    let body = format!("<script>[\"adp_BarcelonaPostPageTargetQueryRelayPreloader_ab\",{{\"__bbox\":{{\"result\":{{\"data\":{{\"media\":{media}}}}}}}}}]</script>");
+    let transport = FakeTransport(std::sync::Mutex::new(
+      [(url, reply(200, None, body.as_bytes()))].into(),
+    ));
+    let verdict = read_site(url, &transport).await;
+    if matches!(case, "external-link" | "text-only") {
+      assert_eq!(
+        verdict.resolution(url),
+        Resolution::Unsupported {
+          reason: Reason::NoMedia
+        },
+        "{case}"
+      );
+    } else {
+      assert!(matches!(verdict, Verdict::Unknown), "{case}");
     }
   }
 }
@@ -1165,13 +1539,7 @@ async fn threads_refuses_redirects_oversized_bodies_and_unbound_previews() {
     let transport = FakeTransport(std::sync::Mutex::new(pages.into()));
     let result = read_site(source, &transport).await;
     if supported {
-      assert_eq!(
-        result.resolution(source),
-        Resolution::Passthrough(
-          "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/synthetic_large.mp4".into()
-        ),
-        "{source} -> {location}"
-      );
+      assert_threads_video_metadata(result.resolution(source), canonical);
     } else {
       assert!(matches!(result, Verdict::Unknown), "{source} -> {location}");
     }
@@ -1230,12 +1598,7 @@ async fn threads_refuses_redirects_oversized_bodies_and_unbound_previews() {
     let transport = FakeTransport(std::sync::Mutex::new(pages.into()));
     let result = read_site(share, &transport).await;
     if supported {
-      assert_eq!(
-        result.resolution(share),
-        Resolution::Passthrough(
-          "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/synthetic_large.mp4".into()
-        )
-      );
+      assert_threads_video_metadata(result.resolution(share), canonical);
     } else {
       assert!(matches!(result, Verdict::Unknown));
     }
@@ -1341,11 +1704,9 @@ async fn threads_refuses_redirects_oversized_bodies_and_unbound_previews() {
       .into(),
     )),
   };
-  assert_eq!(
+  assert_threads_video_metadata(
     read_site(source, &retrying).await.resolution(source),
-    Resolution::Passthrough(
-      "https://instagram.fexample.fna.fbcdn.net/o1/v/t2/f2/synthetic_large.mp4".into()
-    )
+    source,
   );
   assert!(retrying.pages.0.lock().unwrap().is_empty());
   let video = include_str!("../../tests/fixtures/threads/video.html");
@@ -1564,5 +1925,106 @@ fn vimeo_401_retries_chrome_once_and_only_after_that_response() {
       retry
     );
     assert!(!input.impersonation_unavailable("ERROR: HTTP Error 401: Unauthorized"));
+  }
+}
+
+#[tokio::test]
+async fn threads_reads_only_the_explicit_bound_quote_attachment() {
+  let source = "https://www.threads.com/@synthetic_user/post/SynthPost01";
+  let page = |pk: &str| {
+    format!(
+      r#"<script>["adp_BarcelonaPostPageTargetQueryRelayPreloader_ab",{{"__bbox":{{"result":{{"data":{{"media":{{"code":"SynthPost01","media_type":19,"caption":{{"text":"Outer caption"}},"user":{{"username":"synthetic_user"}},"text_post_app_info":{{"linked_inline_media":null,"share_info":{{"quoted_attachment_post":{{"code":"BC","pk":"{pk}","permalink":"https://www.threads.com/@quoted_user/post/BC","media_type":2,"video_versions":[{{"url":"https://scontent.cdninstagram.com/v/quote.mp4","width":720,"height":1280}}],"image_versions2":{{"candidates":[{{"url":"https://scontent.cdninstagram.com/v/quote.jpg"}}]}}}}}}}}}}}}}}}}}}]</script>"#
+    )
+  };
+  for (pk, supported) in [("66", true), ("67", false)] {
+    let transport = FakeTransport(std::sync::Mutex::new(
+      [(source, reply(200, None, page(pk).as_bytes()))].into(),
+    ));
+    let result = read_site(source, &transport).await;
+    if supported {
+      let Resolution::Attachments { metadata } = result.resolution(source) else {
+        panic!("quote attachment expected")
+      };
+      let media: crate::models::ParsedSingleVideo = serde_json::from_str(&metadata).unwrap();
+      assert_eq!(media.title.as_deref(), Some("Outer caption"));
+      assert_eq!(media.url.as_deref(), Some(source));
+      assert_eq!(
+        media.attachments[0].url,
+        "https://scontent.cdninstagram.com/v/quote.mp4"
+      );
+    } else {
+      assert!(matches!(result, Verdict::Unknown));
+    }
+  }
+}
+
+#[tokio::test(start_paused = true)]
+async fn facebook_share_unavailable_retries_once_with_backoff() {
+  for (url, stderr, expected) in [
+    (
+      "https://www.facebook.com/share/p/abc/",
+      "ERROR: Video has not been found",
+      true,
+    ),
+    (
+      "https://www.facebook.com/share/v/abc/",
+      "ERROR: [facebook] abc: Cannot parse data; please report this issue",
+      true,
+    ),
+    (
+      "https://m.facebook.com/share/v/abc/",
+      "ERROR: HTTP Error 404: Not Found",
+      true,
+    ),
+    (
+      "https://www.facebook.com/watch/?v=123",
+      "ERROR: Video has not been found",
+      false,
+    ),
+    (
+      "https://facebook.com.evil.test/share/p/abc/",
+      "ERROR: Video has not been found",
+      false,
+    ),
+    (
+      "https://www.facebook.com/share/p/abc/",
+      "ERROR: HTTP Error 429: Too Many Requests",
+      false,
+    ),
+    (
+      "https://www.facebook.com/share/p/abc/",
+      "ERROR: Login required",
+      false,
+    ),
+    (
+      "https://www.facebook.com/share/v/abc/",
+      "ERROR: [generic] Unable to extract data",
+      false,
+    ),
+    (
+      "https://www.facebook.com/share/v/abc/",
+      "ERROR: [instagram:user] nasa: Unable to extract data",
+      false,
+    ),
+    (
+      "https://www.facebook.com/share/v/abc/",
+      "ERROR: [facebook] 123: Unable to extract data",
+      false,
+    ),
+  ] {
+    let mut input = ResolvedInput::new(url);
+    input.rewrite("https://cdn.example/selected.mp4".into());
+    let start = tokio::time::Instant::now();
+    assert_eq!(
+      input.retry_facebook_share(stderr).await,
+      expected,
+      "{url}: {stderr}"
+    );
+    assert_eq!(
+      start.elapsed(),
+      Duration::from_millis(if expected { 500 } else { 0 })
+    );
+    assert_eq!(input.url, "https://cdn.example/selected.mp4");
+    assert!(!input.retry_facebook_share(stderr).await);
   }
 }

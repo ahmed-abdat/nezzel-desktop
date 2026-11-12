@@ -99,6 +99,8 @@ const EXTRACTOR_SITES: &[SiteId] = {
     GoogleDrive,
     GoogleDocs,
     Dropbox,
+    // Known unsupported site: leave its refusal to the resolver, without probing a page as a file.
+    Kwai,
   ]
 };
 
@@ -108,6 +110,14 @@ pub fn should_probe(input: &str) -> bool {
   };
   if !matches!(url.scheme(), "http" | "https") {
     return false;
+  }
+  // These are file CDNs, despite sharing a site identity with Reddit/Imgur pages.
+  if matches!(
+    url.host_str(),
+    Some("i.redd.it" | "preview.redd.it" | "external-preview.redd.it" | "i.imgur.com")
+  ) && file_extension(&url)
+  {
+    return true;
   }
   if crate::sites::site_of(url.host_str().unwrap_or_default())
     .is_some_and(|site| EXTRACTOR_SITES.contains(&site))

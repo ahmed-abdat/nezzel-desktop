@@ -39,6 +39,13 @@ fn share_link(raw: &str) -> bool {
 const FILES: &[Matcher] = &[
   Matcher::new(
     StageId::Files,
+    "archive-file",
+    35,
+    Confidence::High,
+    Pattern::Identity(crate::files::hosts::archive_details),
+  ),
+  Matcher::new(
+    StageId::Files,
     "file-extension",
     30,
     Confidence::High,
@@ -60,6 +67,9 @@ const X_ROUTE_HOSTS: &[&str] = &[
   "twitter.com",
   "www.twitter.com",
   "mobile.twitter.com",
+  "mobile.x.com",
+  "m.twitter.com",
+  "m.x.com",
 ];
 
 const GALLERY: &[Matcher] = &[
@@ -118,6 +128,27 @@ const GALLERY: &[Matcher] = &[
         exclude: None,
       },
     ),
+  ),
+  Matcher::new(
+    StageId::Gallery,
+    "tumblr-post",
+    30,
+    Confidence::High,
+    Pattern::UrlOnly(|url| {
+      if !url
+        .host_str()
+        .is_some_and(|host| crate::sites::host_is(host, "tumblr.com"))
+      {
+        return false;
+      }
+      let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
+      ((matches!(url.host_str(), Some("tumblr.com" | "www.tumblr.com"))
+        && !matches!(parts.first(), Some(&"tagged" | &"search")))
+        || matches!(parts.first(), Some(&"post" | &"video")))
+        && parts
+          .get(1)
+          .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+    }),
   ),
   // An album must reach its photo-capable engine before yt-dlp can verify a partial video list.
   Matcher::new(

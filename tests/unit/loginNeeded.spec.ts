@@ -9,6 +9,18 @@ import { Platform } from '../../src/tauri/types/app';
 import { installTauriMock } from '../utils/tauriMock';
 
 describe('login picker profile metadata', () => {
+  it.each(['browserKeychainDenied', 'browserDpapiFailed', 'browserAppBound', 'browserSafariAccessDenied'])('shows the concrete remedy for %s while choosing another login', (code) => {
+    const store = useLoginStore();
+    store.receive({ requestId: 'remedy', id: 'item', groupId: 'remedy', host: 'reddit.com', reason: 'signInRequired', status: 'needed', candidates: [{ id: 'firefox', browser: 'firefox', profile: 'main', signedIn: false }] });
+    const wrapper = mount(LoginNeeded, { props: { card: store.cardFor('remedy')!, diagnosticCode: code }, global: { plugins: [i18n], stubs: { RouterLink: true } } });
+    try {
+      expect(wrapper.text()).toContain(i18n.global.t(`errors.runner.${code}.action`));
+    } finally {
+      wrapper.unmount();
+      store.forgetGroup('remedy');
+    }
+  });
+
   it.each(['en', 'ar', 'fr'] as const)('uses the locale direction around LTR browser and host runs in %s', async (locale) => {
     const oldLocale = i18n.global.locale.value;
     i18n.global.locale.value = locale;
@@ -66,6 +78,14 @@ describe('login picker profile metadata', () => {
       resetPlatformForTests();
       i18n.global.locale.value = oldLocale;
     }
+  });
+
+  it('keeps a dismissed prompt clear even when the previous cookie read failed', () => {
+    const wrapper = mount(LoginNeeded, { props: { card: { kind: 'failed', failure: { groupId: 'dismissed', host: 'reddit.com', reason: 'dismissed' } }, diagnosticCode: 'browserDpapiFailed' }, global: { plugins: [i18n], stubs: { RouterLink: true } } });
+    try {
+      expect(wrapper.text()).toContain(i18n.global.t('downloads.login.skipped', { site: 'Reddit' }));
+      expect(wrapper.text()).not.toContain(i18n.global.t('errors.runner.browserDpapiFailed.action'));
+    } finally { wrapper.unmount(); }
   });
 
   // What helps comes first: settings when a retry can't work yet, the prompt when it was only closed.

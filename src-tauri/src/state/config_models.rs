@@ -30,6 +30,9 @@ pub struct AuthSettings {
   pub cookie_file: Option<String>,
   pub cookie_browser: String,
   pub always_use_browser_logins: bool,
+  /// Legacy nullable policy: missing/unknown is enabled; explicit false remains off.
+  pub browser_login_consent: Option<bool>,
+  pub browser_login_notice_shown: bool,
   pub site_browsers: HashMap<String, String>,
 }
 
@@ -38,7 +41,9 @@ impl Default for AuthSettings {
     Self {
       cookie_file: None,
       cookie_browser: "automatic".into(),
-      always_use_browser_logins: false,
+      always_use_browser_logins: true,
+      browser_login_consent: Some(true),
+      browser_login_notice_shown: false,
       site_browsers: HashMap::new(),
     }
   }
@@ -488,7 +493,9 @@ mod tests {
     .unwrap();
     assert_eq!(old.auth.cookie_browser, "firefox");
     assert_eq!(old.auth.cookie_file.as_deref(), Some("/tmp/manual.txt"));
-    assert!(!old.auth.always_use_browser_logins);
+    assert!(old.auth.always_use_browser_logins);
+    assert_eq!(old.auth.browser_login_consent, Some(true));
+    assert!(!old.auth.browser_login_notice_shown);
     assert!(old.auth.site_browsers.is_empty());
   }
 }

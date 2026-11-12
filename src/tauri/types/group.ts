@@ -4,6 +4,7 @@ export type Group = {
   id: string;
   mediaKind?: SourceMediaKind;
   attachments?: MediaAttachment[];
+  savedAttachmentSummary?: { photos: number; videos: number };
   total: number;
   processed: number;
   errored: number;

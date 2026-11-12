@@ -3,6 +3,8 @@
 pub enum RetryAction {
   Stop,
   AskLogin,
+  /// An automatic source/sign-in task owns the parked row; no user consent is needed.
+  Pending,
   Browser,
   Native,
   Anonymous,
@@ -25,7 +27,7 @@ impl RetryState {
   pub fn next(
     &mut self,
     automatic: bool,
-    consented: bool,
+    _consented: bool,
     has_browser: bool,
     failure: RetryFailure,
   ) -> RetryAction {
@@ -41,11 +43,11 @@ impl RetryState {
       return RetryAction::Anonymous;
     }
     if failure.login && automatic && !self.browser_attempted {
-      if consented && has_browser {
+      if has_browser {
         self.browser_attempted = true;
         return RetryAction::Browser;
       }
-      return RetryAction::AskLogin;
+      return RetryAction::Stop;
     }
     RetryAction::Stop
   }
@@ -102,7 +104,7 @@ mod tests {
   }
 
   #[test]
-  fn first_login_refusal_requires_consent() {
+  fn first_login_refusal_retries_without_consent() {
     let mut state = RetryState::default();
     assert_eq!(
       state.next(
@@ -116,9 +118,9 @@ mod tests {
           ..Default::default()
         }
       ),
-      RetryAction::AskLogin
+      RetryAction::Browser
     );
-    assert!(!state.browser_attempted);
+    assert!(state.browser_attempted);
   }
   #[test]
   fn browser_retry_is_once_and_only_for_automatic_mode() {
@@ -242,7 +244,7 @@ mod tests {
           ..Default::default()
         }
       ),
-      RetryAction::AskLogin
+      RetryAction::Stop
     );
   }
 }

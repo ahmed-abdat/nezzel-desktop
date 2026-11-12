@@ -122,6 +122,12 @@ pub enum LoginRequest {
   Download(DownloadEntry),
 }
 impl LoginRequest {
+  pub(super) fn url(&self) -> &str {
+    match self {
+      Self::Fetch(e) => &e.url,
+      Self::Download(e) => &e.url,
+    }
+  }
   pub(super) fn ids(&self) -> (&str, &str) {
     match self {
       Self::Fetch(e) => (&e.id, &e.group_id),
@@ -238,6 +244,7 @@ impl LoginRequest {
   }
 }
 pub(super) struct PendingLogin {
+  pub(super) automatic: bool,
   pub(super) followers: Vec<PendingLogin>,
   pub(super) announcement: Option<(AppHandle, LoginNeeded)>,
   pub(super) request: LoginRequest,
@@ -262,7 +269,11 @@ pub(super) fn queue_pending(
 ) -> bool {
   let host = pending.request.host();
   if let Some(existing) = map.values_mut().find(|existing| {
-    existing.created.elapsed() < LOGIN_TTL && host.is_some() && existing.request.host() == host
+    existing.created.elapsed() < LOGIN_TTL
+      && !pending.automatic
+      && !existing.automatic
+      && host.is_some()
+      && existing.request.host() == host
   }) {
     existing.followers.push(pending);
     false
@@ -367,6 +378,7 @@ pub(super) fn park(
     &mut pending,
     request_id.clone(),
     PendingLogin {
+      automatic: payload.reason == "automaticLogin",
       followers: Vec::new(),
       announcement: Some((app.clone(), payload)),
       cancel: subscribe_group(request.ids().1),
@@ -479,9 +491,9 @@ pub(super) fn accept_login<R: tauri::Runtime>(
   result
 }
 #[tauri::command]
-pub fn media_login_dismiss(app: AppHandle, request_id: String) {
+pub fn media_login_dismiss(app: AppHandle, request_id: String) -> Result<(), String> {
   if CHOICES.lock().unwrap().remove(&request_id).is_some() {
-    return;
+    return Ok(());
   }
   if let Some(pending) = PENDING.lock().unwrap().remove(&request_id) {
     for row in pending.into_rows() {
@@ -498,6 +510,7 @@ pub fn media_login_dismiss(app: AppHandle, request_id: String) {
       row.request.release(&app);
     }
   }
+  Ok(())
 }
 pub(super) fn remove_pending_group(map: &mut HashMap<String, PendingLogin>, group_id: &str) {
   let tokens: Vec<_> = map
@@ -548,6 +561,7 @@ pub(super) fn remove_pending_group(map: &mut HashMap<String, PendingLogin>, grou
 }
 
 pub fn forget_group(group_id: &str) {
+  super::automatic::forget_group(group_id);
   forget_group_rows(group_id);
   CHOICES
     .lock()

@@ -4,7 +4,7 @@
     "showOrHide": "Показать / скрыть окно",
     "addToQueue": "Добавить из буфера обмена",
     "addAndDownload": "Добавить и скачать из буфера обмена",
-    "downloadQueue": "Скачать очередь",
+    "downloadQueue": "Скачать элементы из очереди",
     "shortcuts": {
       "ctrlShiftV": "Ctrl + Shift + V",
       "ctrlShiftD": "Ctrl + Shift + D",

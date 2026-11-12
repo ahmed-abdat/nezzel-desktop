@@ -1108,11 +1108,6 @@
         "shortMessage": "Parça yeniden deneniyor",
         "message": "Bir parçanın indirmesi başarısız oldu ve otomatik olarak yeniden denenecek."
       },
-      "facebookVideoUnavailable": {
-        "shortMessage": "Facebook bu videoyu sağlamadı",
-        "message": "Facebook bu videoyu Nezzel’e sağlamadı. Bağlantıyı tarayıcıda açıp adres çubuğundan kopyalayın veya daha sonra tekrar deneyin.",
-        "action": "Bağlantıyı tarayıcının adres çubuğundan kopyalayın veya daha sonra tekrar deneyin"
-      },
       "unknown": {
         "shortMessage": "Bilinmeyen hata",
         "message": "Bu öğe işlenirken bilinmeyen bir hata oluştu."

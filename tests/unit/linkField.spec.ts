@@ -84,6 +84,25 @@ function createBlankView() {
 }
 
 describe('LinkField', () => {
+  it('keeps a copied URL placeholder and its trailing slash LTR in Arabic, with an RTL empty hint', async () => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = 'ar';
+    clipboardContent.value = 'https://www.facebook.com/share/p/1EiNJaQ8Yr/';
+    const { wrapper } = await mountField();
+    try {
+      const input = wrapper.get('#queue-url-input');
+      expect(input.attributes('dir')).toBe('ltr');
+      expect(input.attributes('placeholder')).toBe(clipboardContent.value);
+      clipboardContent.value = '';
+      await flushPromises();
+      expect(input.attributes('dir')).toBeUndefined();
+      await input.setValue('https://example.com/مسار/');
+      expect(input.attributes('dir')).toBe('auto');
+    } finally {
+      wrapper.unmount();
+      i18n.global.locale.value = previous;
+    }
+  });
   beforeEach(() => {
     invoke.mockReset().mockRejectedValue(new Error('no backend'));
     dispatchMediaInfoFetch.mockReset();

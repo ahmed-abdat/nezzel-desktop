@@ -7,9 +7,9 @@ import { defaultAuthSettings } from '../../src/tauri/types/config';
 import { installTauriMock } from '../utils/tauriMock';
 
 describe('authentication settings', () => {
-  it('defaults to automatic detection without forcing browser logins on public links', () => {
+  it('defaults to automatic detection with browser logins on (owner decision 2026-11-12)', () => {
     expect(defaultAuthSettings.cookieBrowser).toBe('automatic');
-    expect(defaultAuthSettings.alwaysUseBrowserLogins).toBe(false);
+    expect(defaultAuthSettings.alwaysUseBrowserLogins).toBe(true);
   });
   it('only marks explicit cookie overrides as configured', () => {
     const store = useSettingsStore();

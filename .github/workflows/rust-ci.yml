@@ -36,6 +36,7 @@ permissions:
 
 jobs:
   lint:
+    if: github.repository == 'ahmed-abdat/nezzel-desktop'
     name: 'Lint'
     runs-on: ubuntu-latest
     env:
@@ -96,6 +97,7 @@ jobs:
         run: cargo fmt --manifest-path=src-tauri/Cargo.toml --all -- --check
 
   unit-tests:
+    if: github.repository == 'ahmed-abdat/nezzel-desktop'
     name: 'Unit Tests'
     runs-on: ubuntu-latest
     env:

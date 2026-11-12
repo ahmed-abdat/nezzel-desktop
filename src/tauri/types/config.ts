@@ -25,6 +25,8 @@ export interface AuthSettings {
   cookieFile: string | null;
   cookieBrowser: string;
   alwaysUseBrowserLogins: boolean;
+  browserLoginConsent?: boolean | null;
+  browserLoginNoticeShown?: boolean;
   siteBrowsers: Record<string, string>;
 }
 
@@ -197,7 +199,9 @@ export const defaultAppearanceSettings: AppearanceSettings = {
 export const defaultAuthSettings: AuthSettings = {
   cookieFile: null,
   cookieBrowser: COOKIE_BROWSER_AUTOMATIC,
-  alwaysUseBrowserLogins: false,
+  alwaysUseBrowserLogins: true,
+  browserLoginConsent: true,
+  browserLoginNoticeShown: false,
   siteBrowsers: {},
 };
 

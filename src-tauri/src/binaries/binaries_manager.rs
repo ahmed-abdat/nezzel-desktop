@@ -12,7 +12,7 @@ use crate::binaries::binaries_extractor::{
 use crate::binaries::binaries_state::CheckResult;
 use crate::paths::PathsManager;
 use base64::Engine;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use fs_extra::dir::{move_dir, CopyOptions};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -101,23 +101,36 @@ async fn fetch_manifest(
   url: Option<&str>,
   key: Option<&str>,
 ) -> Result<Manifest, AnyError> {
-  let Some(requests) = manifest_requests(client, url, key)? else {
-    // This snapshot ships with the app; its hashes are trusted like the app code.
-    return Ok(serde_json::from_slice(BUNDLED_MANIFEST)?);
-  };
-  let manifest_bytes = client
-    .execute(requests.manifest)
-    .await?
-    .error_for_status()?
-    .bytes()
-    .await?;
-  let signature = client
-    .execute(requests.signature)
-    .await?
-    .error_for_status()?
-    .bytes()
-    .await?;
-  verify_manifest(&manifest_bytes, &signature, &requests.public_key)
+  let remote = async {
+    let Some(requests) = manifest_requests(client, url, key)? else {
+      return Ok(None);
+    };
+    let response = client.execute(requests.manifest).await?;
+    crate::diagnostics::send::network_response_received();
+    let manifest_bytes = response.error_for_status()?.bytes().await?;
+    let signature = client
+      .execute(requests.signature)
+      .await?
+      .error_for_status()?
+      .bytes()
+      .await?;
+    verify_manifest(&manifest_bytes, &signature, &requests.public_key).map(Some)
+  }
+  .await;
+  manifest_or_embedded(remote)
+}
+
+fn manifest_or_embedded(remote: Result<Option<Manifest>, AnyError>) -> Result<Manifest, AnyError> {
+  match remote {
+    Ok(Some(manifest)) => Ok(manifest),
+    other => {
+      if other.is_err() {
+        tracing::warn!("remote tool manifest unavailable or untrusted; using embedded pins");
+      }
+      // Only this app-shipped snapshot is trusted without a remote signature.
+      Ok(serde_json::from_slice(BUNDLED_MANIFEST)?)
+    }
+  }
 }
 
 fn verify_manifest(
@@ -137,21 +150,52 @@ fn verify_manifest(
   })?;
 
   let vk = VerifyingKey::from_bytes(&key_bytes)?;
-  vk.verify(manifest_bytes, &sig)?;
+  vk.verify_strict(manifest_bytes, &sig)?;
 
-  let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
+  let mut manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
+  manifest_time(&manifest.generated_at)?;
+  manifest.verified_remote = true;
   Ok(manifest)
+}
+
+pub(super) fn manifest_time(value: &str) -> Result<time::OffsetDateTime, AnyError> {
+  Ok(time::OffsetDateTime::parse(
+    value,
+    &time::format_description::well_known::Rfc3339,
+  )?)
+}
+
+// Caller holds the operation mutex; retain the accepted high-water mark across restarts.
+async fn accept_manifest(path: &Path, manifest: &Manifest) -> Result<(), AnyError> {
+  if !manifest.verified_remote {
+    return Err("cannot accept an unverified remote manifest".into());
+  }
+  let timestamp = manifest_time(&manifest.generated_at)?;
+  let mut metadata = read_metadata(path).await?;
+  if let Some(last) = metadata.manifest_generated_at.as_deref() {
+    if timestamp < manifest_time(last)? {
+      return Err("remote manifest is older than the last accepted manifest".into());
+    }
+  }
+  metadata.manifest_generated_at = Some(manifest.generated_at.clone());
+  write_metadata(path, &serde_json::to_vec(&metadata)?)?;
+  Ok(())
 }
 
 #[derive(Deserialize, Serialize)]
 pub(super) struct Manifest {
+  // Provenance is set only by verify_manifest, never by remote JSON.
+  #[serde(skip)]
+  pub(super) verified_remote: bool,
   #[serde(rename = "generatedAt")]
-  generated_at: String,
+  pub(super) generated_at: String,
   pub(super) tools: IndexMap<String, ToolInfo>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub(super) struct ToolInfo {
+  #[serde(default)]
+  pub(super) rollback: bool,
   pub(super) version: String,
   pub(super) files: HashMap<String, FileInfo>,
 }
@@ -195,6 +239,8 @@ pub(super) struct Metadata {
   pub(super) ytdlp_last_check: Option<u64>,
   #[serde(default)]
   pub(super) ytdlp_failure_since: Option<u64>,
+  #[serde(default)]
+  pub(super) manifest_generated_at: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize, Clone)]
@@ -554,6 +600,14 @@ impl BinariesManager {
       }
     }
     let failed = !failures.is_empty();
+    if successes
+      .iter()
+      .any(|tool| matches!(tool.as_str(), "yt-dlp" | "deno"))
+    {
+      if let Some(capture) = self.app.try_state::<crate::capture::CaptureState>() {
+        capture.tools_changed();
+      }
+    }
     let _ = self.app.emit(
       "binary_update_complete",
       ToolResult {
@@ -672,12 +726,19 @@ impl BinariesManager {
     &self,
     client: &reqwest::Client,
   ) -> Result<Manifest, AnyError> {
-    fetch_manifest(
+    let manifest = fetch_manifest(
       client,
       option_env!("NEZZEL_MANIFEST_URL"),
       option_env!("NEZZEL_MANIFEST_PUBKEY"),
     )
-    .await
+    .await?;
+    if manifest.verified_remote {
+      let _operation = self.operation.lock().await;
+      if let Err(error) = accept_manifest(&self.bin_dir.join("metadata.json"), &manifest).await {
+        return manifest_or_embedded(Err(error));
+      }
+    }
+    Ok(manifest)
   }
 
   async fn download_and_verify(
@@ -913,7 +974,7 @@ mod tests {
     std::fs::remove_dir_all(dir).unwrap();
   }
 
-  const MANIFEST: &[u8] = br#"{"generatedAt":"2026-11-02","tools":{}}"#;
+  const MANIFEST: &[u8] = br#"{"generatedAt":"2026-11-02T00:00:00Z","tools":{}}"#;
 
   #[test]
   fn unset_manifest_env_builds_no_remote_requests() {
@@ -963,6 +1024,24 @@ mod tests {
     ] {
       assert!(manifest_requests(&client, Some(url), Some(key)).is_err());
     }
+  }
+
+  #[tokio::test]
+  async fn manifest_configuration_failure_falls_back_to_embedded() {
+    let manifest = fetch_manifest(
+      &reqwest::Client::new(),
+      Some("https://updates.nezzel.test/manifest.json"),
+      Some("invalid-key"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+      serde_json::to_value(manifest).unwrap(),
+      serde_json::to_value(
+        serde_json::from_slice::<super::Manifest>(super::BUNDLED_MANIFEST).unwrap()
+      )
+      .unwrap()
+    );
   }
 
   #[test]
@@ -1039,6 +1118,96 @@ mod tests {
   }
 
   #[test]
+  fn manifest_verification_and_fetch_failures_use_only_embedded_pins() {
+    let key = signing_key();
+    let trusted = hex::encode(key.verifying_key().as_bytes());
+    let wrong = hex::encode(signing_key().verifying_key().as_bytes());
+    let sig = signature(&key);
+    for (bytes, signature, key, fetch_failed, remote) in [
+      (MANIFEST, sig.as_bytes(), trusted.as_str(), false, true),
+      (
+        b"tampered".as_slice(),
+        sig.as_bytes(),
+        trusted.as_str(),
+        false,
+        false,
+      ),
+      (MANIFEST, sig.as_bytes(), wrong.as_str(), false, false),
+      (
+        MANIFEST,
+        b"bad!base64".as_slice(),
+        trusted.as_str(),
+        false,
+        false,
+      ),
+      (MANIFEST, sig.as_bytes(), trusted.as_str(), true, false),
+    ] {
+      let fetched = if fetch_failed {
+        Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "offline fixture").into())
+      } else {
+        verify_manifest(bytes, signature, key).map(Some)
+      };
+      let selected = super::manifest_or_embedded(fetched).unwrap();
+      assert_eq!(selected.verified_remote, remote);
+      if remote {
+        assert_eq!(selected.generated_at, "2026-11-02T00:00:00Z");
+        assert!(selected.tools.is_empty());
+      } else {
+        assert_eq!(
+          serde_json::to_value(selected).unwrap(),
+          serde_json::to_value(
+            serde_json::from_slice::<super::Manifest>(super::BUNDLED_MANIFEST).unwrap()
+          )
+          .unwrap()
+        );
+      }
+    }
+  }
+
+  #[tokio::test]
+  async fn signed_manifest_time_persists_and_rejects_replay_after_restart() {
+    let dir = std::env::temp_dir().join(format!("nezzel-freshness-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("metadata.json");
+    let mut metadata = super::Metadata::default();
+    metadata
+      .versions
+      .insert("yt-dlp".into(), "2026.11.11".into());
+    metadata.ytdlp_last_check = Some(100);
+    super::write_metadata(&path, &serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let key = signing_key();
+    for (date, accepted) in [
+      ("2026-11-12T10:00:00Z", true),
+      ("2026-11-12T09:59:59Z", false),
+      ("2026-11-12T11:00:00+01:00", true),
+      ("2026-11-12T10:00:01Z", true),
+      ("2026-11-12", false),
+      ("not-a-date", false),
+    ] {
+      let bytes = format!(r#"{{"generatedAt":"{date}","tools":{{}}}}"#);
+      let sig = STANDARD.encode(key.sign(bytes.as_bytes()).to_bytes());
+      let verified = verify_manifest(
+        bytes.as_bytes(),
+        sig.as_bytes(),
+        &hex::encode(key.verifying_key().as_bytes()),
+      );
+      let result = match verified {
+        Ok(manifest) => super::accept_manifest(&path, &manifest).await,
+        Err(error) => Err(error),
+      };
+      assert_eq!(result.is_ok(), accepted, "{date}");
+    }
+    let stored = read_metadata(&path).await.unwrap();
+    assert_eq!(stored.versions["yt-dlp"], "2026.11.11");
+    assert_eq!(stored.ytdlp_last_check, Some(100));
+    assert_eq!(
+      stored.manifest_generated_at.as_deref(),
+      Some("2026-11-12T10:00:01Z")
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[test]
   fn accepts_a_manifest_signed_by_the_trusted_key() {
     let key = signing_key();
     let manifest = verify_manifest(
@@ -1048,8 +1217,27 @@ mod tests {
     )
     .unwrap();
 
-    assert_eq!(manifest.generated_at, "2026-11-02");
+    assert_eq!(manifest.generated_at, "2026-11-02T00:00:00Z");
     assert!(manifest.tools.is_empty());
+    for rollback in [None, Some(true)] {
+      let mut tool = serde_json::json!({"version": "2026.10.01", "files": {}});
+      if let Some(flag) = rollback {
+        tool["rollback"] = serde_json::json!(flag);
+      }
+      let bytes = serde_json::to_vec(&serde_json::json!({
+        "generatedAt": "2026-11-12T10:00:00Z", "tools": {"yt-dlp": tool}
+      }))
+      .unwrap();
+      let sig = STANDARD.encode(key.sign(&bytes).to_bytes());
+      let verified = verify_manifest(
+        &bytes,
+        sig.as_bytes(),
+        &hex::encode(key.verifying_key().as_bytes()),
+      )
+      .unwrap();
+      assert!(verified.verified_remote);
+      assert_eq!(verified.tools["yt-dlp"].rollback, rollback.unwrap_or(false));
+    }
   }
 
   #[test]

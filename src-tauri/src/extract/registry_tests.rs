@@ -51,6 +51,14 @@ fn every_matcher_has_offline_positive_and_negative_cases() {
       ],
     },
     Case {
+      name: "archive-file",
+      yes: &["https://archive.org/details/item"],
+      no: &[
+        "https://archive.org/download/item/file.txt",
+        "https://archive.org.evil.test/details/item",
+      ],
+    },
+    Case {
       name: "file-probe",
       yes: &["https://example.com/post"],
       no: &["https://www.instagram.com/p/123/"],
@@ -214,6 +222,20 @@ fn every_matcher_has_offline_positive_and_negative_cases() {
       no: &[
         "https://tiktok.com/@nasa/video/123",
         "https://tiktok.com/@nasa/photo/",
+      ],
+    },
+    Case {
+      name: "tumblr-post",
+      yes: &[
+        "https://nasa.tumblr.com/post/820337874767675392/",
+        "https://www.tumblr.com/nasa/820337874767675392/",
+      ],
+      no: &[
+        "https://tumblr.com/",
+        "https://www.tumblr.com/nasa",
+        "https://nasa.tumblr.com/archive",
+        "https://www.tumblr.com/tagged/2024",
+        "https://www.tumblr.com/search/2024",
       ],
     },
     Case {
@@ -401,4 +423,13 @@ fn legacy_capture_preference_is_independent_of_fetch_confidence() {
   assert!(crate::parsers::gallery::gallery_first(
     "https://nottwitter.com/nasa/status/123/video/1"
   ));
+}
+
+#[test]
+fn archive_items_try_files_without_losing_extractor_fallback() {
+  let routes = super::routes("https://archive.org/details/example-item");
+  assert_eq!(routes[0].stage, StageId::Files);
+  assert_eq!(routes[0].confidence, Confidence::High);
+  assert!(routes.iter().any(|r| r.stage == StageId::Ytdlp));
+  assert!(routes.iter().all(|r| !r.exclusive));
 }

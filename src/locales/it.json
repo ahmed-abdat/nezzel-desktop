@@ -1109,11 +1109,6 @@
         "shortMessage": "Nuovo tentativo recupero frammento",
         "message": "Il download di un frammento non è riuscito e verrà ritentato automaticamente."
       },
-      "facebookVideoUnavailable": {
-        "shortMessage": "Facebook non ha fornito questo video",
-        "message": "Facebook non ha fornito questo video a Nezzel. Apra il link in un browser e copi il link dalla barra degli indirizzi, oppure riprovi più tardi.",
-        "action": "Copi il link dalla barra degli indirizzi del browser oppure riprovi più tardi"
-      },
       "unknown": {
         "shortMessage": "Errore sconosciuto",
         "message": "Durante l'elaborazione di questo elemento si è verificato un errore sconosciuto."

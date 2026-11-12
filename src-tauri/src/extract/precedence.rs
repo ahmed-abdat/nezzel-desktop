@@ -76,6 +76,8 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
         code.as_str(),
         "diskFull"
           | "outputNameTooLong"
+          | "browserDpapiFailed"
+          | "browserAppBound"
           | "browserCookiesUnreadable"
           | "browserKeychainDenied"
           | "browserSafariAccessDenied"
@@ -140,7 +142,41 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
     } else {
       "unknown"
     },
-    |(_, _, code)| code,
+    |(_, _, code)| {
+      if code == "photosOnly"
+        && attempts.iter().any(|attempt| {
+          attempt.stage == StageId::Gallery
+            && attempt
+              .code
+              .is_some_and(|code| code.as_str() == "noMediaFound")
+        })
+      {
+        "noMediaFound"
+      } else if code == "photosOnly"
+        && attempts.iter().any(|attempt| {
+          attempt.stage == StageId::Ytdlp
+            && attempt
+              .code
+              .is_some_and(|code| code.as_str() == "photosOnly")
+        })
+        && attempts.iter().any(|attempt| {
+          attempt.stage == StageId::Gallery
+            && matches!(
+              attempt.outcome,
+              Outcome::Unknown
+                | Outcome::Unsupported
+                | Outcome::ExtractFailed
+                | Outcome::KindMismatch
+                | Outcome::NoMedia
+            )
+        })
+      {
+        // A failed fallback after yt-dlp rejected the video differs from a photo reader's own result.
+        "imageSourceUnavailable"
+      } else {
+        code
+      }
+    },
   ))
 }
 
@@ -166,6 +202,31 @@ mod tests {
       classify(code, "", NetworkScope::PageHost),
       0,
     )
+  }
+
+  #[test]
+  fn exhausted_photo_engine_does_not_tell_the_user_to_download_photos_again() {
+    let mut gallery = failed("unknown");
+    gallery.stage = StageId::Gallery;
+    gallery.confidence = Confidence::Low;
+    assert_eq!(
+      final_code(&[gallery, failed("photosOnly")]),
+      Some("imageSourceUnavailable")
+    );
+    assert_eq!(final_code(&[failed("photosOnly")]), Some("photosOnly"));
+    let mut gallery_kind = failed("photosOnly");
+    gallery_kind.stage = StageId::Gallery;
+    assert_eq!(final_code(&[gallery_kind]), Some("photosOnly"));
+    assert_eq!(
+      final_code(&[gallery_kind, failed("photosOnly")]),
+      Some("imageSourceUnavailable")
+    );
+    let mut gallery_empty = failed("noMediaFound");
+    gallery_empty.stage = StageId::Gallery;
+    assert_eq!(
+      final_code(&[gallery_empty, failed("photosOnly")]),
+      Some("noMediaFound")
+    );
   }
 
   #[test]
@@ -205,6 +266,8 @@ mod tests {
       "notFound404",
       "accountAccessDenied",
       "browserKeychainDenied",
+      "browserDpapiFailed",
+      "browserAppBound",
       "browserSafariAccessDenied",
       "browserDatabaseLocked",
       "browserProfileMissing",

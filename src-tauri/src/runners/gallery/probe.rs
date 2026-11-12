@@ -4,7 +4,7 @@ use crate::extract::deadline::{remaining_budget, wait_until, Interrupted, FETCH_
 use crate::models::ParsedMedia;
 use crate::parsers::gallery::{failure, gallery_deadline, parse_output, GalleryError, GalleryPost};
 use crate::runners::{
-  browser_cookies::CookieAccess, gallery_process::execute, ytdlp_runner::YtdlpRunner,
+  browser_cookies::CookieAccess, gallery_process::execute_with_started, ytdlp_runner::YtdlpRunner,
 };
 use crate::scheduling::{download_pipeline::DownloadEntry, group_state::subscribe_group};
 use std::time::Duration;
@@ -46,7 +46,18 @@ impl GalleryRunner {
         "--".into(),
         target.clone(),
       ]);
-      let output = execute(&self.path, &args, subscribe_group(group), deadline).await?;
+      if let Some(cookies) = &self._cookies {
+        cookies
+          .check_live_consent()
+          .map_err(GalleryError::Refused)?;
+      }
+      let output =
+        execute_with_started(&self.path, &args, subscribe_group(group), deadline, || {
+          if let Some(cookies) = &self._cookies {
+            cookies.announce_used();
+          }
+        })
+        .await?;
       match parse_output(output.code, &output.stdout, &output.stderr, source) {
         Ok(first) => {
           let count = first
@@ -65,7 +76,18 @@ impl GalleryRunner {
     for _ in 0..3 {
       let mut args = self.args.clone();
       args.extend(["-j".into(), "--".into(), target.clone()]);
-      let output = execute(&self.path, &args, subscribe_group(group), deadline).await?;
+      if let Some(cookies) = &self._cookies {
+        cookies
+          .check_live_consent()
+          .map_err(GalleryError::Refused)?;
+      }
+      let output =
+        execute_with_started(&self.path, &args, subscribe_group(group), deadline, || {
+          if let Some(cookies) = &self._cookies {
+            cookies.announce_used();
+          }
+        })
+        .await?;
       match parse_output(output.code, &output.stdout, &output.stderr, &target) {
         Err(GalleryError::Redirect(next)) => target = next,
         Ok(mut post) => {

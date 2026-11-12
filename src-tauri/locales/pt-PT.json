@@ -4,7 +4,7 @@
     "showOrHide": "Mostrar/Ocultar janela",
     "addToQueue": "Adicionar da área de transferência",
     "addAndDownload": "Adicionar e transferir da área de transferência",
-    "downloadQueue": "Transferir fila",
+    "downloadQueue": "Transferir itens da fila",
     "shortcuts": {
       "ctrlShiftV": "Ctrl + Shift + V",
       "ctrlShiftD": "Ctrl + Shift + D",

@@ -25,6 +25,27 @@ pub struct LibraryRecord {
   pub thumbnail: Option<String>,
   #[serde(default)]
   pub authority: Vec<FileAuthority>,
+  #[serde(default)]
+  pub display: LibraryDisplay,
+  #[serde(default)]
+  pub error_code: Option<String>,
+}
+
+/// Display facts only: never persist cookie/header overrides or signed attachment URLs.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryDisplay {
+  pub duration: Option<f64>,
+  pub height: Option<u32>,
+  pub fps: Option<u32>,
+  pub track_type: Option<crate::models::TrackType>,
+  pub attachment_summary: Option<AttachmentSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AttachmentSummary {
+  pub photos: u32,
+  pub videos: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -125,14 +146,45 @@ impl Index {
     self
       .records
       .sort_by_key(|r| std::cmp::Reverse(r.completed_at));
-    self.records.truncate(CAP);
+    let (mut saved, mut failed) = (0, 0);
+    self.records.retain(|row| {
+      let (count, cap) = if row.error_code.is_some() {
+        (&mut failed, 500)
+      } else {
+        (&mut saved, CAP)
+      };
+      *count += 1;
+      *count <= cap
+    });
     self
       .scanned
       .sort_by_key(|r| std::cmp::Reverse(r.completed_at));
     self.scanned.truncate(2000);
   }
 
-  pub fn append(&mut self, record: LibraryRecord) {
+  pub fn append(&mut self, mut record: LibraryRecord) {
+    if record.error_code.is_some()
+      && self
+        .records
+        .iter()
+        .any(|row| row.id == record.id && row.error_code.is_none())
+    {
+      return;
+    }
+    // A second completed output of the same live item still owns its earlier files.
+    // Give the new row a distinct UI identity when paths do not overlap.
+    if record.error_code.is_none()
+      && self.records.iter().any(|row| {
+        row.id == record.id
+          && row.error_code.is_none()
+          && !row
+            .paths
+            .iter()
+            .any(|p| record.paths.iter().any(|q| path_key(p) == path_key(q)))
+      })
+    {
+      record.id = uuid::Uuid::new_v4().to_string();
+    }
     for path in &record.paths {
       self.excluded.remove(&canonical_key(path));
     }
@@ -142,9 +194,11 @@ impl Index {
         .any(|p| record.paths.iter().any(|q| path_key(p) == path_key(q)))
     });
     self.records.retain(|r| {
-      !r.paths
-        .iter()
-        .any(|p| record.paths.iter().any(|q| path_key(p) == path_key(q)))
+      r.id != record.id && {
+        !r.paths
+          .iter()
+          .any(|p| record.paths.iter().any(|q| path_key(p) == path_key(q)))
+      }
     });
     self.records.push(record);
     self.sort_and_cap();
@@ -157,7 +211,9 @@ impl Index {
         .authority
         .retain(|file| record.paths.contains(&file.path));
     }
-    self.records.retain(|r| !r.paths.is_empty());
+    self
+      .records
+      .retain(|r| r.error_code.is_some() || !r.paths.is_empty());
     self.scanned.retain(|r| !r.paths.is_empty());
   }
 
@@ -177,7 +233,9 @@ impl Index {
         .authority
         .retain(|file| !keys.contains(&canonical_key(&file.path)));
     }
-    self.records.retain(|r| !r.paths.is_empty());
+    self
+      .records
+      .retain(|r| r.error_code.is_some() || !r.paths.is_empty());
     self.scanned.retain(|r| !r.paths.is_empty());
     self.prune_excluded(scan_root);
   }
@@ -379,6 +437,8 @@ pub(super) fn scan_folder(
           .unwrap_or(0),
         thumbnail: None,
         authority: Vec::new(),
+        display: LibraryDisplay::default(),
+        error_code: None,
       });
     }
   }

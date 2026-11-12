@@ -1,3 +1,5 @@
+import HomeView from '../../src/views/app/HomeView.vue';
+import { downloadSearchQuery } from '../../src/composables/useDownloadList';
 import { mount, flushPromises } from '@vue/test-utils';
 import { defineComponent, ref } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
@@ -398,5 +400,27 @@ describe('row cancellation controls', () => {
       expect(cancel).toHaveBeenCalledWith('group_cancel', { groupId: 'cancel-row', discardFiles: true });
       expect(groups.findGroupById('cancel-row')).toBeUndefined();
     } finally { row.unmount(); }
+  });
+});
+
+describe('list view search lifetime', () => {
+  it('clears search when sidebar type/status or screen changes', async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ name: 'home', path: '/', component: HomeView }, { name: 'settings', path: '/settings', component: { template: '<div />' } }] });
+    await router.push('/');
+    const view = mount(HomeView, { global: { plugins: [router, i18n] } });
+    try {
+      for (const path of ['/?type=audio', '/?status=failed', '/settings']) {
+        downloadSearchQuery.value = 'old search';
+        await router.push(path);
+        await nextTick();
+        expect(downloadSearchQuery.value).toBe('');
+        downloadSearchQuery.value = 'keep search';
+        await router.push(`${path}${path.includes('?') ? '&' : '?'}unrelated=1`);
+        await nextTick();
+        expect(downloadSearchQuery.value).toBe('keep search');
+      }
+      downloadSearchQuery.value = 'leaving';
+    } finally { view.unmount(); }
+    expect(downloadSearchQuery.value).toBe('');
   });
 });

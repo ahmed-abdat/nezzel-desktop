@@ -31,3 +31,10 @@ export interface LoginUsing {
   candidate: LoginCandidate;
   selectedOnly?: boolean;
 }
+
+/** First actual login use: browser family and canonical site only, never profile/cookie data. */
+export interface LoginNotice {
+  token: string;
+  browser: string;
+  host: string;
+}

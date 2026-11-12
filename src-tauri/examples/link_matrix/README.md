@@ -14,6 +14,13 @@ The command above runs anonymously. For a local login run, add:
 --login 'firefox:/absolute/path/to/profile'
 ```
 
+For an anonymous nightly job on Ubuntu or in a Linux container, use
+[`scripts/link-nightly.sh` and its setup instructions](../../../docs/link-nightly.md).
+The harness accepts `LINK_MATRIX_BIN_DIR` (yt-dlp, ffmpeg, ffprobe, deno) and
+`LINK_MATRIX_RESOURCES_DIR` (gallery-dl plus gallery-dl.sha256). These override
+the local macOS app paths and compile-time resource directory. Linux still needs
+an X display and D-Bus session for the windowless Tauri/Wry host.
+
 `--login firefox` uses the browser's default profile; `chrome:Default` is another
 example. This explicitly consents once for every selected row. Fetches, playlist
 children and downloads pass that choice through the app's normal `LoginSession`
@@ -44,7 +51,7 @@ Compare verdicts and attempt traces; investigate failures before releasing.
 `--only linkedin` filters one site; `--only reddit,linkedin` selects either site
 by an exact match on the input's `site` column, for nightly local per-site runs.
 This is opt-in via `link-matrix`; neither the harness nor its network run is in the shipped app or default push tests.
-Inputs stay outside the repository. No input fixtures are copied into it.
+Use public fixtures for repository research matrices. Keep private/account-specific inputs and cookies outside the repository.
 
 ## What runs
 
@@ -71,7 +78,7 @@ Inputs stay outside the repository. No input fixtures are copied into it.
 
 There is no GUI, dispatcher queue, clipboard watcher, tray, Sentry client, vault,
 updater, or persisted owner configuration. Default snapshots use isolated stores.
-Anonymous runs set browser cookies to `none` to prevent profile discovery.
+Anonymous runs set browser cookies to `none` to prevent profile discovery. Gallery cache and file-engine state are isolated inside each run folder; a read-only personal cache cannot turn valid public metadata into a false extraction failure.
 Login runs set automatic mode and supply the explicitly accepted browser on each
 fetch/download entry. Cookie-file runs set only the manual cookie-file setting;
 browser discovery stays disabled. No saved owner credentials or vault are loaded. Harness
@@ -120,11 +127,16 @@ marked as uninvoked fixtures. Notes containing e.g. `4 feedshare images` or
 `3-slide`, and unambiguous labels such as `post-images-3` or
 `status-multi-photo-4`, supply explicit count assertions. Photo counts constrain
 images; a slide count on a mixed post constrains images plus videos. Unknown expectations require a
-verified media file but impose no kind assertion. A `none` expectation cannot
-PASS without files. LOGIN and GONE require explicit diagnostic/error evidence;
+verified media file but impose no kind assertion. `none` passes only on a failed
+pipeline with terminal app code `noMediaFound`; `gone` requires `notFound404` or
+`geoBlocked`. Both require no saved artifacts; earlier fallback codes, ambiguous
+private/unavailable codes, cancellation and timeouts cannot satisfy them. `file`
+requires a nonempty regular output with magic matching its suffix (PDF, ZIP,
+EXE/DLL, MSI, 7z, RAR, gzip/tgz, bzip2, xz, ustar); unknown types fail closed. For a public file without a supported magic signature (for example TXT, CSV or source code), put an independently checked `sha256=<64 hex digits>` token in `note`. That row must match the entire file digest; an incorrect digest, malformed token or empty output fails. This does not relax unannotated rows.
+LOGIN and GONE on other expectations require explicit diagnostic/error evidence;
 403 and 429 remain FAIL. A timeout remains a harness-budget failure.
 
-PASS requires no fatal app event, nonempty final files, ffprobe stream validation,
+Media PASS requires no fatal app event, nonempty final files, ffprobe stream validation,
 and matching expected kinds/counts. Every request must produce new verified files;
 each selected image/video attachment must have a corresponding file, so a
 playlist cannot pass on one child's files after another silently skips. Images

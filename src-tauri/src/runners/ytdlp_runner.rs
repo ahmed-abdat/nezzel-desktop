@@ -80,6 +80,7 @@ pub struct YtdlpRunner<'a> {
   args: Vec<String>,
   cookie_source: Option<(AuthSettings, Option<String>, String)>,
   cookie_access: Option<super::browser_cookies::CookieAccess>,
+  temporary_files: Option<Arc<super::ytdlp_download::DownloadPartial>>,
 }
 
 impl<'a> YtdlpRunner<'a> {
@@ -101,6 +102,7 @@ impl<'a> YtdlpRunner<'a> {
       args,
       cookie_source: None,
       cookie_access: None,
+      temporary_files: None,
     }
   }
 
@@ -313,6 +315,25 @@ impl<'a> YtdlpRunner<'a> {
     self
   }
 
+  pub(crate) fn with_temporary_files(
+    mut self,
+    stage: Arc<super::ytdlp_download::DownloadPartial>,
+  ) -> Self {
+    if let Some(index) = self.args.iter().rposition(|arg| arg == "-o") {
+      let location = super::ytdlp_args::temporary_location_args(&self.args[index + 1], &stage.path);
+      self.args.splice(index..=index + 1, location);
+    }
+    // Destination logs refer to the private path until MoveFiles runs. Report the final receipt too.
+    self.args.extend([
+      "--print".into(),
+      "after_move:NEZZEL_FINAL|%(filepath)j".into(),
+      "--no-quiet".into(),
+      "--no-simulate".into(),
+    ]);
+    self.temporary_files = Some(stage);
+    self
+  }
+
   pub fn with_resolved_input(self, input: &crate::resolve::ResolvedInput) -> Self {
     self.with_args(input.args())
   }
@@ -369,7 +390,8 @@ impl<'a> YtdlpRunner<'a> {
       .map_or((&defaults, None, ""), |(settings, browser, source)| {
         (settings, browser.as_deref(), source.as_str())
       });
-    super::browser_cookies::CookieAccess::prepare(
+    super::browser_cookies::CookieAccess::prepare_for_app(
+      self.app,
       settings,
       browser,
       source,
@@ -400,9 +422,11 @@ impl<'a> YtdlpRunner<'a> {
 
     configure_command(&mut command).map_err(|e| format!("yt-dlp spawn setup failed: {e}"))?;
 
+    cookies.check_live_consent().map_err(str::to_owned)?;
     let mut raw_child = command
       .spawn()
       .map_err(|e| format!("yt-dlp failed to spawn: {e}"))?;
+    cookies.announce_used();
     let stdout = raw_child.stdout.take();
     let stderr = raw_child.stderr.take();
 
@@ -428,7 +452,9 @@ impl<'a> YtdlpRunner<'a> {
     let wait_tx = tx.clone();
     let reap_token = platform.reap_token();
     let child_cookies = cookies.clone();
+    let temporary_files = self.temporary_files.take();
     thread::spawn(move || {
+      let _temporary_files = temporary_files;
       let _process_guard = process_guard;
       let cookie_guard = cookies;
       let status = raw_child.wait();

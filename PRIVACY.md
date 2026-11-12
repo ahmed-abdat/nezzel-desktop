@@ -49,13 +49,17 @@ Turn it off and nothing is sent; anything not yet sent is deleted. Builds made w
 
 ## Browser logins (cookies)
 
-Some links only work when you're signed in. Nezzel never reads your browser's cookies until you agree:
+Some links only work when you're signed in. **Browser logins are used automatically by default** when a site needs them, without a consent question. Turn them off at **Settings → Logins → Use browser logins automatically**. An earlier explicit refusal or off setting stays off after an update.
 
-- When a site asks for a login, Nezzel asks whether to use the browser you're signed in with, for that site.
-- Only that site's cookies are passed to yt-dlp (for example `x.com` and `twitter.com` count as one site). Cookies for other sites are left alone.
-- The cookies go into a temporary file only your user can read, and it is deleted when the download ends. Leftovers from a crash are removed at the next start.
-- If you say yes, Nezzel remembers which browser you chose for that site, never the cookie values. You can turn on **Always use my browser logins** to skip the question.
-- Under Settings → Logins you can instead pick a browser yourself (yt-dlp then reads that browser's cookies for every download) or load a `cookies.txt` file.
+- Nezzel tries its own saved session, Firefox, Chromium-family browsers, then Safari. It accepts a source only when it has the site's required, nonempty, unexpired login cookies. Windows App-Bound encrypted browser sessions are skipped.
+- Only that site's domain cookies are passed to the download tools and used to authenticate with that site (for example `x.com` and `twitter.com` share a login). They are never uploaded to Nezzel or included in logs, Sentry reports or usage counts.
+- To find a session, Nezzel checks browser profile names and cookie metadata. A Chromium/Safari helper may read the browser's full cookie store into a protected **local** temporary export. Nezzel extracts the target site's cookies and deletes that full export before starting the download; other sites' cookies are never passed to the downloader.
+- Temporary jars are readable only by your user (0600 on Unix) and deleted after use. Leftovers from a crash are removed at the next start. Your browser's own profile is not modified.
+- If no browser source works, supported sites can open a Nezzel sign-in window. Its per-site session stays on your computer. The window is restricted to the site's HTTPS login domains, cannot open other windows, and has no access to Nezzel commands. If Google rejects embedded sign-in, Nezzel offers Firefox or a `cookies.txt` file instead.
+- The first time a browser login is actually used, Nezzel shows a one-time, non-blocking notice with a link to the off switch. It is remembered after the notice is displayed; no answer is needed to continue downloading.
+- Under **Settings → Logins → Advanced**, you can choose a browser or load a `cookies.txt` file. Manual files are also copied into temporary jars containing only the target site's cookies; the original file is unchanged.
+
+Browser/session storage and temporary files stay on your computer. Authentication cookies are sent only to the site they belong to as needed for your download, never to our reporting or usage services.
 
 ## Clipboard
 

@@ -11,7 +11,7 @@ use std::{
     atomic::{AtomicBool, AtomicU64},
     Mutex,
   },
-  time::Instant,
+  time::{Duration, Instant},
 };
 
 /// What a capture window asks for, by its wire word (`capture_action`, the main window's queue, usage keys).
@@ -55,6 +55,8 @@ impl Action {
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Offer {
+  #[serde(skip)]
+  pub(super) read_limit: Duration,
   pub remote_images: bool,
   pub id: u64,
   pub url: String,
@@ -74,6 +76,18 @@ pub struct Offer {
 }
 
 impl Offer {
+  pub(super) fn read_limit(&self) -> Duration {
+    self.read_limit.max(super::read::READ_LIMIT)
+  }
+
+  pub(super) fn card_limit(&self) -> Duration {
+    self.read_limit() + Duration::from_secs(5)
+  }
+
+  pub(super) fn item_wait(&self) -> Duration {
+    self.read_limit() * 2 + Duration::from_secs(6)
+  }
+
   pub(super) fn with_network(network: &crate::state::config_models::NetworkSettings) -> Self {
     Self {
       remote_images: network.enable_proxy != Some(true),
@@ -366,6 +380,7 @@ impl Offers {
 }
 
 pub struct CaptureState {
+  pub(super) youtube_cold_spent: AtomicBool,
   pub(super) policy: Mutex<CapturePolicy>,
   pub(super) offers: Mutex<Offers>,
   pub(super) sequence: AtomicU64,
@@ -382,6 +397,7 @@ pub struct CaptureState {
   pub(crate) shortcut_reason: Mutex<Option<&'static str>>,
   /// Whether the Wayland compositor offers data-control (background clipboard reads); probed once.
   pub(super) data_control: tokio::sync::OnceCell<bool>,
+  pub(super) wl_paste: tokio::sync::OnceCell<super::clipboard::WlPaste>,
   /// Whether the main window had focus when the quick bar opened; when it didn't, closing the
   /// bar gives focus back to the app the user came from instead of raising the main window.
   pub(super) main_was_focused: AtomicBool,
@@ -390,9 +406,18 @@ pub struct CaptureState {
   pub(super) pending: Mutex<Outbox>,
 }
 
+impl CaptureState {
+  pub(crate) fn tools_changed(&self) {
+    self
+      .youtube_cold_spent
+      .store(false, std::sync::atomic::Ordering::Relaxed);
+  }
+}
+
 impl Default for CaptureState {
   fn default() -> Self {
     Self {
+      youtube_cold_spent: AtomicBool::new(false),
       policy: Mutex::default(),
       offers: Mutex::default(),
       sequence: AtomicU64::new(0),
@@ -406,6 +431,7 @@ impl Default for CaptureState {
       shortcut_failed: AtomicBool::new(false),
       shortcut_reason: Mutex::default(),
       data_control: tokio::sync::OnceCell::new(),
+      wl_paste: tokio::sync::OnceCell::new(),
       main_was_focused: AtomicBool::new(false),
       main_is_focused: AtomicBool::new(false),
       pending: Mutex::default(),
@@ -466,7 +492,15 @@ pub(super) fn adopt_on_focus(state: &CaptureState) -> Option<(CaptureWindow, Cap
 }
 
 pub(super) async fn wait_for_item(state: &CaptureState, id: u64) -> Option<serde_json::Value> {
-  tokio::time::timeout(super::read::ITEM_WAIT, async {
+  let limit = {
+    let offers = state.offers.lock().unwrap();
+    CaptureWindow::ALL
+      .into_iter()
+      .find_map(|window| offers.holding(window, id))
+      .map(|slot| slot.offer.item_wait())
+      .unwrap_or_default()
+  };
+  tokio::time::timeout(limit, async {
     loop {
       let notified = state.changed.notified();
       tokio::pin!(notified);
@@ -913,8 +947,15 @@ pub(super) mod tests {
   async fn preview_completion_covers_success_failure_replacement_and_timeout() {
     let state = CaptureState::default();
     pending_offer(&state, CaptureWindow::Card, true);
-    // Tokio's paused clock advances through the timeout without waiting in real time.
-    assert!(wait_for_item(&state, 1).await.is_none());
+    // The item wait uses the offer's captured budget, not the current global cold flag.
+    for (read_secs, wait_secs) in [(20, 46), (60, 126)] {
+      edit_slot(&state, CaptureWindow::Card, |slot| {
+        slot.offer.read_limit = Duration::from_secs(read_secs);
+      });
+      let start = tokio::time::Instant::now();
+      assert!(wait_for_item(&state, 1).await.is_none());
+      assert_eq!(start.elapsed(), Duration::from_secs(wait_secs));
+    }
     let item = serde_json::json!({ "title": "Finished" });
     edit_slot(&state, CaptureWindow::Card, |slot| {
       slot.metadata = Some(Some(item.clone()));

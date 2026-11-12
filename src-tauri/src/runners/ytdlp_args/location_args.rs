@@ -69,7 +69,10 @@ pub fn build_location_args(
           "%(title).200B.%(ext)s"
         }
       } else {
-        "%(title).200B-(%(height)sp%(fps|).0d).%(ext)s"
+        match template_context.values.get("height") {
+          Some(height) if height.is_empty() || height == "0" => "%(title).200B.%(ext)s",
+          _ => "%(title).200B-(%(height)sp%(fps|).0d).%(ext)s",
+        }
       }
     }
     "%(title).200s-(%(abr)dk).%(ext)s" => "%(title).200B-(%(abr)dk).%(ext)s",
@@ -94,4 +97,37 @@ pub fn path_preferences_for(
     prefs.audio_download_dir = None;
   }
   prefs
+}
+
+/// Absolute -o bypasses yt-dlp's temporary path. Keep the same final destination relative to its
+/// filesystem anchor, so nested/custom templates still expand in -o, while parts stay private.
+pub fn temporary_location_args(output: &str, temporary: &Path) -> Vec<String> {
+  let path = Path::new(output);
+  let absolute = if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    std::env::current_dir()
+      .unwrap_or_else(|_| PathBuf::from("."))
+      .join(path)
+  };
+  let mut normalized = PathBuf::new();
+  for part in absolute.components() {
+    match part {
+      std::path::Component::ParentDir => {
+        normalized.pop();
+      }
+      std::path::Component::CurDir => {}
+      _ => normalized.push(part.as_os_str()),
+    }
+  }
+  let anchor = normalized.ancestors().last().unwrap();
+  let relative = normalized.strip_prefix(anchor).unwrap();
+  vec![
+    "--paths".into(),
+    format!("home:{}", anchor.display()),
+    "--paths".into(),
+    format!("temp:{}", temporary.display()),
+    "-o".into(),
+    relative.to_string_lossy().into_owned(),
+  ]
 }

@@ -4,7 +4,7 @@
     "showOrHide": "Pencere Gizle/Göster",
     "addToQueue": "Panodan ekle",
     "addAndDownload": "Panodan ekle ve indir",
-    "downloadQueue": "Sırayı indir",
+    "downloadQueue": "Kuyruktaki öğeleri indir",
     "shortcuts": {
       "ctrlShiftV": "Ctrl + Shift + V",
       "ctrlShiftD": "Ctrl + Shift + D",

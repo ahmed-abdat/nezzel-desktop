@@ -4,7 +4,7 @@
     "showOrHide": "Mostrar/Ocultar ventana",
     "addToQueue": "Agregar desde el portapapeles",
     "addAndDownload": "Agregar y descargar del portapapeles",
-    "downloadQueue": "Descargar cola",
+    "downloadQueue": "Descargar elementos en cola",
     "shortcuts": {
       "ctrlShiftV": "Ctrl + Shift + V",
       "ctrlShiftD": "Ctrl + Shift + D",

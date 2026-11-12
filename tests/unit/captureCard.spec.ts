@@ -29,7 +29,20 @@ describe('copied-link card engagement', () => {
   });
   afterEach(() => {
     card.unmount();
+    vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it('checks native hover even without an enter event, including when first shown under the pointer', async () => {
+    expect(reports().at(-1)).toEqual({ id: 1, engaged: false });
+    const before = reports().length;
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(reports()).toHaveLength(before + 4);
+    expect(reports().at(-1)).toEqual({ id: 1, engaged: false });
+    card.unmount();
+    const stopped = reports().length;
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(reports()).toHaveLength(stopped);
   });
 
   it.each(['pointerenter', 'pointerdown', 'click'])('holds on %s, including without a hover event, until leave', async (event) => {
@@ -78,7 +91,7 @@ describe('copied-link card engagement', () => {
     expect(reports().at(-1)).toEqual({ id: 1, engaged: false });
   });
 
-  it('renews engagement every three seconds and stops renewing after leave', async () => {
+  it('renews engagement every three seconds and checks native hover after leave', async () => {
     await card.get('section').trigger('pointerdown');
     const before = reports().length;
     await vi.advanceTimersByTimeAsync(6000);
@@ -86,7 +99,8 @@ describe('copied-link card engagement', () => {
     await card.get('section').trigger('pointerleave');
     const released = reports().length;
     await vi.advanceTimersByTimeAsync(12_000);
-    expect(reports().length).toBe(released);
+    expect(reports().length).toBe(released + 4);
+    expect(reports().at(-1)).toEqual({ id: 1, engaged: false });
   });
 
   it('clears engagement and the open menu when the reused native card is hidden', async () => {

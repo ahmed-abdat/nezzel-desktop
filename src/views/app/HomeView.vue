@@ -164,6 +164,7 @@ import { useSettingsStore } from '../../stores/settings';
 import { shortcutKeys } from '../../helpers/shortcut';
 import { LIST_SEARCH_ID } from '../../helpers/domIds';
 import { useCaptureShortcut } from '../../composables/useCaptureShortcut';
+import { useCapturePlatform } from '../../composables/useCapturePlatform';
 import SelectionBar from '../../components/downloads/SelectionBar.vue';
 import { useDownloadSelection } from '../../composables/useDownloadSelection';
 import DownloadRow from '../../components/downloads/DownloadRow.vue';
@@ -194,6 +195,7 @@ const { defaultChoice, compactRows, showThumbnails } = useUiPrefs();
 const isStarting = ref(false);
 const { isMac } = usePlatform();
 const captureShortcut = useCaptureShortcut();
+const capturePlatform = useCapturePlatform();
 const settingsStore = useSettingsStore();
 
 /** Product name: never translated, isolated as a Latin run inside RTL text. */
@@ -206,7 +208,7 @@ const hints = computed(() => {
   const quick = accelerator ? shortcutKeys(accelerator, isMac.value) : [];
   return [
     { key: 'paste', icon: ClipboardPaste, textKey: 'downloads.empty.hintPaste', keys: shortcutKeys('CommandOrControl+V', isMac.value) },
-    { key: 'quick', icon: Zap, textKey: quick.length ? 'downloads.empty.hintQuick' : 'downloads.field.captureSettings', keys: quick },
+    ...(capturePlatform.session === 'wayland' ? [] : [{ key: 'quick', icon: Zap, textKey: quick.length ? 'downloads.empty.hintQuick' : 'downloads.field.captureSettings', keys: quick }]),
     { key: 'copied', icon: ClipboardCheck, textKey: 'downloads.empty.hintCopied', keys: [] as string[] },
   ];
 });
@@ -214,6 +216,12 @@ const hints = computed(() => {
 const headCls = 'sticky top-0 z-[1] flex items-center gap-2 border-b border-hairline bg-background/90 pe-4 ps-8 py-1.5 text-[11.5px] font-semibold text-muted-foreground backdrop-blur';
 
 const view = computed(() => parseListView(route.query));
+watch([() => route.name, () => view.value.type, () => view.value.status], () => {
+  query.value = '';
+});
+onBeforeUnmount(() => {
+  query.value = '';
+});
 const failedCount = computed(() => categoryNoticeCount(rows.value, view.value.type));
 function showFailures() {
   query.value = '';

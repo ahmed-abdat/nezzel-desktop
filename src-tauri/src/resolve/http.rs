@@ -250,7 +250,16 @@ pub(crate) async fn inspect<T: Transport>(
   transport: &T,
   url: Url,
 ) -> Result<Inspection, FetchError> {
-  let head = inspect_request(transport, url.clone(), false).await;
+  inspect_with_host(transport, url, |_| true).await
+}
+
+/// Site short links must keep every HEAD/GET hop on the site's own hosts.
+pub(crate) async fn inspect_with_host<T: Transport>(
+  transport: &T,
+  url: Url,
+  accepts_host: fn(&str) -> bool,
+) -> Result<Inspection, FetchError> {
+  let head = inspect_request(transport, url.clone(), false, accepts_host).await;
   match head {
     Ok(result)
       if (200..300).contains(&result.response.status)
@@ -263,8 +272,8 @@ pub(crate) async fn inspect<T: Transport>(
     Ok(result) if matches!(result.response.status, 401 | 403 | 404 | 410 | 429) => {
       Err(FetchError::Status)
     }
-    Ok(result) => inspect_request(transport, result.url, true).await,
-    Err(FetchError::Status) => inspect_request(transport, url, true).await,
+    Ok(result) => inspect_request(transport, result.url, true, accepts_host).await,
+    Err(FetchError::Status) => inspect_request(transport, url, true, accepts_host).await,
     Err(error) => Err(error),
   }
 }
@@ -273,10 +282,14 @@ async fn inspect_request<T: Transport>(
   transport: &T,
   mut url: Url,
   range: bool,
+  accepts_host: fn(&str) -> bool,
 ) -> Result<Inspection, FetchError> {
   let mut seen = HashSet::new();
   for hop in 0..=3 {
     https_url(url.as_str())?;
+    if !url.host_str().is_some_and(accepts_host) {
+      return Err(FetchError::Redirect);
+    }
     transport.admit_media(&url).await?;
     if !seen.insert(url.clone()) {
       return Err(FetchError::Redirect);

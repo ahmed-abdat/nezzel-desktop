@@ -13,7 +13,7 @@
         :class="nudge && 'placeholder:text-foreground/80'"
         type="text"
         inputmode="url"
-        :dir="url ? 'auto' : undefined"
+        :dir="url ? 'auto' : clipboardHasValidUrl ? 'ltr' : undefined"
         autocomplete="off"
         autocorrect="off"
         autocapitalize="off"
@@ -104,17 +104,20 @@ import { usePlatform } from '../../composables/usePlatform';
 import { useToastStore } from '../../stores/toast';
 import { useLinkIntake } from '../../composables/useLinkIntake';
 import { useCaptureShortcut } from '../../composables/useCaptureShortcut';
+import { useCapturePlatform } from '../../composables/useCapturePlatform';
 import { useSettingsStore } from '../../stores/settings';
 import { shortcutLabel } from '../../helpers/shortcut';
 
 const { t } = useI18n();
 const router = useRouter();
-const { url, placeholder, canSubmit, submit, importFile, hasActiveInputFilters, watchClipboard } = useLinkIntake();
+const { url, placeholder, clipboardHasValidUrl, canSubmit, submit, importFile, hasActiveInputFilters, watchClipboard } = useLinkIntake();
 const { isMac } = usePlatform();
 const capture = useCaptureShortcut();
+const capturePlatform = useCapturePlatform();
 const settings = useSettingsStore();
 const clipboardTip = computed(() => {
   const state = watchClipboard.enabled ? t('downloads.field.watchOnTip') : t('downloads.field.watchOffTip');
+  if (capturePlatform.session === 'wayland') return state;
   const shortcut = settings.settings.input.globalShortcuts && !capture.failed && capture.active;
   return t('downloads.field.clipboardTip', {
     state,

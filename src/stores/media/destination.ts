@@ -2,7 +2,7 @@ import { ref } from 'vue';
 import { defineStore } from 'pinia';
 import { MediaDestinationPayload } from '../../tauri/types/destination';
 
-export type MediaDestination = { path: string; confidence: number };
+export type MediaDestination = { path: string; confidence: number; alreadyDownloaded?: boolean };
 
 export const useMediaDestinationStore = defineStore('media-destination', () => {
   const destinations = ref<Record<string, MediaDestination[]>>({});

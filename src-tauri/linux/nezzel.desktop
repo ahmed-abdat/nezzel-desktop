@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+{{#if comment}}Comment={{comment}}{{/if}}
+Exec={{exec}}
+Icon={{icon}}
+Terminal=false
+Categories=AudioVideo;Network;

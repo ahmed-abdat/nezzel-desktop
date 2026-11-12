@@ -1209,11 +1209,6 @@
         "shortMessage": "조각 재시도 중",
         "message": "조각 다운로드에 실패하여 자동으로 재시도합니다."
       },
-      "facebookVideoUnavailable": {
-        "shortMessage": "Facebook에서 이 동영상을 제공하지 않았습니다",
-        "message": "Facebook에서 Nezzel에 이 동영상을 제공하지 않았습니다. 브라우저에서 링크를 열고 주소 표시줄의 링크를 복사하거나 나중에 다시 시도하세요.",
-        "action": "브라우저 주소 표시줄의 링크를 복사하거나 나중에 다시 시도하세요"
-      },
       "unknown": {
         "shortMessage": "알 수 없는 오류",
         "message": "이 항목을 처리하는 중 알 수 없는 오류가 발생했습니다."

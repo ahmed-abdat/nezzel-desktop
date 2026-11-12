@@ -1,4 +1,4 @@
-import { isValidUrl } from './url.ts';
+import { isValidUrl, normalizePastedUrl } from './url.ts';
 import { i18n } from '../i18n';
 import { ToastStyle } from '../stores/toast.ts';
 
@@ -19,13 +19,13 @@ function unique(urls: string[]): string[] {
 }
 
 function normalizeUrlCandidate(value: string): string {
-  return value.trim().replace(/[),.;!?]+$/g, '');
+  return normalizePastedUrl(value.trim().replace(/[),.;!?]+$/g, ''));
 }
 
 export function parseUrlInputText(text: string): ParsedUrlImport {
   const tokens = text
     .split(/[\s,]+/)
-    .map(token => token.trim())
+    .map(token => normalizePastedUrl(token))
     .filter(Boolean);
 
   const urls = unique(tokens.filter(token => isValidUrl(token)));

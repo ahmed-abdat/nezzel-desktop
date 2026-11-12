@@ -470,6 +470,16 @@ mod tests {
         ),
       ),
       ("firefox::none", source(Firefox, None, None, Some("none"))),
+      ("firefox::Work", source(Firefox, None, None, Some("Work"))),
+      (
+        r"firefox:C:\Users\me\Firefox\main::Work",
+        source(
+          Firefox,
+          None,
+          Some(r"C:\Users\me\Firefox\main"),
+          Some("Work"),
+        ),
+      ),
       (
         "firefox:p :: Shopping",
         source(Firefox, None, Some("p"), Some("Shopping")),

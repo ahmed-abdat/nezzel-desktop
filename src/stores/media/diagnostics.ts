@@ -87,6 +87,7 @@ export const useMediaDiagnosticsStore = defineStore('media-diagnostics', () => {
       stateStore.setGroupState(groupId, MediaState.error);
       void notifyGroup(NotificationKind.DownloadFailed, group, { message: payload.message });
     }
+    mediaStore.rememberFailedGroup(groupId);
   }
 
   function findFatalsByGroupId(groupId: string): MediaFatal[] {

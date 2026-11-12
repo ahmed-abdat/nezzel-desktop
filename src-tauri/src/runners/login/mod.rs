@@ -1,9 +1,12 @@
 //! Site login through a browser profile: shared vocabulary and discovery cache.
 //! `session` drives one fetch/download, `registry` holds waiting requests and the
 //! Tauri commands, `consent` remembers which browser a host or row may use.
-mod consent;
+pub(crate) mod automatic;
+pub(crate) mod consent;
+pub(crate) mod notice;
 pub(crate) mod registry;
 mod session;
+pub(crate) mod webview_session;
 
 use super::browser_cookies::site_key;
 use super::browser_logins::{discover, BrowserCandidate};
@@ -15,7 +18,8 @@ use std::{
   time::{Duration, Instant},
 };
 
-pub(crate) use consent::{forget_row_browser, row_browser};
+pub(crate) use consent::{forget_row_browser, global_consent, migrate_global_consent, row_browser};
+pub(crate) const NEZZEL_SESSION: &str = "__nezzel_session__";
 pub use registry::{forget_group, LoginRequest};
 #[cfg(test)]
 pub(crate) use session::test_consented_session;

@@ -1,4 +1,4 @@
-//! The yt-dlp update flow: release input validation, daily check and install, and a rollback-safe whole-bundle swap.
+//! The yt-dlp update flow: trusted manifest pins, daily check and install, and a rollback-safe whole-bundle swap.
 use std::{
   cmp::Ordering,
   io,
@@ -6,7 +6,6 @@ use std::{
 };
 
 use std::{
-  collections::HashMap,
   sync::Arc,
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -19,6 +18,7 @@ use super::binaries_manager::{
   BUNDLED_MANIFEST, SMALL_REQUEST_TIMEOUT,
 };
 use super::{bundled_tools, YTDLP_PROCESSES};
+use std::collections::HashMap;
 
 pub(super) const LATEST_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest";
 pub(super) const CURRENT_DIR: &str = ".yt-dlp-current";
@@ -151,6 +151,68 @@ pub(super) fn checksum_for(sums: &str, asset: &str) -> Option<String> {
   found
 }
 
+fn signed_updates(key: Option<&str>) -> bool {
+  key.is_some_and(|value| !value.trim().is_empty())
+}
+
+// Signed mode cannot consume unsigned release URLs/checksums, even on fetch failure.
+fn select_update(
+  pinned: &ToolInfo,
+  arch: &str,
+  public_key: Option<&str>,
+  upstream: Option<(&str, &str)>,
+) -> Result<ToolInfo, AnyError> {
+  if signed_updates(public_key) {
+    return Ok(pinned.clone());
+  }
+  let (tag, sums) = upstream.ok_or("upstream release metadata missing")?;
+  let location = format!("https://github.com/yt-dlp/yt-dlp/releases/tag/{tag}");
+  if release_tag(&location).is_none() {
+    return Err("invalid latest yt-dlp release tag".into());
+  }
+  let (_, pinned_file) =
+    BinariesManager::select_file(&pinned.files, arch).ok_or("no yt-dlp asset for platform")?;
+  let asset = pinned_file
+    .url
+    .rsplit('/')
+    .next()
+    .filter(|name| !name.is_empty())
+    .ok_or("yt-dlp asset name missing")?;
+  if !asset
+    .bytes()
+    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+  {
+    return Err("invalid yt-dlp asset name".into());
+  }
+  let mut file = pinned_file.clone();
+  file.sha256 = checksum_for(sums, asset).ok_or("yt-dlp asset checksum absent or invalid")?;
+  file.url = format!("https://github.com/yt-dlp/yt-dlp/releases/download/{tag}/{asset}");
+  file.version = None;
+  Ok(ToolInfo {
+    version: tag.into(),
+    rollback: false,
+    files: HashMap::from([(arch.into(), file)]),
+  })
+}
+
+fn update_allowed(
+  candidate: &str,
+  installed: &str,
+  embedded: &str,
+  signed: bool,
+  rollback: bool,
+) -> Result<bool, AnyError> {
+  let installed_order =
+    compare_versions(candidate, installed).ok_or("invalid installed yt-dlp version")?;
+  let embedded_order =
+    compare_versions(candidate, embedded).ok_or("invalid embedded yt-dlp version")?;
+  Ok(
+    installed_order != Ordering::Equal
+      && ((signed && rollback)
+        || (installed_order == Ordering::Greater && embedded_order != Ordering::Less)),
+  )
+}
+
 pub(super) fn check_due(last_check: Option<u64>, now: u64) -> bool {
   last_check.is_none_or(|last| now.saturating_sub(last) >= 24 * 60 * 60)
 }
@@ -257,10 +319,12 @@ pub(super) fn swap_bundle(
   Ok(())
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct CheckAttempt {
   pub(super) checked_at: u64,
   pub(super) previous: Option<u64>,
+  pub(super) rollback_from: Option<String>,
+  pub(super) manifest_generated_at: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -314,9 +378,49 @@ async fn commit_ytdlp(
   if meta.is_locked {
     return Ok(InstallOutcome::Locked);
   }
+  // Only a signed remote pin can roll back; a superseding check cancels that authority.
+  let rollback_from = attempt
+    .as_ref()
+    .filter(|attempt| {
+      meta.ytdlp_last_check == Some(attempt.checked_at) && attempt.manifest_generated_at.is_some()
+    })
+    .and_then(|attempt| attempt.rollback_from.as_deref());
+  if let Some(generated_at) = attempt
+    .as_ref()
+    .and_then(|attempt| attempt.manifest_generated_at.as_deref())
+  {
+    let Some(last) = meta.manifest_generated_at.as_deref() else {
+      return Ok(InstallOutcome::UpToDate);
+    };
+    if super::binaries_manager::manifest_time(generated_at)?
+      != super::binaries_manager::manifest_time(last)?
+    {
+      return Ok(InstallOutcome::UpToDate);
+    }
+  }
+  let embedded: Manifest = serde_json::from_slice(BUNDLED_MANIFEST)?;
+  let embedded_version = &embedded
+    .tools
+    .get("yt-dlp")
+    .ok_or("yt-dlp absent from embedded manifest")?
+    .version;
+  let installed = meta
+    .versions
+    .get("yt-dlp")
+    .map(String::as_str)
+    .unwrap_or(embedded_version);
+  let rollback = rollback_from == Some(installed);
+  if !rollback
+    && (compare_versions(version, installed).ok_or("invalid installed yt-dlp version")?
+      == Ordering::Less
+      || compare_versions(version, embedded_version).ok_or("invalid embedded yt-dlp version")?
+        == Ordering::Less)
+  {
+    return Ok(InstallOutcome::UpToDate);
+  }
   // Another installer may have won while the archive was downloading.
   if meta.versions.get("yt-dlp").is_some_and(|installed| {
-    compare_versions(installed, version).is_some_and(|order| order != Ordering::Less)
+    installed == version
       && bundled_tools::verified_repair(&executable(bin), "yt-dlp", installed, "", "")
   }) {
     return Ok(InstallOutcome::UpToDate);
@@ -497,69 +601,83 @@ impl BinariesManager {
       let attempt = CheckAttempt {
         checked_at: now,
         previous: meta.ytdlp_last_check,
+        rollback_from: None,
+        manifest_generated_at: None,
       };
       // Persist failures too, but never hold the operation mutex during network work.
       meta.ytdlp_last_check = Some(now);
       self.save_metadata(&meta_path, &meta)?;
       (old, attempt)
     };
-    let response = client
-      .get(LATEST_URL)
-      .timeout(SMALL_REQUEST_TIMEOUT)
-      .send()
-      .await?;
-    // Reuse this existing HTTP exchange as online evidence; never add a connectivity probe.
-    crate::diagnostics::send::network_response_received();
-    let response = response.error_for_status()?;
-    let tag = redirect_tag(
-      response.status().as_u16(),
-      response
-        .headers()
-        .get(reqwest::header::LOCATION)
-        .and_then(|value| value.to_str().ok()),
-    )?
-    .to_string();
-    if compare_versions(&tag, &old).ok_or("invalid installed yt-dlp version")? != Ordering::Greater
-    {
-      tracing::info!("yt-dlp up to date");
-      return Ok(true);
-    }
-    let manifest = self.fetch_manifest(&client).await?;
-    let arch = Self::current_platform();
+    let public_key = option_env!("NEZZEL_MANIFEST_PUBKEY");
+    let manifest = if signed_updates(public_key) {
+      self.fetch_manifest(&client).await?
+    } else {
+      serde_json::from_slice(BUNDLED_MANIFEST)?
+    };
     let pinned = manifest
       .tools
       .get("yt-dlp")
       .ok_or("yt-dlp absent from manifest")?;
-    let (_, pinned_file) =
-      Self::select_file(&pinned.files, &arch).ok_or("no yt-dlp asset for platform")?;
-    let asset = pinned_file
-      .url
-      .rsplit('/')
-      .next()
-      .filter(|name| !name.is_empty())
-      .ok_or("yt-dlp asset name missing")?;
-    if !asset
-      .bytes()
-      .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-    {
-      return Err("invalid yt-dlp asset name".into());
+    let arch = Self::current_platform();
+    let info = if signed_updates(public_key) {
+      select_update(pinned, &arch, public_key, None)?
+    } else {
+      let response = client
+        .get(LATEST_URL)
+        .timeout(SMALL_REQUEST_TIMEOUT)
+        .send()
+        .await?;
+      crate::diagnostics::send::network_response_received();
+      let response = response.error_for_status()?;
+      let tag = redirect_tag(
+        response.status().as_u16(),
+        response
+          .headers()
+          .get(reqwest::header::LOCATION)
+          .and_then(|value| value.to_str().ok()),
+      )?
+      .to_string();
+      if compare_versions(&tag, &old).ok_or("invalid installed yt-dlp version")?
+        != Ordering::Greater
+      {
+        return Ok(true);
+      }
+      let sums = client
+        .get(format!(
+          "https://github.com/yt-dlp/yt-dlp/releases/download/{tag}/SHA2-256SUMS"
+        ))
+        .timeout(SMALL_REQUEST_TIMEOUT)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+      select_update(pinned, &arch, public_key, Some((&tag, &sums)))?
+    };
+    let embedded: Manifest = serde_json::from_slice(BUNDLED_MANIFEST)?;
+    let floor = &embedded
+      .tools
+      .get("yt-dlp")
+      .ok_or("yt-dlp absent from embedded manifest")?
+      .version;
+    let rollback = manifest.verified_remote && info.rollback;
+    if !update_allowed(
+      &info.version,
+      &old,
+      floor,
+      manifest.verified_remote,
+      info.rollback,
+    )? {
+      return Ok(true);
     }
-    let base = format!("https://github.com/yt-dlp/yt-dlp/releases/download/{tag}");
-    let sums = client
-      .get(format!("{base}/SHA2-256SUMS"))
-      .timeout(SMALL_REQUEST_TIMEOUT)
-      .send()
-      .await?
-      .error_for_status()?
-      .text()
-      .await?;
-    let mut file = pinned_file.clone();
-    file.sha256 = checksum_for(&sums, asset).ok_or("yt-dlp asset checksum absent or invalid")?;
-    file.url = format!("{base}/{asset}");
-    file.version = None;
-    let info = ToolInfo {
-      version: tag.clone(),
-      files: HashMap::from([(arch.clone(), file)]),
+    let tag = &info.version;
+    let attempt = CheckAttempt {
+      rollback_from: rollback.then(|| old.clone()),
+      manifest_generated_at: manifest
+        .verified_remote
+        .then(|| manifest.generated_at.clone()),
+      ..attempt
     };
     match self
       .install_ytdlp(&client, &arch, &info, Some(attempt))
@@ -628,6 +746,54 @@ impl BinariesManager {
 mod tests {
   use super::*;
   use crate::binaries::binaries_manager::Metadata;
+
+  #[test]
+  fn manifest_updates_require_floor_or_explicit_signed_rollback() {
+    for (candidate, installed, embedded, signed, rollback, allowed) in [
+      ("2026.11.01", "2026.11.12", "2026.10.26", true, false, false),
+      ("2026.10.01", "2026.09.01", "2026.10.26", true, false, false),
+      ("2026.11.01", "2026.11.12", "2026.10.26", true, true, true),
+      ("2026.10.01", "2026.09.01", "2026.10.26", true, true, true),
+      ("2026.11.01", "2026.11.12", "2026.10.26", false, true, false),
+      ("2026.11.13", "2026.11.12", "2026.10.26", false, false, true),
+    ] {
+      assert_eq!(
+        update_allowed(candidate, installed, embedded, signed, rollback).unwrap(),
+        allowed
+      );
+    }
+  }
+
+  #[test]
+  fn signing_key_selects_only_manifest_pins_otherwise_upstream_checksums() {
+    let manifest: Manifest = serde_json::from_slice(BUNDLED_MANIFEST).unwrap();
+    let pinned = &manifest.tools["yt-dlp"];
+    let arch = "darwin-aarch64";
+    let sums = format!("{}  yt-dlp_macos.zip\n", "a".repeat(64));
+    for key in [
+      None,
+      Some(""),
+      Some("  "),
+      Some("configured"),
+      Some("invalid-key"),
+    ] {
+      let candidate = select_update(pinned, arch, key, Some(("2026.11.12", &sums))).unwrap();
+      if key.is_some_and(|value| !value.trim().is_empty()) {
+        assert_eq!(candidate.version, pinned.version);
+        assert_eq!(candidate.files[arch].sha256, pinned.files[arch].sha256);
+        assert_eq!(candidate.files[arch].url, pinned.files[arch].url);
+        assert!(select_update(pinned, arch, key, None).is_ok());
+      } else {
+        assert_eq!(candidate.version, "2026.11.12");
+        assert_eq!(candidate.files[arch].sha256, "a".repeat(64));
+        assert_eq!(
+          candidate.files[arch].url,
+          "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.12/yt-dlp_macos.zip"
+        );
+        assert!(select_update(pinned, arch, key, Some(("2026.11.12", "bad"))).is_err());
+      }
+    }
+  }
 
   #[test]
   fn location_accepts_only_stable_release_tags() {
@@ -916,13 +1082,15 @@ mod tests {
     let attempt = Some(CheckAttempt {
       checked_at: 86500,
       previous: Some(100),
+      rollback_from: None,
+      manifest_generated_at: None,
     });
     assert_eq!(
       super::commit_ytdlp(
         &root,
         &staged,
         "2026.11.01",
-        attempt,
+        attempt.clone(),
         operation.clone(),
         processes.clone()
       )
@@ -941,7 +1109,7 @@ mod tests {
         &root,
         &staged,
         "2026.11.01",
-        attempt,
+        attempt.clone(),
         operation.clone(),
         processes.clone()
       )
@@ -971,14 +1139,73 @@ mod tests {
     .unwrap();
     super::write_metadata(&meta_path, &serde_json::to_vec(&meta).unwrap()).unwrap();
     assert_eq!(
-      super::commit_ytdlp(&root, &staged, "2026.11.01", attempt, operation, processes)
-        .await
-        .unwrap(),
+      super::commit_ytdlp(
+        &root,
+        &staged,
+        "2026.11.01",
+        attempt.clone(),
+        operation.clone(),
+        processes.clone()
+      )
+      .await
+      .unwrap(),
       InstallOutcome::UpToDate
     );
     let preserved: Metadata = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
     assert_eq!(preserved.ytdlp_last_check, Some(99999));
     assert_eq!(std::fs::read(current.join(name)).unwrap(), b"newer");
+    // A signed rollback must match the check, observed version and accepted manifest.
+    meta.manifest_generated_at = Some("2026-11-12T10:00:01Z".into());
+    super::write_metadata(&meta_path, &serde_json::to_vec(&meta).unwrap()).unwrap();
+    for (checked_at, from, date, expected) in [
+      (
+        86500,
+        "2026.12.01",
+        "2026-11-12T10:00:01Z",
+        InstallOutcome::UpToDate,
+      ),
+      (
+        99999,
+        "2026.10.26",
+        "2026-11-12T10:00:01Z",
+        InstallOutcome::UpToDate,
+      ),
+      (
+        99999,
+        "2026.12.01",
+        "2026-11-12T10:00:00Z",
+        InstallOutcome::UpToDate,
+      ),
+      (
+        99999,
+        "2026.12.01",
+        "2026-11-12T10:00:01Z",
+        InstallOutcome::Installed(Some("2026.12.01".into())),
+      ),
+    ] {
+      let signed = Some(CheckAttempt {
+        checked_at,
+        previous: Some(100),
+        rollback_from: Some(from.into()),
+        manifest_generated_at: Some(date.into()),
+      });
+      assert_eq!(
+        super::commit_ytdlp(
+          &root,
+          &staged,
+          "2026.11.01",
+          signed,
+          operation.clone(),
+          processes.clone()
+        )
+        .await
+        .unwrap(),
+        expected
+      );
+    }
+    let rolled_back = read_metadata(&meta_path).await.unwrap();
+    assert_eq!(rolled_back.versions["yt-dlp"], "2026.11.01");
+    assert_eq!(std::fs::read(current.join(name)).unwrap(), b"candidate");
     std::fs::remove_dir_all(root).unwrap();
   }
 

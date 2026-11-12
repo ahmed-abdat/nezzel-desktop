@@ -17,36 +17,40 @@ use crate::state::config_models::AuthSettings;
 use tauri::Manager;
 use tokio::sync::watch;
 #[test]
-fn unknown_hosts_ignore_legacy_remembered_and_generic_cookie_evidence() {
-  let host = format!("unsafe-{}.example", uuid::Uuid::new_v4());
-  let mut auth = AuthSettings::default();
-  record_host_browser(&mut auth, &host, Some("chrome:/legacy".into()));
-  let mut session = LoginSession::from_auth(auth.clone(), &format!("https://{host}/login"), None);
-  assert!(session.browser.is_none());
-  assert_eq!(
-    session
-      .decide(Some("signInRequired"), false, false, |_| vec![
-        LoginCandidate {
-          id: "chrome:/legacy".into(),
-          browser: BrowserKind::Chrome,
-          profile: "Legacy".into(),
-          signed_in: true,
-          app_bound: false,
-        }
-      ])
-      .0,
-    RetryAction::AskLogin
-  );
-  EXPLICIT_SITES
-    .lock()
-    .unwrap()
-    .insert(site_key(&host).unwrap_or_else(|| host.clone()));
-  let consented = LoginSession::from_auth(auth, &format!("https://{host}/login"), None);
-  assert_eq!(consented.browser.as_deref(), Some("chrome:/legacy"));
-  EXPLICIT_SITES
-    .lock()
-    .unwrap()
-    .remove(&site_key(&host).unwrap_or_else(|| host.clone()));
+fn consent_migration_preserves_explicit_answers_and_never_policy() {
+  for (answer, browser, legacy, always, expected) in [
+    (None, "automatic", "", false, Some(true)),
+    (None, "automatic", "firefox:/profile", false, Some(true)),
+    (None, "automatic", "safari", false, Some(true)),
+    (None, "automatic", "not-a-browser", false, Some(true)),
+    (None, "automatic", "", true, Some(true)),
+    (
+      Some(false),
+      "automatic",
+      "chrome:/profile",
+      true,
+      Some(false),
+    ),
+    (Some(true), "automatic", "", false, Some(true)),
+    (Some(true), "none", "chrome:/profile", true, Some(false)),
+  ] {
+    let mut auth = AuthSettings {
+      browser_login_consent: answer,
+      cookie_browser: browser.into(),
+      always_use_browser_logins: always,
+      ..Default::default()
+    };
+    if !legacy.is_empty() {
+      auth
+        .site_browsers
+        .insert("facebook.com".into(), legacy.into());
+    }
+    migrate_global_consent(&mut auth);
+    assert_eq!(global_consent(&auth), expected);
+    let before = auth.browser_login_consent;
+    migrate_global_consent(&mut auth);
+    assert_eq!(auth.browser_login_consent, before);
+  }
 }
 
 #[test]
@@ -63,7 +67,11 @@ fn reddit_aliases_reuse_a_legacy_remembered_profile_and_write_one_canonical_key(
       auth
         .site_browsers
         .insert(legacy.into(), "chrome:/remembered".into());
-      let session = LoginSession::from_auth(auth, &format!("https://{host}/item"), None);
+      let session = LoginSession::from_auth(
+        auth,
+        &format!("https://{host}/item"),
+        Some("chrome:/remembered".into()),
+      );
       assert_eq!(
         session.browser.as_deref(),
         Some("chrome:/remembered"),
@@ -190,179 +198,77 @@ fn discovery_is_cached_per_host_until_login_ttl() {
 }
 
 #[test]
-fn safari_without_evidence_requires_a_picker_unless_globally_allowed() {
-  let host = format!("safari-{}.instagram.com", uuid::Uuid::new_v4());
-  let url = format!("https://{host}/reel/private");
-  let mut auth = AuthSettings::default();
-  record_host_browser(&mut auth, &host, Some("safari".into()));
-  let mut legacy = LoginSession::from_auth(auth.clone(), &url, None);
-  assert!(
-    legacy.browser.is_none(),
-    "legacy Safari entries are not proof of consent"
-  );
-  assert_eq!(
-    legacy
-      .decide(Some("signInRequired"), false, false, |_| vec![
-        LoginCandidate {
-          id: "safari".into(),
-          browser: BrowserKind::Safari,
-          profile: "Default".into(),
-          signed_in: false,
-          app_bound: false,
-        }
-      ])
-      .0,
-    RetryAction::AskLogin
-  );
-  EXPLICIT_SITES
-    .lock()
-    .unwrap()
-    .insert(site_key(&host).unwrap_or_else(|| host.clone()));
-  assert_eq!(
-    LoginSession::from_auth(auth, &url, None).browser.as_deref(),
-    Some("safari")
-  );
-  EXPLICIT_SITES
-    .lock()
-    .unwrap()
-    .remove(&site_key(&host).unwrap_or_else(|| host.clone()));
-  for (allowed, expected) in [(false, RetryAction::AskLogin), (true, RetryAction::Browser)] {
-    let mut session = LoginSession::from_auth(
-      AuthSettings {
-        always_use_browser_logins: allowed,
-        ..Default::default()
-      },
-      "https://instagram.com/reel/private",
-      None,
-    );
-    let (action, _) = session.decide(Some("signInRequired"), false, false, |_| {
-      vec![LoginCandidate {
-        id: "safari".into(),
-        browser: BrowserKind::Safari,
-        profile: "Default".into(),
-        signed_in: false,
-        app_bound: false,
-      }]
-    });
-    assert_eq!(action, expected);
-  }
-}
-
-#[test]
-fn app_bound_reason_requires_a_blocked_session_without_a_usable_login() {
-  for (blocked, signed_in, expected) in [
-    (false, false, "signInRequired"),
-    (true, false, APP_BOUND_REASON),
-    (true, true, "signInRequired"),
-  ] {
-    let mut session = LoginSession::from_auth(
-      AuthSettings::default(),
-      "https://reddit.com/r/videos/",
-      None,
-    );
-    let (_, candidates) = session.decide(Some("signInRequired"), false, false, |_| {
-      let mut candidates = vec![];
-      if blocked {
-        candidates.push(LoginCandidate {
-          id: "edge:/signed".into(),
-          browser: BrowserKind::Edge,
-          profile: "Default".into(),
-          signed_in: true,
-          app_bound: true,
-        });
-      }
-      if signed_in {
-        candidates.push(LoginCandidate {
-          id: "firefox:/signed".into(),
-          browser: BrowserKind::Firefox,
-          profile: "Default".into(),
-          signed_in: true,
-          app_bound: false,
-        });
-      }
-      candidates
-    });
+fn remembered_sources_authorize_global_retry_without_pre_reading_cookies() {
+  for source in ["safari", "firefox:/profile", "chrome:/profile"] {
+    let mut auth = AuthSettings::default();
+    auth
+      .site_browsers
+      .insert("instagram.com".into(), source.into());
+    let mut session = LoginSession::from_auth(auth, "https://facebook.com/watch?v=1", None);
+    assert!(session.browser.is_none());
     assert_eq!(
-      session.failure_reason(Some("signInRequired"), &candidates),
-      expected
+      session
+        .decide(Some("signInRequired"), false, false, |_| panic!(
+          "inline discovery"
+        ))
+        .0,
+      RetryAction::Browser
     );
+  }
+}
+
+#[test]
+fn default_retry_does_not_offer_a_blocking_consent_prompt() {
+  let mut session = LoginSession::from_auth(
+    AuthSettings::default(),
+    "https://instagram.com/reel/private",
+    None,
+  );
+  let (action, profiles) = session.decide(Some("signInRequired"), false, false, |_| {
+    panic!("inline discovery before scheduled task")
+  });
+  assert_eq!(action, RetryAction::Browser);
+  assert!(profiles.is_empty());
+}
+
+#[test]
+fn global_consent_retries_any_site_without_another_question() {
+  for host in ["facebook.com", "instagram.com", "unknown.example"] {
+    let auth = AuthSettings {
+      browser_login_consent: Some(true),
+      ..Default::default()
+    };
+    let mut session = LoginSession::from_auth(auth, &format!("https://{host}/private"), None);
     assert_eq!(
-      session.blocked_browser,
-      blocked.then_some(BrowserKind::Edge)
+      session
+        .decide(Some("signInRequired"), false, false, |_| panic!(
+          "inline discovery"
+        ))
+        .0,
+      RetryAction::Browser
     );
-    assert!(candidates.iter().all(|c| !c.app_bound));
   }
 }
 
 #[test]
-fn automatic_signed_profiles_need_no_prompt_and_skip_app_bound_chromium() {
-  for (blocked, expected) in [(false, "chrome:/signed"), (true, "firefox:/signed")] {
-    let mut session = LoginSession::from_auth(
-      AuthSettings::default(),
-      "https://instagram.com/reel/private",
-      None,
-    );
-    let (action, _) = session.decide(Some("signInRequired"), false, false, |_| {
-      vec![
-        LoginCandidate {
-          id: "chrome:/signed".into(),
-          browser: BrowserKind::Chrome,
-          profile: "Ahmed".into(),
-          signed_in: true,
-          app_bound: blocked,
-        },
-        LoginCandidate {
-          id: "firefox:/signed".into(),
-          browser: BrowserKind::Firefox,
-          profile: "Ahmed.work".into(),
-          signed_in: true,
-          app_bound: false,
-        },
-      ]
-    });
-    assert_eq!(action, RetryAction::Browser);
-    assert_eq!(session.browser.as_deref(), Some(expected));
-    assert!(!session.auth.always_use_browser_logins);
-  }
-}
-
-#[test]
-fn remembered_refusal_uses_next_signed_profile_then_offers_the_picker() {
-  let mut auth = AuthSettings::default();
-  record_host_browser(&mut auth, "www.instagram.com", Some("chrome:/old".into()));
-  let mut session = LoginSession::from_auth(auth, "https://www.instagram.com/reel/private", None);
-  let choices = || {
-    vec![
-      LoginCandidate {
-        id: "chrome:/old".into(),
-        browser: BrowserKind::Chrome,
-        profile: "Old".into(),
-        signed_in: true,
-        app_bound: false,
-      },
-      LoginCandidate {
-        id: "firefox:/new".into(),
-        browser: BrowserKind::Firefox,
-        profile: "New".into(),
-        signed_in: true,
-        app_bound: false,
-      },
-    ]
+fn remembered_source_never_overrides_explicit_global_refusal() {
+  let mut auth = AuthSettings {
+    browser_login_consent: Some(false),
+    ..Default::default()
   };
-  assert_eq!(
-    session
-      .decide(Some("signInRequired"), false, false, |_| choices())
-      .0,
-    RetryAction::Browser
-  );
-  assert_eq!(session.browser.as_deref(), Some("firefox:/new"));
-  assert_eq!(
-    session
-      .decide(Some("signInRequired"), false, false, |_| choices())
-      .0,
-    RetryAction::AskLogin
-  );
+  auth
+    .site_browsers
+    .insert("instagram.com".into(), "chrome:/old".into());
+  let mut session = LoginSession::from_auth(auth, "https://instagram.com/reel/private", None);
   assert!(session.browser.is_none());
+  assert_eq!(
+    session
+      .decide(Some("signInRequired"), false, false, |_| panic!(
+        "discovery after refusal"
+      ))
+      .0,
+    RetryAction::Stop
+  );
 }
 
 #[test]
@@ -420,7 +326,7 @@ fn only_a_login_refusal_exhausts_a_browser_session() {
 fn cookie_failure_retries_anonymously_without_forgetting_the_remembered_browser() {
   use crate::runners::browsers::CookieSource;
   for (mode, file, accepted) in [
-    ("automatic", None, None),
+    ("automatic", None, Some("chrome:/saved")),
     ("automatic", None, Some("firefox:/accepted")),
     ("firefox", None, None),
     ("automatic", Some("/manual.txt"), None),
@@ -463,6 +369,21 @@ fn failed_anonymous_retry_reports_the_more_informative_attempt() {
     DiagnosticMatcher::from_json(include_str!("../../diagnostic_rules.json")).unwrap(),
   );
   for (cookie_error, anonymous_error, expected) in [
+    (
+      "ERROR: Failed to decrypt with DPAPI",
+      "ERROR: Login required",
+      "browserDpapiFailed",
+    ),
+    (
+      "ERROR: cookies use App-Bound encryption",
+      "ERROR: Unsupported URL",
+      "browserAppBound",
+    ),
+    (
+      "ERROR: [Errno 1] Operation not permitted: Safari/Cookies.binarycookies",
+      "ERROR: Login required",
+      "browserSafariAccessDenied",
+    ),
     (
       "ERROR: Unsupported URL",
       "ERROR: Unsupported URL",
@@ -728,16 +649,10 @@ fn fetch_consent_reaches_download_and_retry_without_a_second_prompt() {
 }
 
 #[test]
-fn remembered_host_browser_is_used_on_first_fetch_and_download_attempts() {
+fn remembered_source_is_deferred_until_a_login_failure() {
   use crate::runners::browsers::CookieSource;
   for (mode, file, host, accepted, expected) in [
-    (
-      "automatic",
-      None,
-      "www.instagram.com",
-      None,
-      Some("chrome:/selected"),
-    ),
+    ("automatic", None, "www.instagram.com", None, None),
     ("automatic", None, "other.test", None, None),
     (
       "automatic",
@@ -858,7 +773,7 @@ fn older_success_cannot_overwrite_a_newer_same_host_browser_choice() {
   remember_success(&mut auth, "other.test", None, "chrome:/other");
   assert_eq!(auth.site_browsers["instagram.com"], "firefox:/new");
   assert_eq!(auth.site_browsers["other.test"], "chrome:/other");
-  assert!(!auth.always_use_browser_logins);
+  assert!(auth.always_use_browser_logins);
 }
 
 #[test]
@@ -1117,6 +1032,7 @@ fn anonymous_fetch_success_carries_no_cookies_into_the_download() {
 
 fn pending(group_id: &str) -> PendingLogin {
   PendingLogin {
+    automatic: false,
     followers: Vec::new(),
     announcement: None,
     request: LoginRequest::Fetch(FetchEntry {
@@ -1242,45 +1158,27 @@ fn no_cookie_probes_before_refusal_or_after_cancel_and_first_refusal_stops() {
     session
       .decide(Some("signInRequired"), false, false, candidates)
       .0,
-    RetryAction::AskLogin
+    RetryAction::Browser
   );
   assert!(session.browser.is_none());
   assert!(session.success_patch().is_none());
 }
 #[test]
-fn opted_in_refusal_tries_each_profile_once_and_success_remembers_the_host() {
+fn successful_source_is_remembered_without_changing_global_consent() {
   let auth = AuthSettings {
-    cookie_browser: "automatic".into(),
-    always_use_browser_logins: true,
+    browser_login_consent: Some(true),
     ..Default::default()
   };
-  let mut session = LoginSession::from_auth(
-    auth,
-    "https://www.instagram.com/p/private?token=secret",
-    None,
+  let session = LoginSession::from_auth(
+    auth.clone(),
+    "https://www.instagram.com/p/private",
+    Some("firefox:/working".into()),
   );
-  assert_eq!(
-    session
-      .decide(Some("signInRequired"), false, false, candidates)
-      .0,
-    RetryAction::Browser
-  );
-  assert_eq!(session.browser.as_deref(), Some("chrome:/fake/Profile 1"));
-  let patch = session.success_patch().unwrap();
-  assert_eq!(
-    session
-      .decide(Some("signInRequired"), false, false, candidates)
-      .0,
-    RetryAction::AskLogin
-  );
-  let mut config = serde_json::to_value(crate::state::config_models::Config::default()).unwrap();
-  crate::state::json_merge(&mut config, &patch);
-  let config: crate::state::config_models::Config = serde_json::from_value(config).unwrap();
-  assert_eq!(config.auth.site_browsers.len(), 1);
-  assert_eq!(
-    config.auth.site_browsers["instagram.com"],
-    "chrome:/fake/Profile 1"
-  );
+  let mut saved = auth;
+  remember_success(&mut saved, "instagram.com", None, "firefox:/working");
+  assert_eq!(saved.site_browsers["instagram.com"], "firefox:/working");
+  assert_eq!(saved.browser_login_consent, Some(true));
+  assert!(session.success_patch().is_some());
 }
 #[test]
 fn fixed_browser_exports_only_for_known_sites_or_a_login_retry() {
@@ -1348,5 +1246,32 @@ fn explicit_browser_and_file_overrides_do_not_trigger_automatic_probes() {
         .0,
       RetryAction::Stop
     );
+  }
+}
+
+#[test]
+fn default_retry_is_automatic_without_inline_discovery() {
+  let mut session = LoginSession::from_auth(
+    AuthSettings::default(),
+    "https://facebook.com/watch?v=1",
+    None,
+  );
+  let (action, _) = session.decide(Some("signInRequired"), false, false, |_| {
+    panic!("inline discovery before scheduled task")
+  });
+  assert_eq!(action, RetryAction::Browser);
+}
+
+#[test]
+fn unknown_legacy_browser_login_policy_migrates_on_without_a_prompt() {
+  for raw in [
+    r#"{}"#,
+    r#"{"browserLoginConsent":null,"alwaysUseBrowserLogins":false}"#,
+    r#"{"browserLoginConsent":true}"#,
+  ] {
+    let mut auth: AuthSettings = serde_json::from_str(raw).unwrap();
+    migrate_global_consent(&mut auth);
+    assert_eq!(global_consent(&auth), Some(true));
+    assert_eq!(auth.browser_login_consent, Some(true));
   }
 }

@@ -4,7 +4,7 @@
     "showOrHide": "Fenster anzeigen/ausblenden",
     "addToQueue": "Aus Zwischenablage hinzufügen",
     "addAndDownload": "Aus Zwischenablage hinzufügen und herunterladen",
-    "downloadQueue": "Warteschlange herunterladen",
+    "downloadQueue": "Elemente in der Warteschlange herunterladen",
     "shortcuts": {
       "ctrlShiftV": "Strg + Umschalt + V",
       "ctrlShiftD": "Strg + Umschalt + D",

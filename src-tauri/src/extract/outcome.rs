@@ -81,6 +81,8 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
     "fileNotPublic" => (Outcome::Forbidden, "fileNotPublic"),
     "fileRateLimited" => (Outcome::RateLimited, "fileRateLimited"),
     "fileNotFile" => (Outcome::Unsupported, "fileNotFile"),
+    "browserDpapiFailed" => (Outcome::Unknown, "browserDpapiFailed"),
+    "browserAppBound" => (Outcome::Unknown, "browserAppBound"),
     "browserCookiesUnreadable" => (Outcome::Unknown, "browserCookiesUnreadable"),
     "browserKeychainDenied" => (Outcome::Unknown, "browserKeychainDenied"),
     "browserSafariAccessDenied" => (Outcome::Unknown, "browserSafariAccessDenied"),

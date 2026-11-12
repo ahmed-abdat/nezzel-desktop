@@ -45,6 +45,138 @@ fn firefox_fixture(root: &Path) -> String {
   }
   format!("firefox:{}", profile.display())
 }
+#[tokio::test]
+async fn firefox_container_exports_isolate_sessions_for_both_engines() {
+  let root = Staging::new().unwrap();
+  let browser = firefox_fixture(&root.path);
+  let profile = root.path.join("profile");
+  std::fs::write(profile.join("containers.json"), r#"{"identities":[{"name":"Work","userContextId":1,"public":true},{"l10nID":"userContextPersonal.label","userContextId":2,"public":true}]}"#).unwrap();
+  let db = Connection::open(profile.join("cookies.sqlite")).unwrap();
+  for (value, attributes) in [
+    ("work-session", "^userContextId=1&privateBrowsingId=0"),
+    ("personal-session", "^userContextId=2"),
+    ("other-session", "^userContextId=10"),
+    (
+      "partitioned-session",
+      "^userContextId=1&partitionKey=%28https%2Cother.example%29",
+    ),
+    ("private-session", "^userContextId=1&privateBrowsingId=1"),
+    (
+      "cross-site-session",
+      "^userContextId=1&firstPartyDomain=other.example",
+    ),
+    (
+      "same-site-session",
+      "^userContextId=1&firstPartyDomain=reddit.com",
+    ),
+  ] {
+    db.execute(
+      "INSERT INTO moz_cookies VALUES ('.reddit.com', 'session', ?1, '/', 4102444800, 1, 1, ?2)",
+      [value, attributes],
+    )
+    .unwrap();
+  }
+  for (container, expected) in [
+    ("Work", vec!["work-session", "same-site-session"]),
+    ("userContextPersonal.label", vec!["personal-session"]),
+    ("none", vec!["synthetic", "synthetic"]),
+  ] {
+    let (_tx, cancel) = watch::channel(true);
+    let access = CookieAccess::prepare(
+      &AuthSettings::default(),
+      Some(&format!("{browser}::{container}")),
+      "https://reddit.com/post",
+      &context(&root.path),
+      cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(access.args[0], "--cookies");
+    let jar = std::fs::read_to_string(&access.args[1]).unwrap();
+    let values: Vec<_> = jar
+      .lines()
+      .filter(|line| line.contains('\t'))
+      .map(|line| line.split('\t').nth(6).unwrap())
+      .collect();
+    assert_eq!(values, expected, "{container}");
+  }
+  let (_tx, cancel) = watch::channel(true);
+  let missing = CookieAccess::prepare(
+    &AuthSettings::default(),
+    Some(&format!("{browser}::Deleted")),
+    "https://reddit.com/post",
+    &context(&root.path),
+    cancel,
+  )
+  .await;
+  assert_eq!(missing.unwrap_err(), "browserProfileMissing");
+}
+
+#[test]
+fn cookie_error_text_maps_to_codes_and_localized_remedies() {
+  use crate::parsers::{
+    gallery::{failure, GalleryError},
+    ytdlp_error::{DiagnosticMatcher, YtdlpErrorParser},
+  };
+  use crate::runners::browsers::BrowserKind;
+  let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
+  let locales: Vec<serde_json::Value> = [
+    include_str!("../../../../src/locales/en.json"),
+    include_str!("../../../../src/locales/ar.json"),
+    include_str!("../../../../src/locales/fr.json"),
+  ]
+  .into_iter()
+  .map(|text| serde_json::from_str(text).unwrap())
+  .collect();
+  for (message, expected, remedy) in [
+    ("WARNING: find-generic-password failed", "browserKeychainDenied", "Keychain"),
+    ("WARNING: exception running find-generic-password: access denied", "browserKeychainDenied", "Keychain"),
+    ("[cookies][warning] Error when using find-generic-password (CalledProcessError: denied)", "browserKeychainDenied", "Keychain"),
+    ("[cookies][warning] Unable to decrypt v10 cookies: no key found", "browserKeychainDenied", "Keychain"),
+    ("ERROR: Failed to decrypt with DPAPI. See https://github.com/yt-dlp/yt-dlp/issues/10927 for more info", "browserDpapiFailed", "Firefox"),
+    ("[cookies][warning] Failed to decrypt cookie (DPAPI)", "browserDpapiFailed", "Firefox"),
+    ("ERROR: Chrome cookies use App-Bound encryption (v20)", "browserAppBound", "Firefox"),
+    ("ERROR: [Errno 1] Operation not permitted: '/Users/test/Library/Cookies/Cookies.binarycookies'", "browserSafariAccessDenied", "Full Disk Access"),
+    ("ERROR: [cookies] Permission denied reading Safari cookies", "browserSafariAccessDenied", "Full Disk Access"),
+    ("ERROR: [cookies] database is locked", "browserDatabaseLocked", "Close"),
+    ("ERROR: could not find firefox cookies database", "browserProfileMissing", "Choose"),
+    ("ERROR: Unable to find Chrome cookies database", "browserProfileMissing", "Choose"),
+  ] {
+    assert_eq!(exporter::classify_error(BrowserKind::Chrome, message), expected, "export: {message}");
+    let line = if message.starts_with('[') { format!("WARNING: {message}") } else { message.to_owned() };
+    assert_eq!(parser.parse_line(&line).unwrap().code, expected, "yt-dlp: {message}");
+    assert_eq!(failure(message), GalleryError::Refused(expected), "gallery: {message}");
+    assert_eq!(read_error_code(expected), Some(expected));
+    for locale in &locales {
+      let copy = &locale["errors"]["runner"][expected];
+      for field in ["shortMessage", "message", "action"] { assert!(!copy[field].as_str().unwrap_or_default().is_empty(), "{expected}.{field}"); }
+    }
+    assert!(locales[0]["errors"]["runner"][expected]["action"].as_str().unwrap().contains(remedy), "{expected}: {remedy}");
+  }
+  for text in [
+    "ERROR: Unsupported URL: https://example.com/failed-to-decrypt-with-DPAPI",
+    "ERROR: Unsupported URL: https://example.com/DPAPI",
+    "ERROR: Video title contains Keychain and DPAPI",
+    "ERROR: Failed to decrypt media segment",
+    "ERROR: database is locked",
+    "ERROR: Unable to rename file: [WinError 32] The process cannot access the file because it is being used by another process: 'Cookies tutorial.mp4'",
+    "ERROR: [Errno 32] file is being used by another process: 'clip.part'",
+    "ERROR: Permission denied: '/x/Safari tips.mp4'",
+    "ERROR: could not find ffmpeg: No such file or directory",
+  ] {
+    assert_eq!(
+      parser.parse_line(text).unwrap().code,
+      if text.contains("Unsupported URL") {
+        "urlNotSupported"
+      } else {
+        "unknown"
+      },
+      "{text}"
+    );
+    assert!(!matches!(failure(text), GalleryError::Refused(code) if code.starts_with("browser")), "gallery: {text}");
+  }
+}
+
 fn domains(path: &Path) -> Vec<String> {
   let contents = std::fs::read_to_string(path).unwrap();
   let mut domains: Vec<_> = contents
@@ -99,7 +231,7 @@ async fn scoped_cookie_files_restrict_both_engines_and_are_removed_after_use() {
     ),
     ("x.com", vec![".twitter.com", ".x.com"]),
     ("twitter.com", vec![".twitter.com", ".x.com"]),
-    ("youtube.com", vec![]),
+    ("youtube.com", vec!["google.com"]),
   ] {
     let access = CookieAccess::prepare(
       &AuthSettings::default(),
@@ -177,11 +309,20 @@ async fn declined_consent_creates_no_file_and_manual_cookie_file_is_unchanged() 
     )
     .await
     .unwrap();
-    assert_eq!(args.args, ["--cookies", manual.to_str().unwrap()]);
+    assert_eq!(args.args[0], "--cookies");
+    assert_ne!(args.args[1], manual.to_str().unwrap());
+    assert_eq!(
+      domains(Path::new(&args.args[1])),
+      if has_session {
+        vec![".reddit.com"]
+      } else {
+        vec![]
+      }
+    );
     assert_eq!(args.has_session, has_session);
   }
   assert_eq!(std::fs::read(manual).unwrap(), contents);
-  assert!(!context.directory.exists());
+  assert_eq!(std::fs::read_dir(context.directory).unwrap().count(), 0);
 }
 
 #[tokio::test]
@@ -275,6 +416,7 @@ done
 printf '%s\n' '# Netscape HTTP Cookie File' '.reddit.com	TRUE	/	TRUE	4102444800	fixture	synthetic' 'google.com	FALSE	/	TRUE	4102444800	fixture	synthetic' > "$full"
 case '{mode}' in
   error) echo 'Cookie: private-cookie-value /Users/PrivatePerson/Profile' >&2; exit 1 ;;
+  app-bound) echo 'ERROR: cookies use App-Bound encryption (v20)' >&2; exit 1 ;;
   keychain) echo 'WARNING: find-generic-password failed' >&2; exit 1 ;;
   decrypt) echo 'WARNING: failed to decrypt cookie (AES-CBC) because UTF-8 decoding failed. Possibly the key is wrong?' >&2; exit 1 ;;
   v10) echo 'WARNING: cannot decrypt v10 cookies: no key found' >&2; exit 1 ;;
@@ -305,7 +447,7 @@ async fn chromium_exporter_passes_only_scoped_args_and_erases_full_jar() {
   let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
   for (mode, host, expected_session) in [
     ("success", "reddit.com", true),
-    ("success", "youtube.com", false),
+    ("success", "youtube.com", true),
     ("zero", "reddit.com", false),
   ] {
     let root = Staging::new().unwrap();
@@ -325,7 +467,11 @@ async fn chromium_exporter_passes_only_scoped_args_and_erases_full_jar() {
     assert_eq!(
       domains(&path),
       if expected_session {
-        vec![".reddit.com"]
+        if host == "youtube.com" {
+          vec!["google.com"]
+        } else {
+          vec![".reddit.com"]
+        }
       } else {
         vec![]
       }
@@ -423,10 +569,11 @@ async fn cancelling_an_active_export_removes_the_full_and_scoped_files() {
 async fn exporter_failure_removes_every_cookie_file() {
   for (mode, expected) in [
     ("error", "browserCookiesUnreadable"),
+    ("app-bound", "browserAppBound"),
     ("keychain", "browserKeychainDenied"),
     ("decrypt", "browserKeychainDenied"),
     ("v10", "browserKeychainDenied"),
-    ("dpapi", "browserKeychainDenied"),
+    ("dpapi", "browserDpapiFailed"),
     ("keyring", "browserKeychainDenied"),
     ("kwallet", "browserKeychainDenied"),
     ("zero-keychain", "browserKeychainDenied"),
@@ -475,4 +622,123 @@ async fn exporter_timeout_removes_every_cookie_file() {
     Err(crate::extract::deadline::FETCH_TIMEOUT)
   ));
   assert_eq!(std::fs::read_dir(&context.directory).unwrap().count(), 0);
+}
+
+#[test]
+fn automatic_proof_requires_scoped_nonempty_unexpired_values() {
+  for (xs_domain, xs_value, xs_expiry, expected) in [
+    (".facebook.com", "session", 200, true),
+    ("web.facebook.com", "session", 0, true),
+    ("facebook.com.evil.example", "session", 200, false),
+    ("instagram.com", "session", 200, false),
+    (".facebook.com", "", 200, false),
+    (".facebook.com", "session", 99, false),
+    (".facebook.com", "session", -1, false),
+  ] {
+    assert_eq!(
+      proof_cookies(
+        "facebook.com",
+        [
+          (".facebook.com", "c_user", "user", 200),
+          (xs_domain, "xs", xs_value, xs_expiry)
+        ],
+        100
+      ),
+      expected
+    );
+  }
+  assert!(!proof_cookies(
+    "facebook.com",
+    [("facebook.com", "c_user", "user", 200)],
+    100
+  ));
+  assert!(proof_cookies(
+    "instagram.com",
+    [("instagram.com", "sessionid", "session", 200)],
+    100
+  ));
+  assert!(proof_cookies(
+    "youtube.com",
+    [("google.com", "SID", "session", 200)],
+    100
+  ));
+}
+#[test]
+fn native_session_export_preserves_cookie_domain_scope() {
+  for (host, domain, expected) in [
+    (
+      "youtube.com",
+      "accounts.google.com",
+      Some("accounts.google.com\tFALSE"),
+    ),
+    ("youtube.com", ".google.com", Some(".google.com\tTRUE")),
+    ("facebook.com", "facebook.com", Some("facebook.com\tFALSE")),
+    ("facebook.com", ".facebook.com", Some(".facebook.com\tTRUE")),
+    (
+      "youtube.com",
+      ".accounts.google.com",
+      Some(".accounts.google.com\tTRUE"),
+    ),
+    ("youtube.com", "bank.example", None),
+    ("facebook.com", ".facebook.com.evil.test", None),
+  ] {
+    let root = Staging::new().unwrap();
+    let cookie = tauri::webview::Cookie::build(("session", "synthetic"))
+      .domain(domain)
+      .path("/")
+      .secure(true)
+      .http_only(true)
+      .build();
+    let access =
+      CookieAccess::from_webview(&context(&root.path), host, &[cookie], "test-agent").unwrap();
+    let text = std::fs::read_to_string(&access.args[1]).unwrap();
+    let rows: Vec<_> = text
+      .lines()
+      .filter(|line| line.starts_with("#HttpOnly_"))
+      .collect();
+    let expected: Vec<_> = expected
+      .into_iter()
+      .map(|scope| format!("#HttpOnly_{scope}\t/\tTRUE\t0\tsession\tsynthetic"))
+      .collect();
+    assert_eq!(rows, expected, "{host}: {domain}");
+  }
+}
+#[test]
+fn native_session_export_is_scoped_private_and_deleted_after_use() {
+  let root = Staging::new().unwrap();
+  let cookie = |domain, name| {
+    tauri::webview::Cookie::build((name, "synthetic"))
+      .domain(domain)
+      .path("/")
+      .secure(true)
+      .http_only(true)
+      .build()
+  };
+  let access = CookieAccess::from_webview(
+    &context(&root.path),
+    "facebook.com",
+    &[
+      cookie(".facebook.com", "c_user"),
+      cookie(".facebook.com", "xs"),
+      cookie("bank.example", "auth"),
+    ],
+    "test-user-agent",
+  )
+  .unwrap();
+  assert!(access.has_proof("facebook.com"));
+  let path = PathBuf::from(&access.args[1]);
+  let text = std::fs::read_to_string(&path).unwrap();
+  assert!(text.contains("#HttpOnly_.facebook.com\tTRUE\t/\tTRUE"));
+  assert!(!text.contains("bank.example"));
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+      std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+      0o600
+    );
+  }
+  assert_eq!(&access.args[2..], &["--user-agent", "test-user-agent"]);
+  drop(access);
+  assert!(!path.exists());
 }

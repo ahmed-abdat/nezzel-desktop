@@ -295,9 +295,25 @@ pub(super) async fn gallery_info_attempts(
           CookieRetry::GiveUp => {}
         }
         let reason = (error == GalleryError::Login
+          || matches!(error, GalleryError::Refused(code) if crate::runners::browser_cookies::read_error_code(code).is_some())
           || (!login.uses_cookies() && error == GalleryError::Refused("unableToExtractIdOrInfo")))
         .then_some("signInRequired");
         login.record_failure(&diagnostics, error == GalleryError::NetworkDown);
+        if reason.is_some()
+          && crate::runners::login::automatic::enabled(app)
+          && matches!(
+            login.failed(
+              app,
+              LoginRequest::Fetch(entry.clone()),
+              reason,
+              false,
+              !is_group_running(&entry.group_id)
+            ),
+            RetryAction::Pending
+          )
+        {
+          return Some(Outcome::LoginPending);
+        }
         if login.fetch_managed() || !login.uses_cookies() {
           return None;
         }
@@ -313,7 +329,7 @@ pub(super) async fn gallery_info_attempts(
           )
         } {
           RetryAction::Browser | RetryAction::Anonymous => continue,
-          RetryAction::AskLogin => return Some(Outcome::LoginPending),
+          RetryAction::AskLogin | RetryAction::Pending => return Some(Outcome::LoginPending),
           _ => {}
         }
         return None;

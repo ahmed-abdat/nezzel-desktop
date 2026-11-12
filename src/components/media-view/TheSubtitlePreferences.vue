@@ -77,7 +77,7 @@ const groupStore = useMediaGroupStore();
 const optionsStore = useMediaOptionsStore();
 const settingsStore = useSettingsStore();
 
-const subtitleFormatOptions = buildSubtitleFormatOptions(t);
+const subtitleFormatOptions = computed(() => buildSubtitleFormatOptions(t));
 const subtitleState = ref<SubtitleSettings>(createSubtitleSettings(settingsStore.settings.subtitles));
 const manualLanguageSelection = ref<string[]>([]);
 const autoLanguageSelection = ref<string[]>([]);

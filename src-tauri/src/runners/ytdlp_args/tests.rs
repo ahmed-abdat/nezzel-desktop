@@ -1017,6 +1017,8 @@ fn default_filename_media_suffixes() {
   for (kind, height, fps, ext, expected) in [
     ("video", "1080", "60", "mp4", "Title-(1080p60).mp4"),
     ("video", "1080", "", "mp4", "Title-(1080p).mp4"),
+    ("video", "", "", "mp4", "Title.mp4"),
+    ("video", "0", "", "mp4", "Title.mp4"),
     ("image", "2731", "", "jpg", "Title-(2731p).jpg"),
     ("image", "", "", "jpg", "Title.jpg"),
   ] {
@@ -1104,4 +1106,25 @@ fn default_filenames_fit_linux_bytes_even_for_long_non_latin_titles() {
       }
     }
   }
+}
+
+#[test]
+fn temporary_output_preserves_the_final_destination_and_nested_templates() {
+  let root = std::env::temp_dir();
+  let output = root.join("saved/العنوان/%(playlist)s/%(title)s.%(ext)s");
+  let temporary = root.join("private-parts");
+  let args = super::temporary_location_args(output.to_str().unwrap(), &temporary);
+  assert_eq!(args[0], "--paths");
+  assert_eq!(args[3], format!("temp:{}", temporary.display()));
+  assert_eq!(args[4], "-o");
+  assert!(!std::path::Path::new(&args[5]).is_absolute());
+  assert_eq!(
+    PathBuf::from(args[1].strip_prefix("home:").unwrap()).join(&args[5]),
+    output
+  );
+  let outside = root.join("saved/../../elsewhere/%(title)s.mp4");
+  let args = super::temporary_location_args(outside.to_str().unwrap(), &temporary);
+  assert!(!std::path::Path::new(&args[5])
+    .components()
+    .any(|c| c == std::path::Component::ParentDir));
 }

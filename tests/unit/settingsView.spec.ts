@@ -1,3 +1,4 @@
+import Switch from '../../src/components/ui/switch/Switch.vue';
 import { mount } from '@vue/test-utils';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { defineComponent, nextTick, reactive } from 'vue';
@@ -7,7 +8,6 @@ import SettingsView from '../../src/views/app/SettingsView.vue';
 import SettingsShortcuts from '../../src/components/settings/SettingsShortcuts.vue';
 import SettingsGeneralTab from '../../src/views/app/settings/SettingsGeneralTab.vue';
 import SettingsLoginsTab from '../../src/views/app/settings/SettingsLoginsTab.vue';
-import { pickOption } from '../utils/selectField';
 import SettingsAboutTab from '../../src/views/app/settings/SettingsAboutTab.vue';
 import SettingsAdvancedTab from '../../src/views/app/settings/SettingsAdvancedTab.vue';
 import { i18n } from '../../src/i18n';
@@ -125,10 +125,10 @@ describe('SettingsView', () => {
     const wrapper = mount(SettingsGeneralTab, {
       props: { modelValue: structuredClone(defaultSettings) }, global: { plugins: [i18n] },
     });
-    expect(wrapper.text()).toContain('On this desktop, copied links are picked up when Nezzel\'s window is in front.');
+    expect(wrapper.text()).toContain('If copied links aren\'t detected in the background, keep Nezzel\'s window in front');
     capturePlatform.backgroundClipboard = true;
     await nextTick();
-    expect(wrapper.text()).not.toContain('On this desktop, copied links are picked up');
+    expect(wrapper.text()).not.toContain('If copied links');
     wrapper.unmount();
   });
 
@@ -236,38 +236,37 @@ describe('SettingsView', () => {
     await router.push('/settings/logins');
     await router.isReady();
     const wrapper = mount(createRoot(), { global: { plugins: [router, i18n] } });
-    await pickOption(wrapper, 'pref-login-policy', 'never');
+    wrapper.findAllComponents(Switch).find(c => c.props('id') === 'pref-auto-logins')!.vm.$emit('update:modelValue', false);
+    await nextTick();
     await vi.advanceTimersByTimeAsync(1000);
     await flushPromises();
 
     expect(patch).toHaveBeenCalledTimes(1);
-    expect(patch.mock.calls[0][0]).toEqual({ ...defaultSettings, auth: { ...defaultSettings.auth, cookieBrowser: 'none' } });
+    expect(patch.mock.calls[0][0]).toEqual({ ...defaultSettings, auth: { ...defaultSettings.auth, cookieBrowser: 'none', browserLoginConsent: false, alwaysUseBrowserLogins: false } });
     wrapper.unmount();
   });
 });
 
-describe('legacy login preferences', () => {
+describe('global browser login switch', () => {
   it.each([
-    ['automatic', false, 'ask'], ['chrome', false, 'ask'],
-    ['chrome', true, 'always'], ['none', false, 'never'], ['none', true, 'never'], ['', true, 'never'],
-  ])('reads %s / %s as %s and writes compatible settings', async (cookieBrowser, always, expected) => {
+    ['automatic', null, false, true], ['automatic', true, false, true], ['chrome', null, false, true],
+    ['automatic', false, true, false], ['none', true, true, false],
+  ])('reads %s / %s with legacy %s as %s and persists each switch change', async (browser, consent, legacy, expected) => {
     const settings = structuredClone(defaultSettings);
-    settings.auth.cookieBrowser = String(cookieBrowser);
-    settings.auth.alwaysUseBrowserLogins = Boolean(always);
+    settings.auth.cookieBrowser = String(browser);
+    settings.auth.browserLoginConsent = consent as boolean | null;
+    settings.auth.alwaysUseBrowserLogins = Boolean(legacy);
     const wrapper = mount(SettingsLoginsTab, { props: { modelValue: settings }, global: { plugins: [i18n] } });
-    const policy = wrapper.findAllComponents({ name: 'SelectField' }).find(c => c.props('id') === 'pref-login-policy')!;
-    expect(policy.props('modelValue')).toBe(expected);
-    await pickOption(wrapper, 'pref-login-policy', 'always');
-    expect(settings.auth.cookieBrowser).toBe(cookieBrowser === 'none' || cookieBrowser === '' ? 'automatic' : cookieBrowser);
-    expect(settings.auth.alwaysUseBrowserLogins).toBe(true);
-    await pickOption(wrapper, 'pref-cookie-browser', 'firefox');
-    await pickOption(wrapper, 'pref-login-policy', 'never');
+    const toggle = wrapper.findAllComponents(Switch).find(c => c.props('id') === 'pref-auto-logins')!;
+    expect(toggle.props('modelValue')).toBe(expected);
+    toggle.vm.$emit('update:modelValue', true);
+    await nextTick();
+    expect(settings.auth.browserLoginConsent).toBe(true);
+    expect(settings.auth.cookieBrowser).toBe(browser === 'none' ? 'automatic' : browser);
+    toggle.vm.$emit('update:modelValue', false);
+    await nextTick();
+    expect(settings.auth.browserLoginConsent).toBe(false);
     expect(settings.auth.cookieBrowser).toBe('none');
-    expect(settings.auth.alwaysUseBrowserLogins).toBe(false);
-    await pickOption(wrapper, 'pref-login-policy', 'ask');
-    expect(settings.auth.cookieBrowser).toBe('firefox');
-    expect(settings.auth.alwaysUseBrowserLogins).toBe(false);
-    expect(settings.auth.cookieFile).toBe(defaultSettings.auth.cookieFile);
     wrapper.unmount();
   });
 });

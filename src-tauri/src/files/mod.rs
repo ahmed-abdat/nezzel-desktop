@@ -27,6 +27,7 @@ pub enum Error {
   Space,
   Proxy,
   NotPublic,
+  Removed,
   RateLimited,
 }
 impl fmt::Display for Error {
@@ -50,6 +51,7 @@ impl Error {
       Self::Empty => "fileEmpty",
       Self::Space => "fileSpace",
       Self::NotPublic => "fileNotPublic",
+      Self::Removed => "notFound404",
       Self::RateLimited => "fileRateLimited",
       Self::Proxy => "fileProxy",
     }

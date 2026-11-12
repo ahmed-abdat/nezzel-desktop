@@ -55,7 +55,7 @@
             </p>
           </Tooltip>
 
-          <login-needed v-if="loginCard" class="mt-1" :card="loginCard" :site="site" :details="diagnostic.raw === 'unknown' ? undefined : diagnostic.raw" @retry="retry" />
+          <login-needed v-if="loginCard" class="mt-1" :card="loginCard" :site="site" :diagnostic-code="diagnostic.code" :details="diagnostic.raw === 'unknown' ? undefined : diagnostic.raw" @retry="retry" />
           <template v-else-if="phase === 'error'">
           <p class="mt-0.5 flex items-start gap-1.5 text-[12.5px] font-medium text-destructive-foreground">
             <triangle-alert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
@@ -66,15 +66,12 @@
             </i18n-t>
             <span v-else class="line-clamp-2 text-pretty" data-testid="row-error">{{ errorDisplay.shortMessage }}</span>
           </p>
-          <!-- Both stay one click away on the row: the engine's Details and the Report dialog. -->
+          <!-- Both entry points use the clean details page; engine output is available by copying. -->
           <div class="ps-5 text-[12px]" data-testid="row-error-links">
             <div class="flex flex-wrap items-center gap-x-3">
-              <Collapsible v-if="errorDetails" v-model:open="detailsOpen">
-                <CollapsibleTrigger class="min-h-6 cursor-pointer text-muted-foreground underline underline-offset-2 hover:no-underline" data-testid="row-error-details" @click.stop>{{ t('downloads.row.details') }}</CollapsibleTrigger>
-              </Collapsible>
+              <button type="button" class="min-h-6 cursor-pointer text-muted-foreground underline underline-offset-2 hover:no-underline" data-testid="row-error-details" @click.stop="showDetails">{{ t('downloads.row.details') }}</button>
               <button type="button" class="min-h-6 cursor-pointer text-muted-foreground underline underline-offset-2 hover:no-underline" data-testid="row-error-report" @click.stop="reportProblem">{{ t('report.rowAction') }}</button>
             </div>
-            <pre v-if="errorDetails && detailsOpen" dir="ltr" class="mt-1 whitespace-pre-wrap break-words text-start text-muted-foreground" data-testid="row-error-raw">{{ errorDetails }}</pre>
           </div>
           </template>
           <div v-else-if="showProgress || phase === 'reading'" class="mt-1 flex min-w-0 items-center gap-2.5 text-[12px] text-muted-foreground">
@@ -246,7 +243,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { useUiPrefs } from '../../composables/useUiPrefs';
 import LoginNeeded from './LoginNeeded.vue';
-import { Collapsible, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useDownloadRow } from '../../composables/useDownloadRow';
 import { useDownloadActions } from '../../composables/useDownloadActions';
 import { usePlatform } from '../../composables/usePlatform';
@@ -315,15 +311,13 @@ const diagnostic = computed<MediaDiagnostic>(() => {
   return base;
 });
 const { diagnosticDisplay: errorDisplay } = useDiagnostic(diagnostic, true);
-/** Engine text worth showing; the 'unknown' placeholder is not. */
-const errorDetails = computed(() => (diagnostic.value.raw && diagnostic.value.raw !== 'unknown' ? diagnostic.value.raw : ''));
-const detailsOpen = ref(false);
 const errorIsFilter = computed(() => diagnostic.value.code === 'rejectedByFilter');
 const errorIsPermanent = computed(() => isPermanentError(diagnostic.value.code));
 const errorIsUnsupported = computed(() => ['urlNotSupported', 'unknownUrlType'].includes(diagnostic.value.code));
 
 interface RowAction { key: string; label: string; icon: unknown; run: () => unknown; danger?: boolean; disabled?: boolean }
 const go = (to: RouteLocationRaw) => () => router.push(to);
+const showDetails = () => router.push({ name: 'group.metadata', params: { groupId: group.value.id } });
 /** One list feeds both the ⋯ menu and the right-click menu. */
 const menuGroups = computed<RowAction[][]>(() => {
   const primary: RowAction[] = [];
@@ -338,7 +332,7 @@ const menuGroups = computed<RowAction[][]>(() => {
     { key: 'copy', label: t('downloads.row.copyLink'), icon: Copy, run: copyLink, disabled: !group.value.url },
     { key: 'page', label: t('downloads.row.openPage'), icon: ExternalLink, run: openPage, disabled: !group.value.url },
     ...(phase.value === 'ready' ? [{ key: 'per', label: t('downloads.row.perDownload'), icon: Wrench, run: go({ name: 'preferences.quality', params: { groupId: group.value.id } }) }] : []),
-    { key: 'details', label: t('downloads.row.details'), icon: Info, run: go({ name: 'group.metadata', params: { groupId: group.value.id } }) },
+    { key: 'details', label: t('downloads.row.details'), icon: Info, run: showDetails },
     ...(phase.value === 'error' ? [{ key: 'report', label: t('report.rowAction'), icon: MessageSquareWarning, run: reportProblem }] : []),
   ];
   const removal: RowAction[] = [{ key: 'remove', label: t('downloads.row.removeFromList'), icon: ListX, run: remove }];

@@ -108,6 +108,9 @@ pub fn image_extension(ext: &str) -> bool {
 }
 
 pub fn failure(message: &str) -> GalleryError {
+  if let Some(error) = super::ytdlp_error::CookieReadError::classify(message, false, false) {
+    return GalleryError::Refused(error.code());
+  }
   if super::ytdlp_error::network_down("", message) {
     return GalleryError::NetworkDown;
   }
@@ -362,6 +365,11 @@ pub fn parse_gallery(bytes: &[u8], source: &str) -> Result<GalleryPost, GalleryE
     uploader: None,
   };
   let mut instagram_username = None;
+  let facebook = reqwest::Url::parse(source).is_ok_and(|url| {
+    url
+      .host_str()
+      .is_some_and(|host| host == "facebook.com" || host.ends_with(".facebook.com"))
+  });
   let instagram = reqwest::Url::parse(source).is_ok_and(|url| {
     url
       .host_str()
@@ -379,6 +387,7 @@ pub fn parse_gallery(bytes: &[u8], source: &str) -> Result<GalleryPost, GalleryE
         post.title = ["title", "content", "description"]
           .iter()
           .filter_map(|key| meta[*key].as_str())
+          .filter(|text| !facebook || !generic_facebook_title(text))
           .find_map(|s| s.lines().map(str::trim).find(|line| !line.is_empty()))
           .map(|s| s.chars().take(200).collect());
       }
@@ -497,6 +506,16 @@ pub fn parse_gallery(bytes: &[u8], source: &str) -> Result<GalleryPost, GalleryE
     post.title = instagram_username.map(|username| format!("Instagram post by @{username}"));
   }
   Ok(post)
+}
+
+pub(crate) fn generic_facebook_title(text: &str) -> bool {
+  let text = text.trim();
+  text.is_empty()
+    || matches!(
+      text.to_ascii_lowercase().as_str(),
+      "facebook" | "www.facebook.com" | "facebook.com"
+    )
+    || reqwest::Url::parse(text).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
 }
 
 impl GalleryPost {
@@ -643,6 +662,32 @@ impl GalleryPost {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn facebook_photo_titles_skip_hosts_and_urls_for_the_caption() {
+    for title in [
+      "www.facebook.com",
+      "https://www.facebook.com/photo/?fbid=123",
+      "facebook.com",
+    ] {
+      let records = serde_json::json!([[3,"https://cdn.example/photo.jpg",{"extension":"jpg","title":title,"content":"Photo caption"}]]);
+      let post = parse_gallery(
+        records.to_string().as_bytes(),
+        "https://www.facebook.com/share/p/abc/",
+      )
+      .unwrap();
+      assert_eq!(post.title.as_deref(), Some("Photo caption"));
+      let no_caption =
+        serde_json::json!([[3,"https://cdn.example/photo.jpg",{"extension":"jpg","title":title}]]);
+      assert!(parse_gallery(
+        no_caption.to_string().as_bytes(),
+        "https://www.facebook.com/photo/?fbid=123"
+      )
+      .unwrap()
+      .title
+      .is_none());
+    }
+  }
 
   #[test]
   fn tiktok_receipt_accepts_the_same_photo_on_another_provider_mirror() {
@@ -962,6 +1007,7 @@ mod tests {
       ("The read operation timed out", "networkTimeout"),
       ("Connection timed out", "networkTimeout"),
       ("timeout setting is invalid", "imageSourceUnavailable"),
+      ("Received unknown error code 100004 ('RPCError{PSM:[ies.item.attr] Method:[MultiGetItemAttr] ErrType:[RPC_FAILED] OriginalErr:[remote or network error[remote]: biz error: call mgetAttrBySdk timeout, timeout = 1s]}')", "imageSourceUnavailable"),
     ] {
       assert_eq!(failure(message), GalleryError::Refused(code), "{message}");
     }

@@ -54,6 +54,7 @@ pub fn reason_for_code(code: &str) -> FailReason {
   match code {
     code if crate::extract::outcome::LOGIN_CODES.contains(&code) => FailReason::Login,
     "videoNotFoundOrPrivate"
+    | "facebookVideoUnavailable"
     | "playlistPrivateOrMissing"
     | "notFound404"
     | "mediaUnavailable"
@@ -101,7 +102,7 @@ pub fn fail_reason(stderr: &str) -> FailReason {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewDetails {
-  /// Caption-based display title; the cached download model keeps the extractor's original title.
+  /// Caption-based display title; Instagram's cached download uses the same caption.
   #[serde(default)]
   pub title: Option<String>,
   /// https only; shown as an <img>, never fetched by the backend.
@@ -399,9 +400,18 @@ pub async fn read_output_reason(
 }
 
 /// Bounded stderr is retained only for capture's response-gated URL retries.
+#[cfg(test)]
 pub(super) async fn read_output_stderr(
   command: &mut Command,
   process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
+) -> Result<Vec<u8>, (FailReason, String)> {
+  read_output_stderr_with_limit(command, process_guard, super::read::READ_LIMIT).await
+}
+
+pub(super) async fn read_output_stderr_with_limit(
+  command: &mut Command,
+  process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
+  limit: std::time::Duration,
 ) -> Result<Vec<u8>, (FailReason, String)> {
   command
     .stdin(Stdio::null())
@@ -423,7 +433,7 @@ pub(super) async fn read_output_stderr(
   let (cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
   let owner = tokio::spawn(async move {
     let _process_guard = process_guard;
-    let read = tokio::time::timeout(super::read::READ_LIMIT, async {
+    let read = tokio::time::timeout(limit, async {
       let stdout = child.stdout.take()?;
       let mut bytes = Vec::new();
       stdout

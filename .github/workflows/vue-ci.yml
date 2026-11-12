@@ -37,6 +37,7 @@ permissions:
 
 jobs:
   lint:
+    if: github.repository == 'ahmed-abdat/nezzel-desktop'
     name: 'Lint'
     runs-on: ubuntu-latest
     steps:
@@ -59,6 +60,7 @@ jobs:
           pnpm run lint
 
   unit-tests:
+    if: github.repository == 'ahmed-abdat/nezzel-desktop'
     name: 'Unit Tests'
     runs-on: ubuntu-latest
     env:
@@ -92,6 +94,7 @@ jobs:
           fail_ci_if_error: true
 
   e2e-tests:
+    if: github.repository == 'ahmed-abdat/nezzel-desktop'
     name: 'E2E Tests'
     runs-on: ubuntu-latest
     container:
@@ -131,6 +134,7 @@ jobs:
           fail_ci_if_error: true
 
   build:
+    if: github.repository == 'ahmed-abdat/nezzel-desktop'
     name: 'Build'
     runs-on: ubuntu-latest
     steps:

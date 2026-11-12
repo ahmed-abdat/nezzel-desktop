@@ -4,7 +4,7 @@
     "showOrHide": "Vis/skjul vindu",
     "addToQueue": "Legg til fra utklippstavle",
     "addAndDownload": "Legg til og last ned fra utklippstavle",
-    "downloadQueue": "Last ned kø",
+    "downloadQueue": "Last ned elementene i køen",
     "shortcuts": {
       "ctrlShiftV": "Ctrl + Shift + V",
       "ctrlShiftD": "Ctrl + Shift + D",

@@ -120,11 +120,22 @@ fn read_diagnostics(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, Gall
   }
 }
 
+#[cfg(test)]
 pub async fn execute(
+  path: &Path,
+  args: &[String],
+  cancel: watch::Receiver<bool>,
+  deadline: Duration,
+) -> Result<GalleryOutput, GalleryError> {
+  execute_with_started(path, args, cancel, deadline, || {}).await
+}
+
+pub(crate) async fn execute_with_started(
   path: &Path,
   args: &[String],
   mut cancel: watch::Receiver<bool>,
   deadline: Duration,
+  started: impl FnOnce() + Send,
 ) -> Result<GalleryOutput, GalleryError> {
   if !*cancel.borrow() {
     return Err(GalleryError::Cancelled);
@@ -140,6 +151,7 @@ pub async fn execute(
     stdout,
     stderr,
   } = ToolProcess::spawn(&mut command, ()).map_err(|_| GalleryError::Unavailable)?;
+  started();
   let stdout = stdout.ok_or(GalleryError::Invalid)?;
   let stderr = stderr.ok_or(GalleryError::Invalid)?;
   let out_task = tokio::task::spawn_blocking(move || read_bounded(stdout, 8 * 1024 * 1024));
@@ -247,17 +259,36 @@ mod tests {
       .await,
       Err(GalleryError::Invalid)
     ));
+    let started = std::sync::atomic::AtomicUsize::new(0);
+    assert!(matches!(
+      execute_with_started(
+        Path::new("/does/not/exist"),
+        &[],
+        cancel.clone(),
+        Duration::from_secs(5),
+        || {
+          started.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+      )
+      .await,
+      Err(GalleryError::Unavailable)
+    ));
+    assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 0);
     tx.send(false).unwrap();
     assert!(matches!(
-      execute(
+      execute_with_started(
         Path::new("/does/not/exist"),
         &[],
         cancel,
-        Duration::from_secs(5)
+        Duration::from_secs(5),
+        || {
+          started.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
       )
       .await,
       Err(GalleryError::Cancelled)
     ));
+    assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 0);
   }
 
   #[tokio::test]
@@ -272,8 +303,19 @@ mod tests {
       marker.to_string_lossy().into_owned(),
     ];
     let (tx, cancel) = watch::channel(true);
+    let started = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let announced = started.clone();
     let running = tokio::spawn(async move {
-      execute(Path::new("/bin/sh"), &args, cancel, Duration::from_secs(5)).await
+      execute_with_started(
+        Path::new("/bin/sh"),
+        &args,
+        cancel,
+        Duration::from_secs(5),
+        move || {
+          announced.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        },
+      )
+      .await
     });
     let pid = loop {
       if let Some(pid) = std::fs::read_to_string(&marker)
@@ -293,6 +335,11 @@ mod tests {
       running.await.unwrap(),
       Err(GalleryError::Cancelled)
     ));
+    assert_eq!(
+      started.load(std::sync::atomic::Ordering::SeqCst),
+      1,
+      "a later cancellation cannot erase actual use"
+    );
     assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
     assert_eq!(
       std::io::Error::last_os_error().raw_os_error(),

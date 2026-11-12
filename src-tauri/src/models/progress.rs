@@ -14,6 +14,7 @@ pub struct MediaDestination {
 pub struct MediaDestinationPath {
   pub confidence: u32,
   pub path: String,
+  pub already_downloaded: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
