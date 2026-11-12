@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
-import { acceptBrowserLogin, browserLoginChoices, dismissBrowserLogin } from '../tauri/listeners/login';
-import type { LoginNeeded, LoginUsing } from '../tauri/types/login';
+import { nextTick, onScopeDispose, ref } from 'vue';
+import { acceptBrowserLogin, acknowledgeLoginNotice, browserLoginChoices, dismissBrowserLogin } from '../tauri/listeners/login';
+import type { LoginNeeded, LoginNotice, LoginUsing } from '../tauri/types/login';
 import { useMediaDiagnosticsStore } from './media/diagnostics';
 import { useMediaGroupStore } from './media/group';
 import { useToastStore } from './toast';
-import { i18n } from '../i18n';
+import { i18n, localeDirection } from '../i18n';
+import { browserName } from '../helpers/cookieBrowsers';
 import { LOGIN_APP_BOUND_REASON, LOGIN_TTL_MS } from '@/generated/contract';
 
 /**
@@ -55,7 +56,7 @@ export const useLoginStore = defineStore('login', () => {
       const candidate = using.value[request.groupId]?.candidate;
       const last = tried.value[request.host];
       const browser = candidate?.browser ?? last?.browser;
-      failed.value[request.groupId] = { groupId: request.groupId, host: request.host, reason: 'exhausted', tried: candidate?.id ?? last?.id, ...(browser ? { browser } : {}), ...(request.reason === LOGIN_APP_BOUND_REASON ? { hint: request.reason, blockedBrowser: request.blockedBrowser } : {}) };
+      failed.value[request.groupId] = { groupId: request.groupId, host: request.host, reason: 'exhausted', tried: candidate?.id ?? last?.id, ...(browser ? { browser } : {}), ...(request.reason === LOGIN_APP_BOUND_REASON || request.reason === 'browserLoginRemedy' ? { hint: request.reason, blockedBrowser: request.blockedBrowser } : {}) };
       return;
     }
     if (!request.changeOnly) delete failed.value[request.groupId];
@@ -63,6 +64,39 @@ export const useLoginStore = defineStore('login', () => {
     clearTimer(request.requestId);
     // The engine forgets a request after LOGIN_TTL_MS; drop it here at the same time.
     timers.set(request.requestId, setTimeout(() => expire(request.requestId), LOGIN_TTL_MS));
+  }
+
+  let noticeViewed = false;
+  let deferredNotice: LoginNotice | null = null;
+  const showDeferredNotice = () => {
+    if (document.visibilityState === 'visible' && deferredNotice) {
+      const notice = deferredNotice;
+      deferredNotice = null;
+      receiveNotice(notice);
+    }
+  };
+  document.addEventListener('visibilitychange', showDeferredNotice);
+  onScopeDispose(() => document.removeEventListener('visibilitychange', showDeferredNotice));
+  function receiveNotice(notice: LoginNotice) {
+    if (!noticeViewed) {
+      if (document.visibilityState !== 'visible') {
+        deferredNotice ??= notice;
+        return;
+      }
+      noticeViewed = true;
+      const isolate = (text: string) => localeDirection(i18n.global.locale.value) === 'rtl' ? `\u2068${text}\u2069` : text;
+      useToastStore().showToast(i18n.global.t(notice.browser === 'nezzel' ? 'downloads.login.noticeOwn' : 'downloads.login.notice', {
+        browser: isolate(browserName(notice.browser)), host: isolate(notice.host),
+      }), {
+        style: 'info', duration: 8000,
+        action: {
+          label: i18n.global.t('downloads.login.settings'),
+          run: () => { void import('../router').then(({ default: router }) => router.push({ name: 'settings.logins', hash: '#pref-auto-logins' })); },
+        },
+      });
+    }
+    // A failed acknowledgement cannot block a download or create another toast.
+    void nextTick().then(() => acknowledgeLoginNotice(notice.token)).catch(() => {});
   }
 
   function receiveUsing(payload: LoginUsing) {
@@ -165,5 +199,5 @@ export const useLoginStore = defineStore('login', () => {
     }
   }
 
-  return { pending, failed, tried, using, receive, receiveUsing, change, cardFor, accept, dismiss, expire, onFatal, forgetGroup };
+  return { pending, failed, tried, using, receive, receiveUsing, receiveNotice, change, cardFor, accept, dismiss, expire, onFatal, forgetGroup };
 });

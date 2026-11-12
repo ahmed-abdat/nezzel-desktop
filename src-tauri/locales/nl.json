@@ -4,7 +4,7 @@
     "showOrHide": "Venster tonen/verbergen",
     "addToQueue": "Toevoegen vanuit klembord",
     "addAndDownload": "Toevoegen en downloaden vanuit klembord",
-    "downloadQueue": "Wachtrij downloaden",
+    "downloadQueue": "Items in de wachtrij downloaden",
     "shortcuts": {
       "ctrlShiftV": "Ctrl + Shift + V",
       "ctrlShiftD": "Ctrl + Shift + D",

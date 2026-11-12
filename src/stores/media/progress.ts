@@ -13,6 +13,10 @@ import {
 } from '../../tauri/types/progress';
 import { notifyGroup } from '../../tauri/notifications';
 import { NotificationKind } from '../../tauri/types/app';
+import { useMediaDestinationStore } from './destination';
+import { useToastStore } from '../toast';
+import { useOpener } from '../../composables/useOpener';
+import { i18n } from '../../i18n';
 
 export type MediaProgress = MediaProgressPayload & MediaProgressStagePayload;
 export type MediaGroupProgress = MediaGroupProgressPayload & MediaProgressStagePayload;
@@ -62,6 +66,7 @@ export const useMediaProgressStore = defineStore('media-progress', () => {
   function processMediaCompletePayload(payload: MediaProgressCompletePayload) {
     const group = groupStore.findGroupById(payload.groupId);
     if (!group) return;
+    const wasDone = stateStore.getState(payload.id) === MediaState.done;
     stateStore.setState(payload.id, MediaState.done);
     if (group.isCombined) {
       const items = Object.values(group.items);
@@ -79,6 +84,22 @@ export const useMediaProgressStore = defineStore('media-progress', () => {
       }
     } else {
       void notifyGroup(NotificationKind.VideoFinished, group);
+      const destinations = useMediaDestinationStore();
+      const path = destinations.getPrimaryDestination(group.id)?.path;
+      // Only the final file counts: reusing a video stream before a fresh merge is not a reused file.
+      if (!wasDone && path && destinations.getDestinations(group.id).some(d => d.path === path && d.alreadyDownloaded)) {
+        const { t } = i18n.global;
+        const toast = useToastStore();
+        toast.showToast(t('downloads.row.alreadyDownloaded'), {
+          style: 'info',
+          action: {
+            label: t('downloads.row.show'),
+            run: () => void useOpener().revealPath(path).catch(() => {
+              toast.showToast(t('feedback.fileMissing'), { style: 'error' });
+            }),
+          },
+        });
+      }
     }
   }
 

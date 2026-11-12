@@ -299,6 +299,17 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Verdict
   }
   let post_id = requested.post_id.as_deref().or(page.post_id.as_deref());
   let photo_id = requested.photo_id.as_deref().or(page.photo_id.as_deref());
+  // Only publish page text after the requested photo/story has supplied bound media.
+  let title = html::metadata(&tags, "og:description")
+    .into_iter()
+    .find_map(|text| {
+      text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !crate::parsers::gallery::generic_facebook_title(line))
+        .find(|line| !line.is_empty())
+        .map(|line| line.chars().take(300).collect::<String>())
+    });
   let matched: Vec<_> = stories
     .iter()
     .filter(|(_, root)| post_id.is_none_or(|id| root.post == Some(id)))
@@ -315,12 +326,12 @@ pub(super) fn read(html: &str, page: &Identity, requested: &Identity) -> Verdict
       .find_map(|v| photo(v))
       .or_else(|| bound?.photo_urls.iter().find(|(key, _)| key == id).cloned());
     return selected.map_or(Verdict::Unknown, |photo| {
-      photo_attachments(&[photo], requested)
+      photo_attachments(&[photo], requested, title.as_deref())
     });
   }
   if let Some(media) = bound {
     if !media.photo_urls.is_empty() && !media.has_video {
-      return photo_attachments(&media.photo_urls, requested);
+      return photo_attachments(&media.photo_urls, requested, title.as_deref());
     }
     // Mixed posts still need gallery to preserve their videos.
     if !media.photos.is_empty() {
@@ -469,14 +480,18 @@ fn photo(value: &Value) -> Option<(String, String)> {
   };
   Some((id, url.into()))
 }
-fn photo_attachments(photos: &[(String, String)], source: &Identity) -> Verdict {
+fn photo_attachments(
+  photos: &[(String, String)],
+  source: &Identity,
+  title: Option<&str>,
+) -> Verdict {
   let attachments: Vec<_> = photos
     .iter()
     .map(|(id, url)| serde_json::json!({"id":id, "kind":"image", "url":url, "thumbnail":url}))
     .collect();
   let metadata = serde_json::json!({
     "id":source.post_id.as_deref().or(source.photo_id.as_deref()).unwrap_or(&photos[0].0),
-    "url":source.url.as_str(), "extractor":"Facebook",
+    "url":source.url.as_str(), "extractor":"Facebook", "title":title,
     "mediaKind":if photos.len() > 1 { "carousel" } else { "image" },
     "attachments":attachments, "thumbnail":photos[0].1,
     "videoCodecs":[], "audioCodecs":[], "videoTracks":[], "audioTracks":[],

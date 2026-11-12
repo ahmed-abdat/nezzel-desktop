@@ -11,6 +11,7 @@ pub struct YtdlpProgressParser {
   current_category: ProgressCategory,
   current_stage: ProgressStage,
   partial_download_duration_secs: Option<f64>,
+  reused_paths: std::collections::HashSet<String>,
 }
 
 impl YtdlpProgressParser {
@@ -26,6 +27,7 @@ impl YtdlpProgressParser {
       current_category: initial_category,
       current_stage: ProgressStage::Initializing,
       partial_download_duration_secs,
+      reused_paths: Default::default(),
     }
   }
 
@@ -33,6 +35,11 @@ impl YtdlpProgressParser {
     let mut evts = Vec::new();
 
     if let Some(evt) = self.try_destination(line) {
+      if let ProgressEvent::Destination(dest) = &evt {
+        if dest.destination.already_downloaded {
+          self.reused_paths.insert(dest.destination.path.clone());
+        }
+      }
       evts.push(evt);
     }
 
@@ -93,6 +100,7 @@ impl YtdlpProgressParser {
         destination: MediaDestinationPath {
           confidence: 80,
           path: destination,
+          already_downloaded: false,
         },
       }));
     }
@@ -100,6 +108,22 @@ impl YtdlpProgressParser {
   }
 
   fn try_destination(&self, line: &str) -> Option<ProgressEvent> {
+    if let Some(json) = line.strip_prefix("NEZZEL_FINAL|") {
+      let path: String = serde_json::from_str(json).ok()?;
+      if path.is_empty() {
+        return None;
+      }
+      return Some(ProgressEvent::Destination(MediaDestination {
+        id: self.id.clone(),
+        group_id: self.group_id.clone(),
+        is_merged: false,
+        destination: MediaDestinationPath {
+          confidence: 100,
+          already_downloaded: self.reused_paths.contains(&path),
+          path,
+        },
+      }));
+    }
     if let Some(path) = Self::extract_already_downloaded_path(line) {
       return Some(ProgressEvent::Destination(MediaDestination {
         id: self.id.clone(),
@@ -107,6 +131,7 @@ impl YtdlpProgressParser {
         destination: MediaDestinationPath {
           confidence: 65,
           path,
+          already_downloaded: true,
         },
         is_merged: false,
       }));
@@ -119,6 +144,7 @@ impl YtdlpProgressParser {
         destination: MediaDestinationPath {
           confidence: 90,
           path,
+          already_downloaded: false,
         },
         is_merged: false,
       }));
@@ -148,6 +174,7 @@ impl YtdlpProgressParser {
       destination: MediaDestinationPath {
         confidence,
         path: full_path,
+        already_downloaded: false,
       },
       is_merged: false,
     }))
@@ -454,6 +481,79 @@ fn parse_clock_to_secs(value: &str) -> Option<f64> {
 mod tests {
   use super::{progress_category_for_track_type, YtdlpProgressParser};
   use crate::models::{ProgressCategory, ProgressEvent, ProgressStage, TrackType};
+
+  #[test]
+  fn marks_reused_destinations_and_keeps_new_destinations_distinct() {
+    for (line, path, reused) in [
+      (
+        "[download] /tmp/فيديو.mp4 has already been downloaded",
+        "/tmp/فيديو.mp4",
+        true,
+      ),
+      (
+        "[download] /tmp/video.mp4 has already been downloaded and merged",
+        "/tmp/video.mp4",
+        true,
+      ),
+      (
+        r#"[VideoRemuxer] Not remuxing media file "/tmp/video.mp4"; already is in target format mp4"#,
+        "/tmp/video.mp4",
+        false,
+      ),
+      (
+        "[download] Destination: /tmp/new.mp4",
+        "/tmp/new.mp4",
+        false,
+      ),
+      (
+        r#"[Merger] Merging formats into "/tmp/new.mp4""#,
+        "/tmp/new.mp4",
+        false,
+      ),
+    ] {
+      let mut parser = YtdlpProgressParser::new("item", "group", ProgressCategory::Video, None);
+      let events = parser.parse_line(line);
+      let dest = events
+        .iter()
+        .find_map(|event| match event {
+          ProgressEvent::Destination(dest) => Some(dest),
+          _ => None,
+        })
+        .unwrap();
+      assert_eq!(dest.destination.path, path);
+      assert_eq!(dest.destination.already_downloaded, reused);
+      assert_eq!(
+        serde_json::to_value(dest).unwrap()["destination"]["alreadyDownloaded"],
+        reused
+      );
+    }
+  }
+
+  #[test]
+  fn final_receipt_wins_over_staging_paths_and_preserves_reused_status() {
+    let path = r#"/saved/فيديو "quoted".mp4"#;
+    for (previous, reused) in [
+      (None, false),
+      (Some(path), true),
+      (Some("/tmp/private/video.f137.mp4"), false),
+    ] {
+      let mut parser = YtdlpProgressParser::new("item", "group", ProgressCategory::Video, None);
+      parser.parse_line(r#"[Merger] Merging formats into "/tmp/private/video.mp4""#);
+      if let Some(previous) = previous {
+        parser.parse_line(&format!(
+          "[download] {previous} has already been downloaded"
+        ));
+      }
+      let events = parser.parse_line(&format!(
+        "NEZZEL_FINAL|{}",
+        serde_json::to_string(path).unwrap()
+      ));
+      assert!(matches!(&events[0], ProgressEvent::Destination(dest)
+        if dest.destination.path == path && dest.destination.confidence == 100
+          && dest.destination.already_downloaded == reused));
+      assert!(parser.parse_line("NEZZEL_FINAL|not json").is_empty());
+    }
+  }
 
   #[test]
   fn parses_ffmpeg_progress_for_partial_downloads() {

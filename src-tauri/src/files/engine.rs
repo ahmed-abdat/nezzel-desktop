@@ -170,6 +170,16 @@ impl Engine {
     self.export = export;
     self
   }
+  /// Resume, probe caches and runner cleanup must use the same export identity.
+  pub(crate) fn request_identity(&self, url: &str) -> String {
+    if matches!(self.export, super::hosts::Export::Office)
+      && super::hosts::plan(url, self.export).is_some_and(|p| p.native_export())
+    {
+      state::identity(&format!("{url}\nexport=office"))
+    } else {
+      state::identity(url)
+    }
+  }
   /// Connection count is bounded internally; all transfers also share an eight-connection host cap.
   pub fn with_connections(mut self, connections: usize) -> Self {
     self.connections = connections.clamp(1, plan::MAX_CONNECTIONS);
@@ -227,6 +237,23 @@ impl Engine {
       let delay = match self.client.get(url, range, cancel.clone()).await {
         Ok(body) => {
           let status = body.response.status().as_u16();
+          // Reject raw GitHub HTML before any probe, resumed or ranged body can be saved.
+          if body.response.status().is_success()
+            && body
+              .response
+              .headers()
+              .get("content-type")
+              .and_then(|v| v.to_str().ok())
+              .is_some_and(|v| {
+                matches!(
+                  crate::media_types::base_mime(v).as_str(),
+                  "text/html" | "application/xhtml+xml"
+                )
+              })
+            && super::hosts::plan(url, self.export).is_some_and(|plan| plan.github_raw())
+          {
+            return Err(Error::NotFile);
+          }
           if matches!(status, 429 | 509) && super::hosts::relax_rate_limit(url) {
             return Ok(body);
           }
@@ -275,7 +302,7 @@ impl Engine {
   }
   async fn probe_share(
     &self,
-    plan: super::hosts::Plan,
+    mut plan: super::hosts::Plan,
     mut cancel: watch::Receiver<bool>,
   ) -> Result<Probe> {
     if plan.folder() {
@@ -284,13 +311,24 @@ impl Engine {
     let mut url = plan.url.clone();
     for _ in 0..5 {
       let mut body = self.request(url.as_str(), None, cancel.clone()).await?;
-      if super::hosts::sign_in_page(body.response.url())
-        || matches!(body.response.status().as_u16(), 401 | 403 | 404 | 460)
-      {
+      let status = body.response.status().as_u16();
+      let api = plan.api(&url);
+      if super::hosts::sign_in_page(body.response.url()) {
         return Err(Error::NotPublic);
       }
-      if matches!(body.response.status().as_u16(), 429 | 509) {
-        return Err(Error::RateLimited);
+      let json_error = status != 200
+        && body
+          .response
+          .headers()
+          .get("content-type")
+          .and_then(|v| v.to_str().ok())
+          .is_some_and(|v| {
+            v.split(';')
+              .next()
+              .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"))
+          });
+      if !api && status != 200 && !json_error {
+        return Err(plan.response_error(status, ""));
       }
       let html = body
         .response
@@ -303,16 +341,17 @@ impl Engine {
             "text/html" | "application/xhtml+xml"
           )
         });
-      if !html {
+      if !api && status == 200 && (!html || plan.direct(body.response.url())) {
         let mut probe = Probe::from_response(body)?;
+        if let Some(name) = &plan.name {
+          probe.name.clone_from(name);
+        }
+        probe.size = probe.size.or(plan.size);
         probe.confirm_unknown()?;
         // Keep the confirmed endpoint (and its UUID) for conditional requests. A fresh
         // resolve on resume renews it; the initial body is consumed without another GET.
         probe.source = url.to_string();
         return Ok(probe);
-      }
-      if body.response.status() != reqwest::StatusCode::OK {
-        return Err(Error::Network);
       }
       let page = body.response.url().clone();
       let mut bytes = Vec::new();
@@ -330,8 +369,15 @@ impl Engine {
         }
         bytes.extend_from_slice(&chunk);
       }
-      let html = std::str::from_utf8(&bytes).map_err(|_| Error::NotFile)?;
-      url = plan.next(&page, html)?;
+      let text = std::str::from_utf8(&bytes).map_err(|_| Error::NotFile)?;
+      if status != 200 {
+        return Err(plan.response_error(status, text));
+      }
+      url = if api {
+        plan.next_api(&url, text)?
+      } else {
+        plan.next(&page, text)?
+      };
     }
     Err(Error::NotFile)
   }
@@ -350,14 +396,7 @@ impl Engine {
     .await?;
     let state_key = self.authentication_key().await?;
     let plan = super::hosts::plan(url, self.export);
-    // A paused PDF and its Office export have different bytes and names.
-    let identity = if matches!(self.export, super::hosts::Export::Office)
-      && plan.as_ref().is_some_and(|p| p.native_export())
-    {
-      state::identity(&format!("{url}\nexport=office"))
-    } else {
-      state::identity(url)
-    };
+    let identity = self.request_identity(url);
     let shared_file = plan.is_some();
     let probe = if shared_file && probe.is_none() {
       Some(self.probe(url, cancel.clone()).await?)

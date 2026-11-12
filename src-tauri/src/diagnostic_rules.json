@@ -253,6 +253,18 @@
       ]
     },
     {
+      "code": "unableToExtractInitialData",
+      "component": "instagram:user",
+      "appliesTo": "error",
+      "patterns": [{ "kind": "substr", "value": "Unable to extract data" }]
+    },
+    {
+      "code": "unableToExtractIdOrInfo",
+      "component": "likee",
+      "appliesTo": "error",
+      "patterns": [{ "kind": "substr", "value": "Unable to extract video info" }]
+    },
+    {
       "code": "nsigExtractionFailed",
       "appliesTo": "error",
       "patterns": [
@@ -270,7 +282,7 @@
       ]
     },
     {
-      "code": "facebookVideoUnavailable",
+      "code": "unableToExtractInitialData",
       "component": "facebook",
       "appliesTo": "error",
       "patterns": [{ "kind": "substr", "value": "Cannot parse data" }]
@@ -296,7 +308,8 @@
       "code": "urlNotSupported",
       "appliesTo": "error",
       "patterns": [
-        { "kind": "substr", "value": "Unsupported URL" }
+        { "kind": "substr", "value": "Unsupported URL" },
+        { "kind": "substr", "value": "No suitable extractor" }
       ]
     },
     {

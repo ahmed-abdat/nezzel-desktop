@@ -1073,7 +1073,17 @@
       "browserCookiesUnreadable": {
         "shortMessage": "Browser login could not be read",
         "message": "Nezzel could not read the browser login",
-        "action": "Try another browser in Login settings"
+        "action": "Choose another browser, or add a cookies.txt file in Login settings"
+      },
+      "browserDpapiFailed": {
+        "shortMessage": "Windows could not unlock the browser login",
+        "message": "Windows could not decrypt the browser's cookies with DPAPI. This can also happen with newer browser encryption",
+        "action": "Use the same Windows account as the browser, or sign in with Firefox or add a cookies.txt file in Login settings"
+      },
+      "browserAppBound": {
+        "shortMessage": "This browser's login encryption is unsupported",
+        "message": "Nezzel cannot read App-Bound encrypted cookies, used by Chrome 127+ and some other browsers on Windows",
+        "action": "Sign in to this site in Firefox, or add a cookies.txt file in Login settings"
       },
       "browserKeychainDenied": {
         "shortMessage": "Keychain access was not allowed",
@@ -1083,7 +1093,7 @@
       "browserSafariAccessDenied": {
         "shortMessage": "Safari login needs permission",
         "message": "macOS did not allow access to Safari’s login",
-        "action": "Give Nezzel Full Disk Access in System Settings, then try again"
+        "action": "Open System Settings → Privacy & Security → Full Disk Access, enable Nezzel, then restart Nezzel and try again"
       },
       "browserDatabaseLocked": {
         "shortMessage": "The browser database is busy",
@@ -1146,9 +1156,9 @@
         "action": "If the post is private, log in. Otherwise copy a fresh link and try again"
       },
       "notFound404": {
-        "shortMessage": "Nothing is at this link anymore",
-        "message": "Nothing is at this link anymore. Check the link, or whether it was removed",
-        "action": "Check the link, or whether the post was removed"
+        "shortMessage": "Nothing was found at this link",
+        "message": "Nothing was found at this link. Check that the link is correct",
+        "action": "Check that the link is correct, or try another link"
       },
       "server5xx": {
         "shortMessage": "The site is having trouble",
@@ -1222,8 +1232,8 @@
       },
       "imageSourceUnavailable": {
         "shortMessage": "Couldn't save this post",
-        "message": "The source did not provide the selected media, or the image data was incomplete. Try again.",
-        "action": "Try again"
+        "message": "The site did not provide the selected photos or media. Its photo service may be temporarily unavailable, or the media data may be incomplete.",
+        "action": "Try again later, or open the post on the site"
       },
       "imageSelectionChanged": {
         "shortMessage": "This post's items changed",
@@ -1359,11 +1369,6 @@
         "shortMessage": "Part of the download failed",
         "message": "A fragment download failed and will be retried automatically",
         "action": "Nothing to do: Nezzel retries it"
-      },
-      "facebookVideoUnavailable": {
-        "shortMessage": "Facebook didn't provide this video",
-        "message": "Facebook did not provide this video to Nezzel. Open the link in a browser and copy the link from the address bar, or try again later.",
-        "action": "Copy the browser's address-bar link, or try again later"
       },
       "unknown": {
         "shortMessage": "Couldn't download",
@@ -1547,10 +1552,17 @@
       "stillReading": "Still reading… {s} s",
       "readingStuck": "This site is slow to answer. Retry or remove it",
       "cancelled": "Download cancelled",
+      "alreadyDownloaded": "Already downloaded",
       "resuming": "Resuming…",
       "cancel": "Cancel download"
     },
     "login": {
+      "containers": {
+        "personal": "Personal",
+        "work": "Work",
+        "banking": "Banking",
+        "shopping": "Shopping"
+      },
       "needs": "This {site} post needs you to be logged in",
       "needsGeneric": "This post needs you to be logged in",
       "useFrom": "Use your login from",
@@ -1558,8 +1570,11 @@
       "notNow": "Not now",
       "useBrowser": "Use {browser}",
       "stillFailing": "The site received your {browser} login. Your account may not have access to this content. Open the post in {browser} to check",
-      "privacy": "Nezzel reads that browser's login only for this download. It is never saved or sent anywhere but the site",
-      "keychain": "macOS may ask once to let Nezzel read the browser's login",
+      "notice": "Nezzel used your {browser} login for {host}",
+      "noticeOwn": "Nezzel used its saved login for {host}",
+      "privacy": "Browser logins are on by default. Nezzel uses only this site's cookies for the download. Protected temporary files are deleted after use; cookie data is never sent to Nezzel, crash reports or usage counts. Turn this off in Settings → Logins.",
+      "embeddedRemedy": "Sign in to this site in Firefox, or add a cookies.txt file in Login settings, then retry.",
+      "keychain": "macOS may ask to let Nezzel access the browser's Keychain",
       "tryAnother": "Try another browser",
       "settings": "Login settings",
       "refusedBrowser": "{site} received your {browser} login. Your account may not have access to this content. Open the post in {browser} to check",
@@ -1571,8 +1586,8 @@
       "profileStatus": "{profile} · {status}",
       "usingProfile": "Using {profile}",
       "changeProfile": "Change profile",
-      "windowsAppBound": "Edge and Chrome on Windows don't let other apps use their logins. Sign in to this site in Firefox, or add a cookies file in Login settings",
-      "windowsAppBoundBrowser": "{browser} on Windows doesn't let other apps use its logins. Sign in to this site in Firefox, or add a cookies file in Login settings",
+      "windowsAppBound": "Nezzel cannot read App-Bound encrypted logins from Chrome 127+ and some other browsers on Windows. Sign in to this site in Firefox, or add a cookies.txt file in Login settings",
+      "windowsAppBoundBrowser": "Nezzel cannot read {browser}'s App-Bound encrypted login on Windows. Sign in to this site in Firefox, or add a cookies.txt file in Login settings",
       "expired": "That login request expired. Try the link again",
       "again": "Log in again",
       "skipped": "You skipped the login, so {site} didn't allow this download",
@@ -1702,7 +1717,7 @@
       "folderHint": "New downloads go here. Nezzel creates the folder if needed",
       "card": "Pop up a card for copied links",
       "cardHint": "Shows a small card over other apps when you copy a link, even when Nezzel is in the background. Nothing downloads until you choose",
-      "cardFocusHint": "On this desktop, copied links are picked up when Nezzel's window is in front.",
+      "cardFocusHint": "If copied links aren't detected in the background, keep Nezzel's window in front",
       "cardKeepOpen": "Keep the card open until I close it",
       "cardPosition": "Card position",
       "cardPositions": {
@@ -1716,10 +1731,12 @@
     },
     "logins": {
       "policy": "Browser logins",
-      "askChoice": "Ask",
+      "askChoice": "Ask once",
       "neverChoice": "Never",
       "alwaysChoice": "Always",
-      "note": "When a site needs a login, Nezzel uses a browser profile that is logged in to it. Your login is never saved or sent anywhere except that site",
+      "note": "Browser logins are used automatically by default when a site needs them. You can turn this off below.",
+      "autoLogins": "Use browser logins automatically",
+      "autoLoginsHint": "Uses only the site's cookies for the download. Protected temporary files are deleted after use. Cookie data is never sent to Nezzel, crash reports or usage counts.",
       "browser": "Use logins from",
       "browserHint": "Automatic finds a logged-in profile when a site refuses. Change the profile on a download, or pick one browser for every site",
       "none": "Don't use browser logins",

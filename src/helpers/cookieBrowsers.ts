@@ -1,3 +1,4 @@
+import { i18n } from '../i18n';
 import { COOKIE_BROWSERS, type CookieBrowser } from '@/generated/contract';
 
 /** Display names of the browsers yt-dlp can read logins (cookies) from; the list and its order come from Rust. */
@@ -18,5 +19,8 @@ export function browserName(key: string): string {
 /** Browser plus the human-readable profile name supplied by discovery. */
 export function candidateLabel(candidate: { browser: string; profile: string }): string {
   const name = browserName(candidate.browser);
-  return candidate.browser.toLowerCase() === 'safari' || !candidate.profile ? name : `${name} (${candidate.profile})`;
+  const profile = candidate.browser.toLowerCase() === 'firefox'
+    ? candidate.profile.replace(/ · userContext(Personal|Work|Banking|Shopping)\.label$/, (_, container: string) => ` · ${i18n.global.t(`downloads.login.containers.${container.toLowerCase()}`)}`)
+    : candidate.profile;
+  return candidate.browser.toLowerCase() === 'safari' || !profile ? name : `${name} (${profile})`;
 }

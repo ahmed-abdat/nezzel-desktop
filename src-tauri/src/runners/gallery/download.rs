@@ -66,6 +66,11 @@ pub(super) fn video_request(
     }
   }
   if asset.file_index.is_none() {
+    // Direct reader videos (e.g. Threads) may have no dimensions. The empty height is
+    // authoritative; yt-dlp's empty-placeholder setting would otherwise leave "-(p)".
+    if asset.item.height.is_none() {
+      video.template_context.insert("height", "");
+    }
     // Expired selected CDN URLs fail or resume the parent manifest. Retrying the
     // whole post inside yt-dlp could save an attachment the user did not select.
     let mut input = crate::resolve::ResolvedInput::new(&asset.item.url);
@@ -242,6 +247,7 @@ pub(super) async fn download_attempt(
         destination: MediaDestinationPath {
           confidence: 100,
           path: destination.to_string_lossy().into_owned(),
+          already_downloaded: false,
         },
       },
     );
@@ -362,6 +368,7 @@ pub async fn run_media_download(
           }
         }
         let reason = (error == GalleryError::Login
+          || matches!(error, GalleryError::Refused(code) if crate::runners::browser_cookies::read_error_code(code).is_some())
           || (!login.uses_cookies() && error == GalleryError::Refused("unableToExtractIdOrInfo")))
         .then_some("signInRequired");
         let diagnostics = vec![error_diagnostic(
@@ -383,7 +390,9 @@ pub async fn run_media_download(
           )
         } {
           RetryAction::Browser | RetryAction::Anonymous => continue,
-          RetryAction::AskLogin => return Err(YtdlpDownloadError::LoginPending),
+          RetryAction::AskLogin | RetryAction::Pending => {
+            return Err(YtdlpDownloadError::LoginPending)
+          }
           _ => {}
         }
         for event in login.failure_diagnostics(diagnostics) {
@@ -584,12 +593,54 @@ done < "$input"
       asset.file_index = None;
     }
     let child = video_request(&entry, &resolved, &resolved.assets[1], None).unwrap();
+    assert_eq!(
+      child
+        .template_context
+        .values
+        .get("height")
+        .map(String::as_str),
+      Some("")
+    );
     let input = child
       .resolved
       .as_ref()
       .expect("selected resolver video must skip another post resolution");
     assert_eq!(input.url, "https://cdn.example/v.mp4");
     assert_eq!(input.source_page.as_deref(), Some(resolved.source.as_str()));
+    // Known dimensions leave yt-dlp/template metadata intact, including 60 fps.
+    // Missing Threads dimensions suppress only the empty resolution suffix.
+    for (asset_height, expected) in [(Some(720), "Title-(1080p60).mp4"), (None, "Title.mp4")] {
+      resolved.assets[1].item.height = asset_height;
+      let mut entry = entry.clone();
+      for (key, value) in [
+        ("title", "Title"),
+        ("height", "1080"),
+        ("fps", "60"),
+        ("ext", "mp4"),
+      ] {
+        entry.template_context.insert(key, value);
+      }
+      let child = video_request(&entry, &resolved, &resolved.assets[1], None).unwrap();
+      assert_eq!(child.template_context.values["fps"], "60");
+      let args = crate::runners::ytdlp_args::build_location_args(
+        &TrackType::Both,
+        &child.template_context,
+        &crate::state::config_models::OutputSettings::default(),
+        &crate::state::preferences_models::PathPreferences::default(),
+        "/downloads".into(),
+      );
+      assert_eq!(
+        std::path::Path::new(&args[1]).file_name().unwrap(),
+        expected
+      );
+      if asset_height.is_some() {
+        entry.template_context.values.remove("height");
+        entry.template_context.values.remove("fps");
+        let probed = video_request(&entry, &resolved, &resolved.assets[1], None).unwrap();
+        assert!(!probed.template_context.values.contains_key("height"));
+        assert!(!probed.template_context.values.contains_key("fps"));
+      }
+    }
     let mut expired = input.clone();
     assert!(
       !expired.retry_original("HTTP Error 403"),

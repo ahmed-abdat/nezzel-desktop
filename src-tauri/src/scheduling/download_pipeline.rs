@@ -151,6 +151,12 @@ pub fn setup_download_dispatcher(
       crate::usage::download_started(&app, &entry);
 
       let result = crate::runners::gallery::run_media_download(app.clone(), entry.clone()).await;
+      crate::runners::ytdlp_download::download_finished(
+        &entry.group_id,
+        &entry.id,
+        &result,
+        crate::scheduling::group_state::is_group_running(&entry.group_id),
+      );
       let succeeded = result.is_ok();
       // A stop (pause, cancel, remove) returns Ok with the group no longer running.
       let end = match &result {

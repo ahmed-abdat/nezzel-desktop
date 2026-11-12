@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emit } from '@tauri-apps/api/event';
 import { LOGIN_TTL_MS } from '../../src/generated/contract';
+import { installTauriMock } from '../utils/tauriMock';
+import { i18n } from '../../src/i18n';
+import { useToastStore } from '../../src/stores/toast';
 import { useLoginStore } from '../../src/stores/login';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
@@ -10,7 +13,8 @@ import { registerLoginListeners } from '../../src/tauri/listeners/login';
 import type { LoginNeeded } from '../../src/tauri/types/login';
 import type { Group } from '../../src/tauri/types/group';
 
-const { accept, dismiss, choices } = vi.hoisted(() => ({ accept: vi.fn(), dismiss: vi.fn(), choices: vi.fn() }));
+const { accept, dismiss, choices, navigate } = vi.hoisted(() => ({ accept: vi.fn(), dismiss: vi.fn(), choices: vi.fn(), navigate: vi.fn() }));
+vi.mock('../../src/router', () => ({ default: { push: navigate } }));
 vi.mock('../../src/tauri/listeners/login', async importOriginal => ({
   ...(await importOriginal<object>()),
   acceptBrowserLogin: accept,
@@ -41,6 +45,7 @@ function addGroup(id = 'g1', itemId = 'item1') {
 
 describe('login store', () => {
   beforeEach(() => {
+    navigate.mockReset();
     vi.useFakeTimers();
     accept.mockReset().mockResolvedValue(undefined);
     dismiss.mockReset().mockResolvedValue(undefined);
@@ -48,13 +53,77 @@ describe('login store', () => {
   });
   afterEach(() => vi.useRealTimers());
 
+  it.each(['en', 'ar', 'fr'] as const)('shows one actual-use notice, acknowledges first view and links to the switch in %s', async (locale) => {
+    const previousLocale = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const acknowledged = vi.fn();
+    installTauriMock({ media_login_notice: (_cmd, args) => {
+      if (args && typeof args === 'object' && 'seenToken' in args && args.seenToken) acknowledged(args.seenToken);
+      return null;
+    } });
+    await registerLoginListeners();
+    const store = useLoginStore();
+    const toasts = useToastStore();
+    store.receiveUsing({ id: 'item', groupId: 'notice', host: 'facebook.com', candidate: chrome });
+    expect(toasts.toasts).toHaveLength(0);
+    const notice = { token: 'first-use', browser: 'chrome', host: 'facebook.com' };
+    await emit('media_login_notice', notice);
+    expect(toasts.toasts).toHaveLength(1);
+    expect(toasts.toasts[0].message).toContain('Nezzel');
+    expect(toasts.toasts[0].message).toContain('Chrome');
+    expect(toasts.toasts[0].message).toContain('facebook.com');
+    expect(toasts.toasts[0].message).not.toContain(chrome.profile);
+    expect(store.cardFor('notice')).toBeNull();
+    await vi.dynamicImportSettled();
+    expect(acknowledged).toHaveBeenCalledWith('first-use');
+    toasts.toasts[0].action!.run();
+    await vi.dynamicImportSettled();
+    expect(navigate).toHaveBeenCalledWith({ name: 'settings.logins', hash: '#pref-auto-logins' });
+    toasts.removeToast(toasts.toasts[0].id);
+    await emit('media_login_notice', notice);
+    expect(toasts.toasts).toHaveLength(0);
+    i18n.global.locale.value = previousLocale;
+  });
+  it('replays an unseen notice after listeners are ready, without blocking on acknowledgement failure', async () => {
+    installTauriMock({ media_login_notice: (_cmd, args) => {
+      if (args && typeof args === 'object' && 'seenToken' in args && args.seenToken) throw new Error('storage unavailable');
+      return { token: 'startup', browser: 'nezzel', host: 'instagram.com' };
+    } });
+    await registerLoginListeners();
+    const toasts = useToastStore();
+    expect(toasts.toasts).toHaveLength(1);
+    expect(toasts.toasts[0].message).toContain('Nezzel');
+    expect(useLoginStore().cardFor('any-row')).toBeNull();
+  });
+
+  it('waits for a visible first view before showing or acknowledging a notice', async () => {
+    const visible = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    const acknowledged = vi.fn();
+    installTauriMock({ media_login_notice: (_cmd, args) => {
+      if (args && typeof args === 'object' && 'seenToken' in args && args.seenToken) acknowledged(args.seenToken);
+      return null;
+    } });
+    await registerLoginListeners();
+    await emit('media_login_notice', { token: 'background', browser: 'firefox', host: 'facebook.com' });
+    expect(useToastStore().toasts).toHaveLength(0);
+    expect(acknowledged).not.toHaveBeenCalled();
+    visible.mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.dynamicImportSettled();
+    expect(useToastStore().toasts).toHaveLength(1);
+    expect(acknowledged).toHaveBeenCalledWith('background');
+    visible.mockRestore();
+  });
+
   it('allows profile choices through isolation while rejecting unknown commands', async () => {
     const previous = window.__TAURI_ISOLATION_HOOK__;
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await import('../../src-isolation/main');
     try {
-      const payload = { cmd: 'media_login_choices' };
-      expect(window.__TAURI_ISOLATION_HOOK__(payload)).toBe(payload);
+      for (const cmd of ['media_login_choices', 'media_login_notice']) {
+        const payload = { cmd };
+        expect(window.__TAURI_ISOLATION_HOOK__(payload)).toBe(payload);
+      }
       expect(() => window.__TAURI_ISOLATION_HOOK__({ cmd: 'unapproved_profile_reader' })).toThrow('Unauthorized command');
     } finally {
       window.__TAURI_ISOLATION_HOOK__ = previous;

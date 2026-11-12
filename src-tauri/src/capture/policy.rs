@@ -35,11 +35,28 @@ const SITES: &[SiteId] = {
     Bluesky,
     Telegram,
     Snapchat,
+    Tumblr,
+    Kick,
+    Vk,
+    Ok,
+    Streamable,
+    Imgur,
+    NineGag,
+    Likee,
+    Flickr,
   ]
 };
 
 pub fn supported_url(text: &str) -> Option<(String, String)> {
-  let text = text.trim();
+  // Copying links out of Arabic text can wrap them in directional formatting marks.
+  // Strip boundaries only: never rewrite a path, share key, or query value.
+  let text = text.trim_matches(|c: char| {
+    c.is_whitespace()
+      || matches!(c,
+    '\u{061c}' | '\u{200b}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}'
+      | '\u{2060}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
+  });
+
   if text.len() > 8192
     || text
       .chars()
@@ -47,8 +64,17 @@ pub fn supported_url(text: &str) -> Option<(String, String)> {
   {
     return None;
   }
+  let has_scheme = text.split_once(':').is_some_and(|(scheme, _)| {
+    scheme
+      .as_bytes()
+      .first()
+      .is_some_and(u8::is_ascii_alphabetic)
+      && scheme
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"+.-".contains(&b))
+  });
   let normalized;
-  let text = if !text.contains("://") && crate::files::hosts::is_share(text) {
+  let text = if !has_scheme {
     normalized = format!("https://{text}");
     normalized.as_str()
   } else {
@@ -67,7 +93,19 @@ pub fn supported_url(text: &str) -> Option<(String, String)> {
     .filter(|_| scheme == "https")
     .or_else(|| authority.strip_suffix(":80").filter(|_| scheme == "http"))
     .unwrap_or(&authority);
-  let site = site_of(host).filter(|site| SITES.contains(site))?;
+  // Proxy embed domains are aliases only at their exact public post hosts.
+  let host = match host {
+    "fxtwitter.com" | "www.fxtwitter.com" | "vxtwitter.com" | "www.vxtwitter.com" => "x.com",
+    h if crate::sites::host_is(h, "fxtwitter.com") || crate::sites::host_is(h, "vxtwitter.com") => {
+      return None
+    }
+    h => h,
+  };
+  let share = crate::files::hosts::is_share(text);
+  let site = site_of(host).filter(|site| SITES.contains(site));
+  if site.is_none() && !share {
+    return None;
+  }
   if !host
     .bytes()
     .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
@@ -85,13 +123,13 @@ pub fn supported_url(text: &str) -> Option<(String, String)> {
   let path = suffix.split('?').next().unwrap_or("");
   if matches!(
     site,
-    SiteId::GoogleDrive | SiteId::GoogleDocs | SiteId::Dropbox
-  ) && !crate::files::hosts::is_share(text)
+    Some(SiteId::GoogleDrive | SiteId::GoogleDocs | SiteId::Dropbox)
+  ) && !share
   {
     return None;
   }
   // Private Telegram invites and private channels never become a background request.
-  if site == SiteId::Telegram
+  if site == Some(SiteId::Telegram)
     && (path.starts_with("/+") || path.starts_with("/joinchat") || path.starts_with("/c/"))
   {
     return None;
@@ -114,7 +152,11 @@ pub fn is_feed_page(url: &str) -> bool {
   let path = rest[end..].split(['?', '#']).next().unwrap_or("");
   let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
   let first = segments.first().copied().unwrap_or("");
-  match site_by_domain(host) {
+  let site = site_by_domain(host);
+  if segments.is_empty() {
+    return site.is_some();
+  }
+  match site {
     Some(SiteId::LinkedIn) => first == "feed" && !path.contains("urn:li:"),
     Some(SiteId::Facebook) => segments.is_empty() || (segments.len() == 1 && first == "home"),
     Some(SiteId::Instagram) => segments.is_empty(),
@@ -128,6 +170,14 @@ pub fn is_feed_page(url: &str) -> bool {
           && segments.get(2).is_none_or(|s| !matches!(*s, "comments" | "s")))
     }
     Some(SiteId::YouTube) => segments.is_empty() || first == "feed",
+    Some(SiteId::Tumblr) => matches!(first, "dashboard" | "explore" | "tagged" | "search"),
+    Some(SiteId::Kick) => {
+      segments.len() == 1 && matches!(first, "browse" | "categories" | "following")
+    }
+    Some(SiteId::Vk | SiteId::Ok) => segments.len() == 1 && first == "feed",
+    Some(SiteId::Imgur) => segments.len() == 1 && matches!(first, "hot" | "new" | "top"),
+    Some(SiteId::NineGag) => segments.len() == 1 && matches!(first, "hot" | "fresh" | "trending"),
+    Some(SiteId::Flickr) => segments.len() == 1 && first == "explore",
     _ => false,
   }
 }
@@ -167,6 +217,11 @@ impl CapturePolicy {
       self.last = Some(fingerprint(text));
       self.seen.insert(fingerprint(&url), now);
     }
+  }
+
+  /// Startup is an observation, not a copy or an offered card. A later changed clipboard may offer it.
+  pub fn baseline(&mut self, text: &str) {
+    self.last = Some(fingerprint(text));
   }
 
   pub fn decide(&mut self, text: &str, now: Duration) -> Decision {
@@ -236,6 +291,113 @@ mod tests {
   const URL: &str = "https://www.youtube.com/watch?v=abc";
 
   #[test]
+  fn startup_text_is_not_a_copy_but_later_changed_text_is() {
+    let mut policy = CapturePolicy::default();
+    policy.baseline(URL);
+    assert_eq!(policy.decide(URL, Duration::ZERO), Decision::Unchanged);
+    // A different copy works; clearing/non-link text also makes a fresh copy of the original eligible.
+    let other = "https://youtu.be/different";
+    assert!(policy.decide(other, Duration::ZERO).offer().is_some());
+    policy.decide("plain text", Duration::ZERO);
+    assert!(policy.decide(URL, Duration::ZERO).offer().is_some());
+  }
+
+  #[test]
+  fn normalization_keeps_share_keys_and_rejects_embedded_marks_and_nonshares() {
+    for mark in [
+      '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
+      '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}', '\u{200b}', '\u{2060}',
+      '\u{feff}',
+    ] {
+      assert_eq!(
+        supported_url(&format!("{mark}youtu.be/abc?si=x&t=10{mark}"))
+          .unwrap()
+          .0,
+        "https://youtu.be/abc?si=x&t=10"
+      );
+    }
+    assert_eq!(
+      supported_url("dropbox.com/scl/fi/abc/report.pdf?rlkey=key&dl=0")
+        .unwrap()
+        .0,
+      "https://dropbox.com/scl/fi/abc/report.pdf?rlkey=key&dl=0"
+    );
+    for raw in [
+      "https://you\u{200f}tube.com/watch?v=a",
+      "https://pixeldrain.com/",
+      "https://mediafire.com/folder/abc",
+      "https://github.com/owner/repo",
+      "https://d.fxtwitter.com/nasa/status/1",
+      "https://fxtwitter.com.evil.test/nasa/status/1",
+    ] {
+      assert!(supported_url(raw).is_none(), "{raw}");
+    }
+    assert!(is_feed_page(&supported_url("youtube.com").unwrap().0));
+    // Private Telegram messages remain manual-only; they must not trigger the watcher.
+    assert!(supported_url("https://t.me/c/123456/7").is_none());
+    assert!(!crate::extract::registry::stages_for("https://t.me/c/123456/7").is_empty());
+  }
+
+  #[test]
+  fn url_patterns_reach_their_engine_after_clipboard_normalization() {
+    use crate::extract::registry::{readers, stages_for};
+    use crate::routing::StageId;
+    let mut failures = Vec::new();
+    for row in include_str!("../extract/fixtures/url-patterns.tsv").lines() {
+      if row.starts_with('#') || row.is_empty() {
+        continue;
+      }
+      let fields: Vec<_> = row.split('\t').collect();
+      let [site, shape, input, engine, reader, ..] = fields.as_slice() else {
+        panic!("bad fixture: {row}");
+      };
+      if *engine == "unsupported" {
+        assert!(
+          supported_url(input).is_none(),
+          "unsupported site must not be captured: {input}"
+        );
+        continue;
+      }
+      let Some((url, host)) = supported_url(input) else {
+        failures.push(format!("{site}/{shape}: clipboard rejected"));
+        continue;
+      };
+      let detected = crate::sites::site_of(&host).map_or("-", |s| s.site().key);
+      if detected != *site {
+        failures.push(format!("{shape}: site {detected}, expected {site}"));
+      }
+      let stages = stages_for(&url);
+      let want = match *engine {
+        "files" => StageId::Files,
+        "gallery" => StageId::Gallery,
+        "ytdlp" => StageId::Ytdlp,
+        _ => panic!("bad engine"),
+      };
+      // YouTube is exclusive; other post routes intentionally start with the I/O-free Files gate.
+      let prefix = if *site == "youtube" || want == StageId::Files {
+        vec![want]
+      } else {
+        vec![StageId::Files, want]
+      };
+      if !stages.starts_with(&prefix) {
+        failures.push(format!(
+          "{shape}: stages {stages:?}, expected prefix {prefix:?}"
+        ));
+      }
+      if is_feed_page(&url) {
+        failures.push(format!("{shape}: post flagged as feed"));
+      }
+      let actual = readers(&url)
+        .first()
+        .map_or_else(|| "-".to_owned(), |r| format!("{r:?}"));
+      if actual != *reader {
+        failures.push(format!("{shape}: reader {actual}, expected {reader}"));
+      }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+  }
+
+  #[test]
   fn accepts_supported_hosts_only_and_normalizes_for_dedupe() {
     assert_eq!(
       supported_url(" HTTPS://WWW.YouTube.com/watch?v=abc#t=2 "),
@@ -283,6 +445,7 @@ mod tests {
       "https://docs.google.com/forms/d/abc/viewform",
       "https://dropbox.com/home",
       "https://sub.dropbox.com/s/abc/report.pdf",
+      "https://www.kwai.com/",
     ] {
       assert!(
         supported_url(text).is_none(),
@@ -375,6 +538,22 @@ mod tests {
   #[test]
   fn feed_pages_are_flagged_and_posts_are_not() {
     for url in [
+      "kick.com",
+      "https://vk.com/",
+      "https://imgur.com/?utm_source=share",
+      "https://www.tumblr.com/",
+      "https://ok.ru/",
+      "https://9gag.com/",
+      "https://likee.video/",
+      "https://www.flickr.com/",
+      "https://streamable.com/",
+      "https://www.tumblr.com/dashboard",
+      "https://kick.com/browse",
+      "https://vk.com/feed",
+      "https://ok.ru/feed",
+      "https://imgur.com/hot",
+      "https://9gag.com/fresh",
+      "https://www.flickr.com/explore/",
       "https://www.linkedin.com/feed/",
       "https://www.linkedin.com/feed/?trk=x",
       "https://www.facebook.com/",
@@ -396,6 +575,15 @@ mod tests {
       assert!(is_feed_page(&url), "not flagged as feed: {url}");
     }
     for url in [
+      "https://www.tumblr.com/nasa/820337874767675392/",
+      "https://kick.com/clip/clip_123",
+      "https://vk.com/video-1_2",
+      "https://ok.ru/video/123",
+      "https://imgur.com/gallery/abc",
+      "https://9gag.com/gag/abc",
+      "https://likee.video/@user/video/123",
+      "https://www.flickr.com/photos/gsfc/55529808082/",
+      "https://streamable.com/abc",
       "https://www.linkedin.com/feed/update/urn:li:activity:123/",
       "https://www.linkedin.com/posts/someone_activity-1-abc",
       "https://www.facebook.com/watch/?v=1",

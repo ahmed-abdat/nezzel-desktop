@@ -30,10 +30,54 @@ describe('download error copy', () => {
       errors: { runner: Record<string, RunnerCopy> }; toolsUpdate: { stale: string; tryNow: string; failed: string };
     }>;
     for (const [locale, messages] of Object.entries(locales)) {
-      for (const code of ['facebookVideoUnavailable', 'accountAccessDenied', 'browserCookiesUnreadable', 'browserKeychainDenied', 'browserSafariAccessDenied', 'browserDatabaseLocked', 'browserProfileMissing', 'diskFull', 'outputNameTooLong', 'networkTimeout']) {
+      for (const code of ['accountAccessDenied', 'browserCookiesUnreadable', 'browserKeychainDenied', 'browserSafariAccessDenied', 'browserDatabaseLocked', 'browserProfileMissing', 'diskFull', 'outputNameTooLong', 'networkTimeout']) {
         for (const key of ['shortMessage', 'message', 'action'] as const) expect(messages.errors.runner[code]?.[key]?.trim(), `${locale}: ${code}.${key}`).toBeTruthy();
       }
       for (const key of ['stale', 'tryNow', 'failed'] as const) expect(messages.toolsUpdate?.[key]?.trim(), `${locale}: toolsUpdate.${key}`).toBeTruthy();
+    }
+  });
+
+  it.each(Object.entries(runnerLocales).flatMap(([locale, messages]) =>
+    ['browserKeychainDenied', 'browserDpapiFailed', 'browserAppBound', 'browserSafariAccessDenied'].map(code => [locale, code, messages] as const),
+  ))('%s displays the localized remedy for %s', (locale, code, messages) => {
+    i18n.global.locale.value = locale as Locale;
+    const component = defineComponent({
+      setup() {
+        const { diagnosticDisplay } = useDiagnostic(ref({ id: 'item', groupId: 'group', level: 'error', code, component: null, message: 'untrusted cookie failure', raw: '', timestamp: 1 }));
+        return () => h('p', diagnosticDisplay.value.action);
+      },
+    });
+    const wrapper = mount(component, { global: { plugins: [i18n, createPinia()] } });
+    try {
+      const action = messages.errors.runner[code]?.action;
+      expect(action).toBeTruthy();
+      expect(wrapper.text()).toBe(action);
+    } finally {
+      wrapper.unmount();
+      i18n.global.locale.value = 'en';
+    }
+  });
+
+  it.each([
+    ['en', 'Nothing was found at this link'],
+    ['ar', 'لم يُعثر على محتوى في هذا الرابط'],
+    ['fr', 'Aucun contenu trouvé à ce lien'],
+  ] as const)('%s shows a neutral message for a plain HTTP 404', (locale, expected) => {
+    i18n.global.locale.value = locale;
+    const wrapper = mount(defineComponent({
+      setup() {
+        const { diagnosticDisplay } = useDiagnostic(ref({
+          id: 'page', groupId: 'page', level: 'error', code: 'notFound404',
+          message: 'HTTP Error 404: Not Found', raw: '', component: null, timestamp: 1,
+        }));
+        return () => h('p', diagnosticDisplay.value.shortMessage);
+      },
+    }), { global: { plugins: [i18n, createPinia()] } });
+    try {
+      expect(wrapper.text()).toBe(expected);
+    } finally {
+      wrapper.unmount();
+      i18n.global.locale.value = 'en';
     }
   });
 

@@ -6,7 +6,7 @@
     "showOrHide": "Afficher/Masquer la fenêtre",
     "addToQueue": "Ajouter depuis le presse-papiers",
     "addAndDownload": "Ajouter et télécharger depuis le presse-papiers",
-    "downloadQueue": "Télécharger la file",
+    "downloadQueue": "Télécharger les éléments en attente",
     "shortcuts": {
       "ctrlShiftV": "Ctrl + Maj + V",
       "ctrlShiftD": "Ctrl + Maj + D",
@@ -55,6 +55,7 @@
   },
   "files": {
     "errors": {
+      "notFound404": "Ce fichier est introuvable. Il est peut-être privé ou supprimé. Vérifiez le lien auprès de son propriétaire.",
       "fileNotPublic": "Ce fichier n’est pas partagé publiquement. Demandez au propriétaire de le rendre accessible à toute personne disposant du lien.",
       "fileRateLimited": "Ce site limite les téléchargements pour le moment. Réessayez plus tard.",
       "fileCancelled": "Téléchargement en pause.",

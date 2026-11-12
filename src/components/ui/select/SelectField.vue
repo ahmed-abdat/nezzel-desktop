@@ -38,6 +38,7 @@ const inner = computed<SelectFieldValue | undefined>({
   set: (v) => { model.value = fromInner(v); },
 });
 const items = computed(() => props.options.map(o => ({ ...o, inner: toInner(o.value) as SelectFieldValue })));
+const selectedLabel = computed(() => props.options.find(o => o.value === model.value)?.label);
 </script>
 
 <template>
@@ -46,7 +47,7 @@ const items = computed(() => props.options.map(o => ({ ...o, inner: toInner(o.va
       <SelectValue v-if="$slots.value" :placeholder="placeholder" :dir="valueDir">
         <slot name="value" />
       </SelectValue>
-      <SelectValue v-else :placeholder="placeholder" :dir="valueDir" />
+      <SelectValue v-else :placeholder="placeholder" :dir="valueDir">{{ selectedLabel ?? placeholder }}</SelectValue>
     </SelectTrigger>
     <SelectContent :class="contentClass">
       <SelectItem v-for="option in items" :key="String(option.inner)" :value="option.inner" :disabled="option.disabled" :text-value="option.label">

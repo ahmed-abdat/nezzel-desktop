@@ -1,4 +1,7 @@
+import { createPinia, setActivePinia } from 'pinia';
+import type { LibraryRecord } from '../../src/tauri/types/library';
 import { flushPromises } from '@vue/test-utils';
+import { reactive } from 'vue';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { clearMocks } from '@tauri-apps/api/mocks';
 import { installTauriMock } from '../utils/tauriMock.ts';
@@ -74,18 +77,43 @@ function createPlaylistGroup(groupId: string, total: number): Group {
 }
 
 describe('media store', () => {
+  it('normalizes links at the queue boundary for shortcuts and direct callers', async () => {
+    const info = vi.fn().mockResolvedValue('ok');
+    installTauriMock({ media_info: info });
+    await useMediaStore().dispatchMediaInfoFetch('\u200fyoutube.com/watch?v=YsKxkP_kGbE&t=10\u200f', true);
+    expect(info.mock.calls[0][1]).toMatchObject({ url: 'https://youtube.com/watch?v=YsKxkP_kGbE&t=10' });
+  });
+
+  it('fills a missing photo title on the final destination event without overwriting metadata', () => {
+    const store = useMediaStore();
+    const groups = useMediaGroupStore();
+    const groupId = store.createCaptureGroup('capture-photo', 'https://www.facebook.com/photo/?fbid=123');
+    const group = groups.findGroupById(groupId)!;
+    const item = Object.values(group.items)[0];
+    store.processMediaAddPayload({ groupId, total: 1, item: { ...item, mediaKind: 'image', title: undefined } });
+    store.processMediaDestinationPayload({ groupId, id: item.id, destination: { path: '/downloads/123.jpg', confidence: 100 } });
+    expect(group.title).toBe('123.jpg');
+    expect(group.items[item.id].title).toBe('123.jpg');
+    store.processMediaAddPayload({ groupId, total: 1, item: { ...item, mediaKind: 'image', title: undefined } });
+    expect(group.title).toBe('123.jpg');
+    store.processMediaAddPayload({ groupId, total: 1, item: { ...item, mediaKind: 'image', title: 'Photo caption' } });
+    store.processMediaDestinationPayload({ groupId, id: item.id, destination: { path: '/downloads/123.jpg', confidence: 100 } });
+    expect(group.title).toBe('Photo caption');
+  });
+
   it('cancels immediately through removal and Undo requeues the saved group with every option', async () => {
     const requests: { cmd: string; args: unknown }[] = [];
     installTauriMock({
-      group_cancel: (cmd, args) => { requests.push({ cmd, args }); },
-      media_download: (cmd, args) => { requests.push({ cmd, args }); },
+      group_cancel: (cmd, args) => { requests.push({ cmd, args: structuredClone(args) }); },
+      media_download: (cmd, args) => { requests.push({ cmd, args: structuredClone(args) }); },
     });
     const groups = useMediaGroupStore();
     const store = useMediaStore();
     const options = useMediaOptionsStore();
     const group = createPlaylistGroup('cancel-me', 1);
     delete group.items.leader.entries;
-    group.items.leader.attachments = [{ id: 'photo', kind: 'image', url: 'https://example.com/photo.jpg' }];
+    // Media events and option selections can insert already-reactive children into the group.
+    group.items.leader.attachments = reactive([{ id: 'photo', kind: 'image' as const, url: 'https://example.com/photo.jpg' }]);
     group.attachments = group.items.leader.attachments;
     groups.createGroup(group);
     useMediaStateStore().setGroupState(group.id, MediaState.downloading);
@@ -94,7 +122,7 @@ describe('media store', () => {
     options.setTracks(group.id, { audio: 'en', video: 'main' });
     options.setOverrides(group.id, { output: { downloadDir: '/chosen' } });
     options.setAttachmentSelection(group.id, ['photo']);
-    await store.downloadGroup(group.id, chosen);
+    expect(await store.downloadGroup(group.id, chosen)).toBe(true);
     const originalRequest = requests.at(-1)!.args as { items: unknown[] };
     requests.length = 0;
 
@@ -183,6 +211,117 @@ describe('media store', () => {
       finish();
       await request;
     }
+  });
+
+  it.each(['video', 'audio', 'photos', 'mixed', 'failed'] as const)('persists then reloads %s display facts', async (kind) => {
+    let saved: LibraryRecord | undefined;
+    installTauriMock({
+      media_download: (_cmd, args) => {
+        const request = args as { metadata: Record<string, { historyId: string; display: LibraryRecord['display'] }> };
+        saved = { id: Object.values(request.metadata)[0].historyId, paths: ['/downloads/saved.mp4'], url: 'https://example.com/post', title: 'Caption', kind: kind === 'audio' ? 'audio' : 'video', size: 5, completedAt: 1,
+          ...Object.values(request.metadata)[0] };
+      },
+      library_record_failure: (_cmd, args) => { saved = { ...(args as { row: LibraryRecord }).row, paths: [], completedAt: 1, size: 0 }; },
+      library_list: () => saved ? [JSON.parse(JSON.stringify(saved))] : [],
+    });
+    const store = useMediaStore();
+    const groupId = await store.dispatchMediaInfoFetch('https://example.com/post');
+    const group = useMediaGroupStore().findGroupById(groupId)!;
+    const first = Object.values(group.items)[0];
+    const attachments = kind === 'photos' || kind === 'mixed'
+      ? [1, 2, 3].map(n => ({ id: `${n}`, kind: kind === 'mixed' && n === 3 ? 'video' as const : 'image' as const, url: `https://cdn.example/${n}` }))
+      : undefined;
+    const sourceKind = kind === 'photos' ? 'carousel' : kind === 'mixed' ? 'mixed' : 'video';
+    store.processMediaAddPayload({ groupId: group.id, total: 1, item: {
+      ...first, title: 'Caption', duration: 42, mediaKind: sourceKind, attachments,
+      formats: kind === 'video' ? [{ id: 'v', height: 1080, fps: 60, videoCodecs: ['h264'], audioCodecs: ['aac'] }] : [],
+    } });
+    const options = { trackType: kind === 'audio' ? TrackType.audio : TrackType.both, ...(kind === 'video' ? { height: 1080, fps: 60 } : {}) };
+    if (kind === 'failed') {
+      useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id: first.id, groupId: group.id, code: 'networkTimeout', level: 'error', component: null, message: '', raw: '', timestamp: 1 });
+      useMediaDiagnosticsStore().processMediaFatalPayload({ id: first.id, groupId: group.id, message: 'failure', details: null, exitCode: 1, internal: false, timestamp: 1 });
+    } else {
+      await store.downloadGroup(group.id, options);
+    }
+    await flushPromises();
+    expect(saved).toBeDefined();
+    if (kind === 'failed') expect(saved!.id).not.toBe(first.id);
+    // A new app/store instance consumes only the serialized library contract.
+    setActivePinia(createPinia());
+    await useMediaStore().loadLibrary();
+    const id = `library:${saved!.id}`;
+    const loaded = useMediaGroupStore().findGroupById(id)!;
+    expect(loaded.duration).toBe(42);
+    expect(useMediaStateStore().getGroupState(id)).toBe(kind === 'failed' ? MediaState.error : MediaState.done);
+    if (kind !== 'failed') expect(useMediaOptionsStore().getOptions(id)).toMatchObject(options);
+    if (attachments) expect(loaded.savedAttachmentSummary).toEqual(kind === 'mixed' ? { photos: 2, videos: 1 } : { photos: 3, videos: 0 });
+    if (kind === 'failed') {
+      expect(useMediaDiagnosticsStore().findLastDiagnosticByGroupId(id)?.code).toBe('networkTimeout');
+      expect(useMediaDestinationStore().getDestinations(id)).toEqual([]);
+    }
+  });
+
+  it('removes failed history before retry and does not resurrect it from an in-flight scan', async () => {
+    const row = { id: 'failure', paths: [], url: 'https://example.com/post', title: 'Failed', kind: 'video', size: 0, completedAt: 1, errorCode: 'networkTimeout' };
+    let finishScan!: (rows: unknown[]) => void;
+    const removes: unknown[] = [];
+    installTauriMock({
+      library_list: (_cmd, args) => (args as { scan: boolean }).scan ? new Promise((resolve) => { finishScan = resolve; }) : [row],
+      library_remove: (_cmd, args) => { removes.push(args); },
+    });
+    const store = useMediaStore();
+    const loading = store.loadLibrary();
+    await flushPromises();
+    await store.retryGroup('library:failure');
+    await flushPromises();
+    expect(removes).toContainEqual({ paths: [], ids: ['failure'] });
+    finishScan([row]);
+    await loading;
+    expect(useMediaGroupStore().groupOrder).toEqual(['library:failure']);
+    expect(useMediaStateStore().getGroupState('library:failure')).toBe(MediaState.fetching);
+  });
+
+  it('recovers legacy audio labels and photo counts from saved files', async () => {
+    installTauriMock({ library_list: () => [
+      { id: 'audio', paths: ['/downloads/a.mp3'], url: '', title: 'Audio', kind: 'audio', size: 1, completedAt: 1 },
+      { id: 'photos', paths: ['/downloads/a.jpg', '/downloads/b.jpg'], url: '', title: 'Photos', kind: 'image', size: 2, completedAt: 1 },
+    ] });
+    await useMediaStore().loadLibrary();
+    expect(useMediaOptionsStore().getOptions('library:audio')?.trackType).toBe(TrackType.audio);
+    expect(useMediaGroupStore().findGroupById('library:photos')?.savedAttachmentSummary).toEqual({ photos: 2, videos: 0 });
+  });
+
+  it('does not duplicate a live failed row when startup history finishes loading', async () => {
+    let failure: object | undefined;
+    installTauriMock({
+      library_record_failure: (_cmd, args) => { failure = (args as { row: object }).row; },
+      library_list: () => failure ? [{ ...failure, paths: [], completedAt: 1, size: 0 }] : [],
+    });
+    const store = useMediaStore();
+    const id = await store.dispatchMediaInfoFetch('https://example.com/post');
+    useMediaStateStore().setGroupState(id, MediaState.error);
+    store.rememberFailedGroup(id);
+    await flushPromises();
+    await store.loadLibrary();
+    expect(useMediaGroupStore().groupOrder).toEqual([id]);
+  });
+
+  it('uses distinct durable identities when capture counters restart', async () => {
+    const ids: string[] = [];
+    installTauriMock({ library_record_failure: (_cmd, args) => {
+      ids.push((args as { row: { id: string } }).row.id);
+    } });
+    for (const url of ['https://example.com/one', 'https://example.com/two']) {
+      setActivePinia(createPinia());
+      const store = useMediaStore();
+      store.createCaptureGroup('capture-1', url);
+      store.processMediaAddPayload({ groupId: 'capture-1', total: 1, item: { id: 'capture-1', isLeader: true, url, formats: [], audioCodecs: [], filesize: 0 } });
+      useMediaStateStore().setGroupState('capture-1', MediaState.error);
+      store.rememberFailedGroup('capture-1');
+      await flushPromises();
+    }
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
   });
 
   it('loads history as done groups below session rows and appends scan results without moving rows', async () => {

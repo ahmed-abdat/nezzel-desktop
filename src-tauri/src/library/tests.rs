@@ -20,7 +20,7 @@ async fn missing_library_returns_errors_without_panicking() {
   assert!(library_list(app.handle().clone(), Some(true))
     .await
     .is_err());
-  assert!(library_remove(app.handle().clone(), Vec::new())
+  assert!(library_remove(app.handle().clone(), Vec::new(), None)
     .await
     .is_err());
 }
@@ -59,6 +59,8 @@ fn record(path: PathBuf, time: u64) -> LibraryRecord {
     completed_at: time,
     thumbnail: None,
     authority: Vec::new(),
+    display: LibraryDisplay::default(),
+    error_code: None,
   }
 }
 #[test]
@@ -152,6 +154,33 @@ fn cap_keeps_newest_and_append_replaces_duplicate_paths() {
   let loaded = Index::load(&dir.index()).unwrap();
   assert_eq!(loaded.records.len(), 5000);
   assert_eq!(loaded.scanned.len(), 2000);
+  // A run of failures has its own bound and cannot evict file authority from completed rows.
+  index.records.extend((0..501).map(|n| {
+    let mut failed = record(PathBuf::new(), 20000 + n);
+    failed.paths.clear();
+    failed.error_code = Some("networkTimeout".into());
+    failed
+  }));
+  let mut failed = record(PathBuf::new(), 30000);
+  failed.paths.clear();
+  failed.error_code = Some("unknown".into());
+  index.append(failed);
+  assert_eq!(
+    index
+      .records
+      .iter()
+      .filter(|r| r.error_code.is_none())
+      .count(),
+    5000
+  );
+  assert_eq!(
+    index
+      .records
+      .iter()
+      .filter(|r| r.error_code.is_some())
+      .count(),
+    500
+  );
 }
 #[test]
 fn scan_skips_hidden_temporary_and_deep_files_and_refuses_broad_roots() {
@@ -357,4 +386,92 @@ fn metadata_is_released_for_failed_items_and_cancelled_groups() {
   assert_eq!(library.0.lock().unwrap().metadata["g"].len(), 1);
   library.forget_group("g");
   assert!(library.0.lock().unwrap().metadata.is_empty());
+}
+
+#[test]
+fn display_and_failed_rows_persist_reload_roundtrip_table() {
+  let dir = Sandbox::new();
+  for (n, (kind, track, height, photos, videos, error)) in [
+    (
+      "video",
+      crate::models::TrackType::Both,
+      Some(1080),
+      0,
+      0,
+      None,
+    ),
+    ("audio", crate::models::TrackType::Audio, None, 0, 0, None),
+    ("image", crate::models::TrackType::Both, None, 5, 0, None),
+    ("video", crate::models::TrackType::Both, None, 2, 1, None),
+    (
+      "video",
+      crate::models::TrackType::Both,
+      None,
+      0,
+      0,
+      Some("networkTimeout"),
+    ),
+  ]
+  .into_iter()
+  .enumerate()
+  {
+    let mut row = record(dir.file(&format!("{n}.mp4")), n as u64);
+    row.kind = kind.into();
+    row.error_code = error.map(str::to_owned);
+    if error.is_some() {
+      row.paths.clear();
+    }
+    row.display = LibraryDisplay {
+      duration: Some(42.0),
+      height,
+      fps: height.map(|_| 60),
+      track_type: Some(track),
+      attachment_summary: (photos + videos > 0).then_some(AttachmentSummary { photos, videos }),
+    };
+    let expected = serde_json::to_value(&row).unwrap();
+    let mut index = Index::default();
+    index.append(row);
+    index.save(&dir.index()).unwrap();
+    let mut loaded = Index::load(&dir.index()).unwrap();
+    loaded.prune();
+    loaded.remove(&[], Some(&dir.0));
+    assert_eq!(serde_json::to_value(&loaded.rows()[0]).unwrap(), expected);
+  }
+  // Existing beta records load with absent optional fields; never discard the whole index.
+  let mut old = serde_json::to_value(record(dir.file("old.mp4"), 1)).unwrap();
+  old.as_object_mut().unwrap().remove("display");
+  old.as_object_mut().unwrap().remove("errorCode");
+  fs::write(
+    dir.index(),
+    serde_json::to_vec(&serde_json::json!({"version":1,"records":[old]})).unwrap(),
+  )
+  .unwrap();
+  assert_eq!(Index::load(&dir.index()).unwrap().rows().len(), 1);
+}
+
+#[test]
+fn successful_completion_replaces_failure_and_rejects_late_failure_for_same_item() {
+  let dir = Sandbox::new();
+  let success = record(dir.file("completed.mp4"), 1);
+  let mut failed = success.clone();
+  failed.paths.clear();
+  failed.error_code = Some("networkTimeout".into());
+  let mut index = Index::default();
+  index.append(failed.clone());
+  index.append(success.clone());
+  index.append(failed);
+  index.save(&dir.index()).unwrap();
+  let rows = Index::load(&dir.index()).unwrap().rows();
+  assert_eq!(rows.len(), 1);
+  assert!(rows[0].error_code.is_none());
+  assert_eq!(rows[0].paths, success.paths);
+  let mut second = success.clone();
+  second.paths = vec![dir.file("completed-audio.mp3")];
+  index.append(second.clone());
+  index.save(&dir.index()).unwrap();
+  let rows = Index::load(&dir.index()).unwrap().rows();
+  assert_eq!(rows.len(), 2);
+  assert!(rows.iter().any(|r| r.paths == success.paths));
+  assert!(rows.iter().any(|r| r.paths == second.paths));
+  assert_ne!(rows[0].id, rows[1].id);
 }

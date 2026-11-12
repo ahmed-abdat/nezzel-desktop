@@ -1,6 +1,7 @@
 pub(crate) mod browser_cookies;
 pub mod browser_logins;
 pub mod browsers;
+pub(crate) mod facebook_retry;
 pub mod gallery;
 pub mod gallery_files;
 pub mod gallery_process;

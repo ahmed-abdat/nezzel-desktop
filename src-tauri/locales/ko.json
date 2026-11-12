@@ -4,7 +4,7 @@
     "showOrHide": "창 표시/숨기기",
     "addToQueue": "클립보드에서 추가",
     "addAndDownload": "클립보드에서 추가 및 다운로드",
-    "downloadQueue": "대기열 다운로드",
+    "downloadQueue": "대기열의 항목 다운로드",
     "shortcuts": {
       "ctrlShiftV": "Ctrl + Shift + V",
       "ctrlShiftD": "Ctrl + Shift + D",

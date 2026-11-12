@@ -69,3 +69,4 @@ scripts/login-check.sh
 scripts/public-export.sh
 .public-exclude
 *.pyc
+.eslintcache

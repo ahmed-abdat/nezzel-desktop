@@ -22,7 +22,8 @@ use std::{
   time::{Duration, Instant},
 };
 use support::{
-  classify, last_engine_error, matches_expected, matches_selection, parse_links, Link,
+  classify, last_engine_error, matches_error, matches_expected, matches_selection, parse_links,
+  verify_file, Link,
 };
 use tauri::{Listener, Manager};
 
@@ -98,18 +99,31 @@ fn start() -> Result<(), Box<dyn Error>> {
   // Fresh directory per run prevents old files from producing a false PASS.
   let run_dir = options.out.join(format!("run-{}", uuid::Uuid::new_v4()));
   fs::create_dir(&run_dir)?;
-  let bin_dir = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is unset")?)
-    .join("Library/Application Support/dev.ahmed.nezzel/bin");
-  for name in ["yt-dlp", "ffmpeg", "ffprobe"] {
+  let bin_dir = match std::env::var_os("LINK_MATRIX_BIN_DIR") {
+    Some(path) => fs::canonicalize(path)?,
+    None => PathBuf::from(std::env::var_os("HOME").ok_or("HOME is unset")?)
+      .join("Library/Application Support/dev.ahmed.nezzel/bin"),
+  };
+  for name in ["yt-dlp", "ffmpeg", "ffprobe", "deno"] {
     if !bin_dir.join(name).is_file() {
       return Err(format!("missing app binary {name}").into());
     }
   }
   // macOS ships gallery-dl as a onedir resource (tools/gallery-dl/gallery-dl); link the whole tools folder.
-  let binaries = fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries"))?;
+  let binaries = fs::canonicalize(
+    std::env::var_os("LINK_MATRIX_RESOURCES_DIR")
+      .map(PathBuf::from)
+      .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries")),
+  )?;
   let resources = run_dir.join("resources");
   fs::create_dir(&resources)?;
-  std::os::unix::fs::symlink(binaries.join("tools"), resources.join("tools"))?;
+  if binaries.join("tools").is_dir() {
+    std::os::unix::fs::symlink(binaries.join("tools"), resources.join("tools"))?;
+  }
+  // Linux single-file sidecars can be staged with a stable, unsuffixed name.
+  if binaries.join("gallery-dl").is_file() {
+    link_file(&binaries.join("gallery-dl"), &resources.join("gallery-dl"))?;
+  }
   link_file(
     &binaries.join("gallery-dl.sha256"),
     &resources.join("gallery-dl.sha256"),
@@ -370,17 +384,22 @@ async fn run_one(
   }
   match outcome.0 {
     Ok((images, videos, audio, files)) => {
-      row.got = format!("{images} image, {videos} video, {audio} audio");
+      row.got = if row.link.expected == "file" {
+        format!("{} verified file(s)", files.len())
+      } else {
+        format!("{images} image, {videos} video, {audio} audio")
+      };
       row.files = files;
       if !captured.iter().any(|(kind, _)| kind == "media_fatal")
-        && matches_expected(
-          &row.link.expected,
-          row.link.count,
-          row.link.count_is_total,
-          images,
-          videos,
-          audio,
-        )
+        && ((row.link.expected == "file" && !row.files.is_empty())
+          || matches_expected(
+            &row.link.expected,
+            row.link.count,
+            row.link.count_is_total,
+            images,
+            videos,
+            audio,
+          ))
       {
         row.verdict = "PASS".into();
         row.reason = if row.link.expected == "unknown" {
@@ -424,7 +443,32 @@ async fn run_one(
       row.verdict = classify(&codes, &evidence).into();
       row.cause = root_cause(&codes, &evidence);
       // Include incomplete artifacts for inspection, never count them toward PASS.
-      let _ = list_files(&folder, &mut row.files);
+      let listed = list_files(&folder, &mut row.files).is_ok();
+      // Captured events are appended in production emission order. A previous
+      // fallback's refusal is insufficient if the terminal attempt failed otherwise.
+      let terminal_codes: Vec<_> = captured
+        .iter()
+        .filter_map(|(kind, value)| {
+          match kind.as_str() {
+            "media_diagnostic" => Some(value["code"].as_str().unwrap_or_default()),
+            // An empty code is a successful fetch: it must hide earlier refusals.
+            "media_attempts" => Some(value["finalCode"].as_str().unwrap_or_default()),
+            "media_login_needed" => Some(value["reason"].as_str().unwrap_or_default()),
+            _ => None,
+          }
+        })
+        .collect();
+      if listed
+        && row.files.is_empty()
+        && matches_error(&row.link.expected, &terminal_codes, &row.reason)
+      {
+        row.verdict = "PASS".into();
+        row.cause.clear();
+        row.got = format!(
+          "Expected refusal: {}",
+          terminal_codes.last().copied().unwrap_or_default()
+        );
+      }
     }
   }
   if row.ui.is_empty() {
@@ -604,8 +648,20 @@ async fn pipeline(
     gallery::run_media_download(app.clone(), download)
       .await
       .map_err(|e| format!("download: {e:?}: {e}"))?;
-    let (images, videos, audio, files) = verify_files(folder, bins, &observed).await?;
-    if !matches_selection(expected_images, expected_videos, images, videos, audio) {
+    let (images, videos, audio, files) = verify_files(
+      folder,
+      bins,
+      &observed,
+      link.expected == "file",
+      link
+        .note
+        .split_whitespace()
+        .find_map(|word| word.strip_prefix("sha256=")),
+    )
+    .await?;
+    if link.expected != "file"
+      && !matches_selection(expected_images, expected_videos, images, videos, audio)
+    {
       return Err(format!("Request {number} saved {images} images/{videos} videos, but selected {expected_images} images/{expected_videos} videos"));
     }
     totals.0 += images;
@@ -644,6 +700,8 @@ async fn verify_files(
   folder: &Path,
   bins: &Path,
   observed: &HashSet<String>,
+  generic_file: bool,
+  checksum: Option<&str>,
 ) -> Result<(usize, usize, usize, Vec<String>), String> {
   let mut paths = Vec::new();
   list_files(folder, &mut paths)?;
@@ -677,6 +735,11 @@ async fn verify_files(
     }
     if fs::metadata(candidate).map_err(|e| e.to_string())?.len() == 0 {
       return Err(format!("Empty output: {path}"));
+    }
+    if generic_file {
+      verify_file(candidate, checksum)?;
+      files.push(path);
+      continue;
     }
     let probe = command_output(
       &bins.join("ffprobe"),

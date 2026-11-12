@@ -90,6 +90,13 @@ async fn run_with_resolution(
   resolution: Option<Resolution>,
 ) -> StageResult {
   let start = Instant::now();
+  if resolve::private_telegram_message(&entry.url) {
+    // The public widget cannot read a private channel; do not fetch a guessed public URL.
+    let mut stage = StageResult::new(StageId::Ytdlp, Confidence::High);
+    stage.record_code("signInRequired", "", false, start);
+    stage.terminal = true;
+    return stage;
+  }
   let deadline = tokio::time::Instant::now() + remaining_budget(Duration::from_secs(140));
   let mut cancel = subscribe_group(&entry.group_id);
   // Both session and evidence must survive a deadline during a later retry.
@@ -157,7 +164,7 @@ async fn run_attempts(
   if !*cancel.borrow() {
     return Some(Outcome::Cancelled);
   }
-  if reader_handoff(&resolution, stage, login.has_session, start) {
+  if reader_handoff(&entry.url, &resolution, stage, login.has_session, start) {
     return None;
   }
   let mut post_metadata = None;
@@ -236,6 +243,21 @@ async fn run_attempts(
         return None;
       }
       Err(error) => {
+        if super::browser_cookies::read_error_code(&error).is_some()
+          && super::login::automatic::enabled(app)
+          && matches!(
+            login.failed(
+              app,
+              LoginRequest::Fetch(entry.clone()),
+              Some("signInRequired"),
+              false,
+              !*cancel.borrow()
+            ),
+            RetryAction::Pending
+          )
+        {
+          return Some(Outcome::LoginPending);
+        }
         let code = super::browser_cookies::read_error_code(&error).unwrap_or("unknown");
         stage.error = Some(YtdlpInfoFetchError::RunnerFailed(error));
         stage.record_code(code, "", login.has_session, attempt_start);
@@ -258,6 +280,21 @@ async fn run_attempts(
       // The initial 401 is already recorded. An unsupported curl_cffi target adds no evidence.
       if input.impersonation_unavailable(&stderr) {
         return None;
+      }
+      let reason = stderr
+        .lines()
+        .find_map(|line| parser.login_reason_with_cookies(line, login.has_session));
+      if super::facebook_retry::retry(
+        app,
+        &entry.group_id,
+        &mut input,
+        login.has_session,
+        reason.as_deref(),
+        &stderr,
+      )
+      .await
+      {
+        continue;
       }
       let cookie_failure = parser.cookie_fetch_failure(&stderr, login.has_session);
       let diagnostics = parser.parse_lines(stderr.lines().collect(), login.has_session);
@@ -294,6 +331,23 @@ async fn run_attempts(
         stderr.lines().find_map(|line| parser.login_reason(line))
       };
       if login.fetch_managed()
+        && login.has_session
+        && reason.is_some()
+        && super::login::automatic::enabled(app)
+        && matches!(
+          login.failed(
+            app,
+            LoginRequest::Fetch(entry.clone()),
+            reason.as_deref(),
+            false,
+            !*cancel.borrow()
+          ),
+          RetryAction::Pending
+        )
+      {
+        return Some(Outcome::LoginPending);
+      }
+      if login.fetch_managed()
         || (!login.uses_cookies() && !crate::extract::registry::exclusive(&input.url))
       {
         return None;
@@ -306,7 +360,7 @@ async fn run_attempts(
         !*cancel.borrow(),
       ) {
         RetryAction::Browser | RetryAction::Anonymous => continue,
-        RetryAction::AskLogin => return Some(Outcome::LoginPending),
+        RetryAction::AskLogin | RetryAction::Pending => return Some(Outcome::LoginPending),
         _ => {}
       }
       return None;
@@ -383,13 +437,16 @@ async fn run_attempts(
 }
 
 fn reader_handoff(
+  original: &str,
   resolution: &Resolution,
   stage: &mut StageResult,
   has_session: bool,
   start: Instant,
 ) -> bool {
   match resolution {
-    Resolution::Passthrough(url) if resolve::facebook_photo_target(url) => {
+    Resolution::Passthrough(url)
+      if resolve::facebook_photo_target(url) || resolve::tiktok_photo_target(url) =>
+    {
       stage.resolved_url = Some(url.clone());
       stage.record_code("photosOnly", "", has_session, start);
       true
@@ -408,9 +465,11 @@ fn reader_handoff(
       stage.error = Some(YtdlpInfoFetchError::Unsupported(*reason));
       stage.record_code(reason.code(), "", has_session, start);
       if matches!(reason, Reason::NoMedia) {
-        // Only the Reddit reader proves an empty link/text post; preserve that provenance.
-        if let Some(attempt) = stage.attempts.last_mut() {
-          attempt.stage = StageId::Reader(crate::routing::ReaderId::Reddit);
+        if let (Some(attempt), Some(reader)) = (
+          stage.attempts.last_mut(),
+          resolve::readers(original).first(),
+        ) {
+          attempt.stage = StageId::Reader(*reader);
         }
       }
       true
@@ -520,6 +579,12 @@ mod tests {
         Some("https://www.facebook.com/photo/?fbid=555"),
       ),
       (
+        Resolution::Passthrough("https://www.tiktok.com/@nasa/photo/123".into()),
+        "photosOnly",
+        false,
+        Some("https://www.tiktok.com/@nasa/photo/123"),
+      ),
+      (
         Resolution::Unsupported {
           reason: Reason::PhotosOnly,
         },
@@ -532,6 +597,22 @@ mod tests {
           reason: Reason::NoMedia,
         },
         "noMediaFound",
+        true,
+        None,
+      ),
+      (
+        Resolution::Unsupported {
+          reason: Reason::Removed,
+        },
+        "notFound404",
+        true,
+        None,
+      ),
+      (
+        Resolution::Unsupported {
+          reason: Reason::SiteNotSupported,
+        },
+        "urlNotSupported",
         true,
         None,
       ),
@@ -554,6 +635,7 @@ mod tests {
     ] {
       let mut stage = StageResult::new(StageId::Ytdlp, Confidence::High);
       assert!(reader_handoff(
+        "https://www.reddit.com/comments/abc123/",
         &resolution,
         &mut stage,
         false,
@@ -564,6 +646,30 @@ mod tests {
           stage.attempts[0].stage,
           StageId::Reader(crate::routing::ReaderId::Reddit)
         );
+      }
+      if code == "noMediaFound" {
+        for (url, reader) in [
+          ("https://redd.it/abc123", crate::routing::ReaderId::Reddit),
+          (
+            "https://www.threads.com/share/FJ_5OYZ6-",
+            crate::routing::ReaderId::Threads,
+          ),
+        ] {
+          let mut attributed = StageResult::new(StageId::Ytdlp, Confidence::High);
+          assert!(reader_handoff(
+            url,
+            &resolution,
+            &mut attributed,
+            false,
+            Instant::now()
+          ));
+          assert!(attributed.terminal);
+          assert_eq!(attributed.attempts[0].stage, StageId::Reader(reader));
+          assert_eq!(
+            crate::extract::precedence::final_code(&attributed.attempts),
+            Some("noMediaFound")
+          );
+        }
       }
       assert_eq!(stage.terminal, terminal);
       assert_eq!(stage.resolved_url.as_deref(), target);

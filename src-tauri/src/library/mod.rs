@@ -7,7 +7,7 @@ use crate::{
   SharedConfig,
 };
 pub use index::LibraryRecord;
-use index::{kind, regular_file, scan_folder, Index};
+use index::{kind, regular_file, scan_folder, AttachmentSummary, Index, LibraryDisplay};
 use serde::Deserialize;
 use std::{
   collections::HashMap,
@@ -20,9 +20,12 @@ use tauri::{AppHandle, Manager, Runtime};
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionMetadata {
+  history_id: Option<String>,
   title: Option<String>,
   site: Option<String>,
   thumbnail: Option<String>,
+  #[serde(default)]
+  display: LibraryDisplay,
 }
 
 #[derive(Default)]
@@ -117,7 +120,7 @@ fn persist_completion<R: Runtime>(app: &AppHandle<R>, entry: &DownloadEntry) -> 
   let paths: Vec<_> = authority.iter().map(|file| file.path.clone()).collect();
   let library = app.try_state::<Library>().ok_or("library unavailable")?;
   let mut data = library.0.lock().map_err(|_| "library unavailable")?;
-  let metadata = take_metadata(&mut data, &entry.group_id, &entry.id);
+  let mut metadata = take_metadata(&mut data, &entry.group_id, &entry.id);
   if paths.is_empty() {
     return Ok(());
   }
@@ -138,8 +141,35 @@ fn persist_completion<R: Runtime>(app: &AppHandle<R>, entry: &DownloadEntry) -> 
     .map(|m| m.len())
     .sum();
   let kind = kind(&paths[0]).to_owned();
+  metadata.display.track_type = Some(entry.format.track_type.clone());
+  metadata.display.height = entry.format.height.or(metadata.display.height);
+  metadata.display.fps = entry.format.fps.or(metadata.display.fps);
+  if !entry.attachments.is_empty() {
+    let selected: Vec<_> = entry
+      .attachments
+      .iter()
+      .filter(|a| {
+        entry
+          .attachment_ids
+          .as_ref()
+          .is_none_or(|ids| ids.contains(&a.id))
+      })
+      .collect();
+    metadata.display.attachment_summary = Some(AttachmentSummary {
+      photos: selected
+        .iter()
+        .filter(|a| matches!(a.kind, crate::models::parsed::AttachmentKind::Image))
+        .count() as u32,
+      videos: selected
+        .iter()
+        .filter(|a| matches!(a.kind, crate::models::parsed::AttachmentKind::Video))
+        .count() as u32,
+    });
+  }
   index.append(LibraryRecord {
-    id: entry.id.clone(),
+    id: metadata
+      .history_id
+      .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
     paths,
     url: entry.url.clone(),
     title,
@@ -152,10 +182,58 @@ fn persist_completion<R: Runtime>(app: &AppHandle<R>, entry: &DownloadEntry) -> 
       .as_millis() as u64,
     thumbnail: metadata.thumbnail,
     authority,
+    display: metadata.display,
+    error_code: None,
   });
   index
     .save(&index_path(app))
     .map_err(|_| "unable to save library".into())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryFailure {
+  id: String,
+  url: String,
+  kind: String,
+  error_code: String,
+  #[serde(flatten)]
+  metadata: CompletionMetadata,
+}
+
+/// Local failed rows have no file authority and are never considered downloaded files.
+#[tauri::command]
+pub async fn library_record_failure<R: Runtime>(
+  app: AppHandle<R>,
+  row: LibraryFailure,
+) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    let library = app.try_state::<Library>().ok_or("library unavailable")?;
+    let mut data = library.0.lock().map_err(|_| "library unavailable")?;
+    let index = load_index(&mut data, &index_path(&app), None)?;
+    index.append(LibraryRecord {
+      id: row.id,
+      paths: Vec::new(),
+      url: row.url,
+      title: row.metadata.title.unwrap_or_default(),
+      site: row.metadata.site,
+      kind: row.kind,
+      size: 0,
+      thumbnail: row.metadata.thumbnail,
+      completed_at: SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64,
+      authority: Vec::new(),
+      display: row.metadata.display,
+      error_code: Some(row.error_code),
+    });
+    index
+      .save(&index_path(&app))
+      .map_err(|_| "unable to save library".into())
+  })
+  .await
+  .map_err(|_| "library unavailable".to_owned())?
 }
 
 fn load_index<'a>(
@@ -231,6 +309,7 @@ pub async fn library_list<R: Runtime>(
 pub async fn library_remove<R: Runtime>(
   app: AppHandle<R>,
   paths: Vec<PathBuf>,
+  ids: Option<Vec<String>>,
 ) -> Result<(), String> {
   tauri::async_runtime::spawn_blocking(move || {
     let library = app.try_state::<Library>().ok_or("library unavailable")?;
@@ -239,6 +318,11 @@ pub async fn library_remove<R: Runtime>(
     let root = configured_root(&app)
       .and_then(|root| safe_library_root(&root, home.as_deref(), downloads.as_deref()));
     let index = load_index(&mut data, &index_path(&app), root.as_deref())?;
+    if let Some(ids) = ids {
+      index
+        .records
+        .retain(|row| row.error_code.is_none() || !ids.contains(&row.id));
+    }
     index.remove(&paths, root.as_deref());
     index
       .save(&index_path(&app))

@@ -19,12 +19,16 @@ pub fn group_cancel(
   library: State<'_, crate::library::Library>,
 ) {
   cancel_group(&group_id);
+  if discard_files != Some(true) {
+    crate::runners::ytdlp_download::pause_group(&group_id);
+  }
   library.forget_group(&group_id);
   crate::files::runner::forget(&group_id);
   if discard_files == Some(true) {
     // Removed from the list (not a pause): its job records go, so a reused ID counts its own end.
     crate::usage::forget_group(&app, &group_id);
     crate::files::runner::discard_group(&group_id);
+    crate::runners::ytdlp_download::discard_group(&group_id);
   }
   records.forget(&group_id);
 

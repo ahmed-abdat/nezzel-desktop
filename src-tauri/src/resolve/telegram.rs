@@ -26,6 +26,23 @@ static FILE: LazyLock<Regex> = LazyLock::new(|| {
 pub(super) fn is_host(host: &str) -> bool {
   matches!(host, "t.me" | "telegram.me")
 }
+/// Private channel message links cannot be read by the anonymous public widget.
+pub(crate) fn private_message(input: &str) -> bool {
+  let Ok(url) = Url::parse(input) else {
+    return false;
+  };
+  if !matches!(url.scheme(), "https" | "http")
+    || !url.host_str().is_some_and(is_host)
+    || !url.username().is_empty()
+    || url.password().is_some()
+    || url.port().is_some()
+  {
+    return false;
+  }
+  let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
+  matches!(parts.as_slice(), ["c", ids @ ..] if matches!(ids.len(), 2 | 3) && ids.iter().all(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())))
+}
+
 struct Identity {
   key: String,
   url: Url,

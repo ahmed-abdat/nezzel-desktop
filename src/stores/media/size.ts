@@ -129,7 +129,8 @@ export const useMediaSizeStore = defineStore('media-size', () => {
       url,
       id,
       groupId,
-      format,
+      // Plain copy: a nested reactive proxy cannot be structured-cloned by invoke (#67).
+      format: JSON.parse(JSON.stringify(format)) as DownloadOptions,
     });
   }
 

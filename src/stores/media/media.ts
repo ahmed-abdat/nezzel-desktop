@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia';
-import { toRaw } from 'vue';
 import { ProgressStage } from '../../tauri/types/progress';
 import type { MediaDestinationPayload } from '../../tauri/types/destination';
-import type { LibraryRecord } from '../../tauri/types/library';
+import type { LibraryDisplay, LibraryRecord } from '../../tauri/types/library';
 import { libraryPathKey } from '../../helpers/folderPath';
+import { normalizePastedUrl } from '../../helpers/url';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 import { MediaState, useMediaStateStore } from './state';
@@ -39,9 +39,9 @@ type PendingReadyGroup = {
   reject: (reason?: unknown) => void;
 };
 
-function cloneDownloadOverrides(overrides?: DownloadOverrides): DownloadOverrides | undefined {
-  if (!overrides) return undefined;
-  return structuredClone(overrides);
+/** Media/options are JSON contracts. A roundtrip also unwraps nested Vue proxies for isolation IPC. */
+function cloneMediaData<T>(value: T): T {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
 export const useMediaStore = defineStore('media', () => {
@@ -59,6 +59,61 @@ export const useMediaStore = defineStore('media', () => {
   const libraryGroupsByPath = new Map<string, Set<string>>();
   const pendingLibraryRemoval = new Set<string>();
   let removeTimer: ReturnType<typeof setTimeout> | undefined;
+  const removedFailures = new Set<string>();
+  const historyIds = new Map<string, string>();
+  let failureWrites = Promise.resolve();
+
+  function historyRecordId(groupId: string, itemId: string) {
+    if (groupId.startsWith('library:')) return groupId.slice('library:'.length);
+    const key = `${groupId}:${itemId}`;
+    if (!historyIds.has(key)) historyIds.set(key, uuidv4());
+    return historyIds.get(key)!;
+  }
+
+  function libraryMetadata(item: MediaItem | Group, groupId: string) {
+    const options = optionsStore.getOptions(groupId);
+    const height = options?.trackType === TrackType.audio ? undefined : (options?.height ?? Math.max(0, ...(item.formats ?? []).map(f => f.height ?? 0)));
+    const display: LibraryDisplay = {
+      duration: item.duration, height: height || undefined, fps: options?.fps, trackType: options?.trackType,
+    };
+    if (item.attachments?.length) {
+      const ids = optionsStore.getAttachmentSelection(groupId);
+      const selected = item.attachments.filter(a => ids.includes(a.id));
+      display.attachmentSummary = {
+        photos: selected.filter(a => a.kind === 'image').length,
+        videos: selected.filter(a => a.kind === 'video').length,
+      };
+    }
+    const itemId = 'items' in item ? groupStore.findGroupLeader(groupId)?.id ?? item.id : item.id;
+    return { historyId: historyRecordId(groupId, itemId), title: item.title, site: item.extractor, thumbnail: item.thumbnail, display };
+  }
+
+  function failureRecordId(groupId: string) {
+    const itemId = groupStore.findGroupLeader(groupId)?.id ?? groupId;
+    // Capture group and item counters restart with the app; history has its own UUID.
+    return historyRecordId(groupId, itemId);
+  }
+
+  function rememberFailedGroup(groupId: string) {
+    const group = groupStore.findGroupById(groupId);
+    if (!group || stateStore.getGroupState(groupId) !== MediaState.error) return;
+    // Match the success record's identity, so a late failure cannot replace a saved file.
+    const id = failureRecordId(groupId);
+    removedFailures.delete(id);
+    const row = cloneMediaData({
+      id, url: group.url, kind: group.mediaKind ?? 'video', ...libraryMetadata(group, groupId),
+      errorCode: diagnosticsStore.findLastDiagnosticByGroupId(groupId)?.code ?? 'unknown',
+    });
+    failureWrites = failureWrites.then(() => invoke<void>('library_record_failure', { row }))
+      .catch(() => console.warn('Unable to save local download history'));
+  }
+
+  function forgetFailedGroup(groupId: string) {
+    const id = failureRecordId(groupId);
+    removedFailures.add(id);
+    failureWrites = failureWrites.then(() => invoke<void>('library_remove', { paths: [], ids: [id] }))
+      .catch(() => console.warn('Unable to remove local download history'));
+  }
 
   function queueLibraryRemoval(paths: string[]) {
     for (const path of paths) pendingLibraryRemoval.add(path);
@@ -80,20 +135,33 @@ export const useMediaStore = defineStore('media', () => {
 
   function mergeLibrary(rows: LibraryRecord[]) {
     const knownPaths = new Set(Object.values(destinationStore.destinations).flat().map(d => libraryPathKey(d.path)));
+    const sessionItems = new Set(historyIds.values());
     for (const row of rows) {
       const paths = row.paths.filter(p => !knownPaths.has(libraryPathKey(p)) && !removedLibraryPaths.has(libraryPathKey(p)));
       const id = `library:${row.id}`;
-      if (paths.length === 0 || groupStore.findGroupById(id)) continue;
+      if ((!row.errorCode && paths.length === 0) || removedFailures.has(row.id) || groupStore.findGroupById(id)
+        || (row.errorCode && (groupStore.findGroupById(row.id) || sessionItems.has(row.id)))) continue;
+      const summary = row.display?.attachmentSummary ?? (row.kind === 'image' ? { photos: paths.length, videos: 0 } : undefined);
+      const kind = summary?.photos ? (summary.videos ? 'mixed' : summary.photos > 1 ? 'carousel' : 'image') : row.kind;
       const item: MediaItem = {
         id, groupId: id, isLeader: true, url: row.url, title: row.title,
         extractor: row.site ?? undefined, thumbnail: row.thumbnail ?? undefined,
-        mediaKind: row.kind, filesize: row.size, audioCodecs: [], videoCodecs: [], formats: [],
+        mediaKind: kind, filesize: row.size, audioCodecs: [], videoCodecs: [], formats: [],
+        duration: row.display?.duration ?? undefined,
       };
       groupStore.groups[id] = {
-        ...item, total: 1, processed: 1, errored: 0, isCombined: false, items: { [id]: item },
+        ...item, total: 1, processed: 1, errored: row.errorCode ? 1 : 0, isCombined: false, items: { [id]: item },
+        savedAttachmentSummary: summary,
       };
       groupStore.groupOrder.push(id);
-      stateStore.setState(id, MediaState.done);
+      stateStore.setState(id, row.errorCode ? MediaState.error : MediaState.done);
+      optionsStore.setOptions(id, {
+        trackType: row.display?.trackType ?? (row.kind === 'audio' ? TrackType.audio : TrackType.both),
+        height: row.display?.height ?? undefined, fps: row.display?.fps ?? undefined,
+      });
+      if (row.errorCode) diagnosticsStore.processMediaDiagnosticPayload({
+        id, groupId: id, code: row.errorCode, level: 'error', component: 'library', message: row.errorCode, raw: '', timestamp: row.completedAt,
+      });
       for (const path of paths) {
         destinationStore.addDestination(id, { path, confidence: 100 });
         const key = libraryPathKey(path);
@@ -115,8 +183,17 @@ export const useMediaStore = defineStore('media', () => {
 
   // Only the arriving destination can become a duplicate; no traversal on unrelated state changes.
   function processMediaDestinationPayload(payload: MediaDestinationPayload) {
-    if (!groupStore.findGroupById(payload.groupId)) return;
+    const group = groupStore.findGroupById(payload.groupId);
+    if (!group) return;
     destinationStore.processMediaDestinationPayload(payload);
+    const item = group.items[payload.id];
+    if (item && !item.title?.trim() && payload.destination.confidence === 100) {
+      const name = payload.destination.path.split(/[\\/]/).pop();
+      if (name) {
+        item.title = name;
+        if (item.isLeader && !group.title?.trim()) group.title = name;
+      }
+    }
     const key = libraryPathKey(payload.destination.path);
     const duplicates = libraryGroupsByPath.get(key);
     if (!duplicates) return;
@@ -188,6 +265,10 @@ export const useMediaStore = defineStore('media', () => {
 
     const group = groupStore.findGroupById(groupId);
     if (!group) throw new Error('Orphaned media item found.');
+    if (!item.title?.trim()) {
+      const destination = destinationStore.getPrimaryDestination(groupId);
+      if (destination?.confidence === 100) item.title = destination.path.split(/[\\/]/).pop() ?? item.title;
+    }
 
     if (item.entries) {
       const existingId = Object.keys(group.items)[0];
@@ -269,7 +350,7 @@ export const useMediaStore = defineStore('media', () => {
     const previousOverrides = optionsStore.getOverrides(groupId);
     const previousTotal = group.total;
     const previousProcessed = group.processed;
-    const nextOverrides = cloneDownloadOverrides(previousOverrides) ?? {};
+    const nextOverrides = cloneMediaData(previousOverrides) ?? {};
 
     if (spec) {
       nextOverrides.inputFilters = {
@@ -299,7 +380,7 @@ export const useMediaStore = defineStore('media', () => {
       await invoke<string>('media_playlist_expand', {
         groupId,
         entries: selectedEntries,
-        overrides: cloneDownloadOverrides(optionsStore.getOverrides(groupId)),
+        overrides: cloneMediaData(optionsStore.getOverrides(groupId)),
       });
     } catch (error) {
       group.entries = entries;
@@ -330,6 +411,7 @@ export const useMediaStore = defineStore('media', () => {
     skipPlaylistSelection: boolean = false,
     groupId: string = uuidv4(),
   ) {
+    url = normalizePastedUrl(url);
     const id = uuidv4();
 
     stateStore.setState(id, MediaState.fetching);
@@ -397,10 +479,11 @@ export const useMediaStore = defineStore('media', () => {
         url: group.url,
         id: leader.id,
         groupId,
-        overrides: optionsStore.getOverrides(groupId),
+        overrides: cloneMediaData(optionsStore.getOverrides(groupId)),
       });
     } catch (error) {
       stateStore.setState(leader.id, MediaState.error);
+      rememberFailedGroup(groupId);
       rejectPendingReadyGroup(groupId, error);
       throw error;
     }
@@ -410,6 +493,8 @@ export const useMediaStore = defineStore('media', () => {
     const group = groupStore.findGroupById(groupId);
     const leader = groupStore.findGroupLeader(groupId);
     if (!group || !leader) throw new Error('Missing download');
+    forgetFailedGroup(groupId);
+    delete group.savedAttachmentSummary;
     for (const itemId of Object.keys(group.items)) {
       stateStore.removeState(itemId);
       progressStore.deleteProgress(itemId);
@@ -455,7 +540,7 @@ export const useMediaStore = defineStore('media', () => {
   ) {
     if (!overrides) return;
     for (const nextGroupId of nextGroupIds) {
-      const clonedOverrides = cloneDownloadOverrides(overrides);
+      const clonedOverrides = cloneMediaData(overrides);
       if (clonedOverrides) {
         optionsStore.setOverrides(nextGroupId, clonedOverrides);
       }
@@ -583,10 +668,10 @@ export const useMediaStore = defineStore('media', () => {
       });
 
     try {
-      await invoke<string>('media_download', {
+      await invoke<string>('media_download', cloneMediaData({
         groupId,
         origin: usageOrigin,
-        metadata: Object.fromEntries(itemsWithoutLeader.map(item => [item.id, { title: item.title, site: item.extractor, thumbnail: item.thumbnail }])),
+        metadata: Object.fromEntries(itemsWithoutLeader.map(item => [item.id, libraryMetadata(item, groupId)])),
         items: itemsWithoutLeader.map(item => ({
           id: item.id,
           url: item.url,
@@ -606,7 +691,7 @@ export const useMediaStore = defineStore('media', () => {
             },
           },
         })),
-      });
+      }));
     } catch (e) {
       diagnosticsStore.processMediaFatalPayload({
         groupId,
@@ -708,14 +793,13 @@ export const useMediaStore = defineStore('media', () => {
   function cancelDownload(id: string) {
     const original = groupStore.findGroupById(id);
     if (!original) return;
-    const snapshot = <T>(value: T): T => value == null ? value : structuredClone(toRaw(value));
-    const group = snapshot(original);
+    const group = cloneMediaData(original);
     const itemStates = new Map(Object.values(group.items).map(item => [item.id, stateStore.getState(item.id)]));
-    const destinations = snapshot(destinationStore.getDestinations(id));
-    const options = snapshot(optionsStore.getOptions(id));
-    const encodings = snapshot(optionsStore.getEncodings(id));
-    const tracks = snapshot(optionsStore.getTracks(id));
-    const overrides = snapshot(optionsStore.getOverrides(id));
+    const destinations = cloneMediaData(destinationStore.getDestinations(id));
+    const options = cloneMediaData(optionsStore.getOptions(id));
+    const encodings = cloneMediaData(optionsStore.getEncodings(id));
+    const tracks = cloneMediaData(optionsStore.getTracks(id));
+    const overrides = cloneMediaData(optionsStore.getOverrides(id));
     const attachments = optionsStore.getAttachmentSelection(id);
     const cancellation = deleteGroup(id);
     let restored = false;
@@ -748,6 +832,7 @@ export const useMediaStore = defineStore('media', () => {
     useLoginStore().forgetGroup(id);
     const group = groupStore.findGroupById(id);
     if (!group) return;
+    if (removeHistory && stateStore.getGroupState(id) === MediaState.error) forgetFailedGroup(id);
     const paths = destinationStore.getDestinations(id).map(d => d.path);
     if (removeHistory && paths.length && stateStore.getGroupState(id) === MediaState.done) {
       for (const path of paths) removedLibraryPaths.add(libraryPathKey(path));
@@ -757,6 +842,7 @@ export const useMediaStore = defineStore('media', () => {
     }
     for (const path of paths) forgetLibraryPath(id, path);
     for (const itemId of Object.keys(group.items)) {
+      historyIds.delete(`${id}:${itemId}`);
       stateStore.removeState(itemId);
       progressStore.deleteProgress(itemId);
       sizeStore.removeSizes(itemId);
@@ -812,5 +898,6 @@ export const useMediaStore = defineStore('media', () => {
     cancelDownload,
     deleteAllGroups,
     deleteGroupsByState,
+    rememberFailedGroup,
   };
 });

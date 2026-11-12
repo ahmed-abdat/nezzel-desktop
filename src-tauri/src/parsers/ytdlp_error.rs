@@ -25,6 +25,105 @@ impl CookieFetchFailure {
   }
 }
 
+/// Local cookie access failures, shared by the exporter and both engine parsers.
+/// Only a fixed code crosses the cookie export boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CookieReadError {
+  KeychainDenied,
+  DpapiFailed,
+  AppBound,
+  SafariAccessDenied,
+  DatabaseLocked,
+  ProfileMissing,
+}
+impl CookieReadError {
+  pub(crate) fn code(self) -> &'static str {
+    match self {
+      Self::KeychainDenied => "browserKeychainDenied",
+      Self::DpapiFailed => "browserDpapiFailed",
+      Self::AppBound => "browserAppBound",
+      Self::SafariAccessDenied => "browserSafariAccessDenied",
+      Self::DatabaseLocked => "browserDatabaseLocked",
+      Self::ProfileMissing => "browserProfileMissing",
+    }
+  }
+
+  pub(crate) fn classify(message: &str, cookie_context: bool, safari: bool) -> Option<Self> {
+    let lower = redact_urls(message).to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|needle| lower.contains(needle));
+    let cookie_context = cookie_context
+      || has(&[
+        "[cookies]",
+        "cookie database",
+        "cookies database",
+        "decrypt cookie",
+        "decrypt v10 cookies",
+        "decrypt v11 cookies",
+        "cookies.binarycookies",
+      ]);
+    if (safari || has(&["cookies.binarycookies"]) || (cookie_context && has(&["safari"])))
+      && has(&[
+        "operation not permitted",
+        "permission denied",
+        "full disk access",
+      ])
+    {
+      Some(Self::SafariAccessDenied)
+    } else if has(&["app-bound", "app bound", "app_bound"]) && has(&["cookie", "encrypt"]) {
+      Some(Self::AppBound)
+    } else if has(&[
+      "failed to decrypt with dpapi",
+      "failed to decrypt cookie (dpapi)",
+    ]) {
+      // A DPAPI failure alone does not prove App-Bound encryption (#10927).
+      Some(Self::DpapiFailed)
+    } else if has(&[
+      "find-generic-password failed",
+      "exception running find-generic-password",
+      "error when using find-generic-password",
+      "cannot decrypt v10 cookies",
+      "cannot decrypt v11 cookies",
+      "unable to decrypt v10 cookies",
+      "unable to decrypt v11 cookies",
+      "failed to read from keyring",
+      "secretstorage not available",
+      "kwallet-query command not found",
+      "kwallet-query failed",
+      "exception running kwallet-query",
+      "failed to read networkwallet",
+      "exception while obtaining networkwallet",
+    ]) || (cookie_context && has(&["failed to decrypt"]))
+    {
+      Some(Self::KeychainDenied)
+    } else if cookie_context
+      && has(&[
+        "database is locked",
+        "database is busy",
+        "could not copy chrome cookie database",
+        "being used by another process",
+      ])
+    {
+      Some(Self::DatabaseLocked)
+    } else if has(&[
+      "cookies database",
+      "cookie database",
+      "firefox container",
+      "containers.json",
+    ]) && has(&[
+      "could not find",
+      "unable to find",
+      "not found",
+      "no such file",
+      "could not read",
+      "unable to read",
+    ]) {
+      Some(Self::ProfileMissing)
+    } else {
+      None
+    }
+  }
+}
+
 /// Transport outages cannot be repaired by changing a browser session.
 pub fn network_down(code: &str, message: &str) -> bool {
   if matches!(
@@ -250,14 +349,51 @@ impl YtdlpErrorParser {
   }
 
   pub fn login_reason(&self, line: &str) -> Option<String> {
+    self.login_reason_with_cookies(line, false)
+  }
+
+  pub fn login_reason_with_cookies(&self, line: &str, used_cookies: bool) -> Option<String> {
     self
       .parse_line(line)
       .filter(|e| {
         matches!(e.level, DiagnosticLevel::Error)
-          && matches!(
+          && (matches!(
             e.code.as_str(),
             "signInRequired" | "signInRequiredForBotDetection" | "membersOnly"
-          )
+          ) || !used_cookies
+            && e.code == "unableToExtractInitialData"
+            && self.source_url.as_ref().is_some_and(|url| {
+              let host = url.host_str().unwrap_or_default();
+              let component = e.component.as_deref().unwrap_or_default();
+              (component.eq_ignore_ascii_case("facebook")
+                && e.message.to_ascii_lowercase().contains("cannot parse data")
+                && crate::sites::host_is(host, "facebook.com"))
+                || (component.eq_ignore_ascii_case("instagram:user")
+                  && e
+                    .message
+                    .to_ascii_lowercase()
+                    .contains("unable to extract data")
+                  && crate::sites::host_is(host, "instagram.com")
+                  && {
+                    let path = url.path().trim_matches('/');
+                    !path.is_empty()
+                      && path
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.'))
+                      && !matches!(
+                        path,
+                        "accounts"
+                          | "explore"
+                          | "direct"
+                          | "stories"
+                          | "reels"
+                          | "reel"
+                          | "p"
+                          | "tv"
+                          | "share"
+                      )
+                  })
+            }))
       })
       .map(|e| e.code)
   }
@@ -308,7 +444,14 @@ impl YtdlpErrorParser {
 
   pub fn parse_fetch_line(&self, line: &str, has_cookies: bool) -> Option<DiagnosticEvent> {
     let mut event = self.parse_line(line)?;
-    if has_cookies && self.login_reason(line).is_some() {
+    if !has_cookies
+      && event.code == "unableToExtractInitialData"
+      && self.login_reason_with_cookies(line, false).is_some()
+    {
+      // Anonymous parse walls must reach the chain's login gate before the generic error.
+      event.code = "signInRequired".into();
+    }
+    if has_cookies && self.login_reason_with_cookies(line, true).is_some() {
       event.code = match self.cookie_fetch_failure(line, has_cookies) {
         CookieFetchFailure::Transient
           if event
@@ -350,13 +493,17 @@ impl YtdlpErrorParser {
     } else {
       if let Some(msg) = trimmed.strip_prefix("WARNING:") {
         (DiagnosticLevel::Warning, msg.trim())
-      } else if (trimmed.starts_with("[in#") || trimmed.starts_with("[hls @"))
-        && self
-          .matcher
-          .match_code(&DiagnosticLevel::Error, None, trimmed)
-          == "drmProtected"
+      } else if ["[in#", "[hls @", "[http @", "[https @"]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+        && matches!(
+          self
+            .matcher
+            .match_code(&DiagnosticLevel::Error, None, trimmed),
+          "drmProtected" | "accessForbidden403"
+        )
       {
-        // ffmpeg reports FairPlay key failures before yt-dlp's generic exit-code error.
+        // ffmpeg reports DRM and CDN refusals before yt-dlp's generic exit-code error.
         (DiagnosticLevel::Error, trimmed)
       } else {
         return None;
@@ -366,9 +513,18 @@ impl YtdlpErrorParser {
     let (component, rest) = split_component(rest);
     let (_video_id, message) = split_video_id(rest.as_ref(), component.is_some());
 
-    let matched_code = self
-      .matcher
-      .match_code(&level, component.as_deref(), &message);
+    let cookie_error = CookieReadError::classify(
+      &message,
+      component
+        .as_deref()
+        .is_some_and(|name| name.eq_ignore_ascii_case("cookies")),
+      false,
+    );
+    let matched_code = cookie_error.map(CookieReadError::code).unwrap_or_else(|| {
+      self
+        .matcher
+        .match_code(&level, component.as_deref(), &message)
+    });
     static LINKEDIN_NO_VIDEO: LazyLock<Regex> = LazyLock::new(|| {
       Regex::new(r"(?i)^(?:[0-9]+:\s*)?Unable to extract video(?:\s*;|\s*$)").unwrap()
     });
@@ -788,7 +944,14 @@ ERROR: Unsupported URL: https://hackertube.org/";
     for (line, expected) in [
       ("ERROR: [vimeo] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized (caused by <HTTPError 401: Unauthorized>)", "accessForbidden403"),
       ("ERROR: [generic] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized", "unknown"),
-      ("ERROR: [facebook] 123: Cannot parse data; please report this issue", "facebookVideoUnavailable"),
+      ("ERROR: [facebook] 123: Cannot parse data; please report this issue", "unableToExtractInitialData"),
+      ("ERROR: [instagram:user] porsche: Unable to extract data; please report this issue", "unableToExtractInitialData"),
+      ("ERROR: [likee] 123: Unable to extract video info; please report this issue", "unableToExtractIdOrInfo"),
+      ("ERROR: Unable to extract data", "unknown"),
+      ("ERROR: [generic] 123: Unable to extract data", "unknown"),
+      ("ERROR: Unable to extract video info", "unknown"),
+      ("ERROR: [generic] 123: Unable to extract video info", "unknown"),
+      ("ERROR: No suitable extractor (BiliBili) found for URL http://www.bilibili.tv/video/av92494333/", "urlNotSupported"),
       ("ERROR: [generic] 123: Cannot parse data", "unknown"),
       (
         "ERROR: [TikTok] 7704010367441161524: Your IP address is blocked from accessing this post",
@@ -1117,5 +1280,104 @@ ERROR: Unsupported URL: https://hackertube.org/";
 
     assert_eq!(event.code, INPUT_FILTER_SKIPPED_CODE);
     assert_eq!(event.message, "Skipped by advanced input filter");
+  }
+  #[test]
+  fn facebook_parse_wall_enters_login_only_for_anonymous_facebook_sources() {
+    for (source, cookies, expected) in [
+      ("https://facebook.com/watch?v=1", false, true),
+      ("https://web.facebook.com/watch?v=1", false, true),
+      ("https://facebook.com/share/p/abc/", false, true),
+      (
+        "https://facebook.com/story.php?story_fbid=123&id=42",
+        false,
+        true,
+      ),
+      (
+        "https://facebook.com/permalink.php?story_fbid=123&id=42",
+        false,
+        true,
+      ),
+      ("https://m.facebook.com/watch?v=1", true, false),
+      ("https://facebook.com.evil.example/watch?v=1", false, false),
+      ("https://instagram.com/p/example/", false, false),
+    ] {
+      let parser = YtdlpErrorParser::new(
+        "id",
+        "group",
+        DiagnosticMatcher::from_json(include_str!("../diagnostic_rules.json")).unwrap(),
+      )
+      .with_source_url(source);
+      let line = "ERROR: [facebook] 123: Cannot parse data";
+      assert_eq!(
+        parser.login_reason_with_cookies(line, cookies).is_some(),
+        expected
+      );
+      if expected {
+        assert_eq!(
+          parser.parse_fetch_line(line, cookies).unwrap().code,
+          "signInRequired"
+        );
+      } else {
+        assert_eq!(
+          parser.parse_fetch_line(line, cookies).unwrap().code,
+          "unableToExtractInitialData"
+        );
+      }
+      for other in [
+        "ERROR: [generic] Unable to extract data",
+        "ERROR: [instagram:user] nasa: Unable to extract data",
+        "ERROR: [facebook] 123: Unable to extract data",
+      ] {
+        assert!(parser.login_reason_with_cookies(other, cookies).is_none());
+      }
+    }
+  }
+
+  #[test]
+  fn instagram_profile_parse_failure_suggests_login_only_for_anonymous_profiles() {
+    let line = "ERROR: [instagram:user] porsche: Unable to extract data";
+    for (url, cookies, expected) in [
+      (
+        "https://www.instagram.com/porsche/",
+        false,
+        "signInRequired",
+      ),
+      (
+        "https://www.instagram.com/porsche/",
+        true,
+        "unableToExtractInitialData",
+      ),
+      (
+        "https://www.instagram.com/p/example/",
+        false,
+        "unableToExtractInitialData",
+      ),
+      (
+        "https://instagram.com.evil.test/porsche/",
+        false,
+        "unableToExtractInitialData",
+      ),
+    ] {
+      let parser = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap())
+        .with_source_url(url);
+      assert_eq!(
+        parser.parse_fetch_line(line, cookies).unwrap().code,
+        expected
+      );
+      assert_eq!(
+        parser.login_reason_with_cookies(line, cookies).is_some(),
+        expected == "signInRequired"
+      );
+      assert_eq!(
+        parser
+          .parse_fetch_line(
+            "ERROR: [instagram:user] HTTP Error 429: Too Many Requests",
+            cookies
+          )
+          .unwrap()
+          .code,
+        "rateLimited429"
+      );
+    }
   }
 }

@@ -6,7 +6,7 @@
     "showOrHide": "Show/Hide Window",
     "addToQueue": "Add from clipboard",
     "addAndDownload": "Add and download from clipboard",
-    "downloadQueue": "Download queue",
+    "downloadQueue": "Download queued items",
     "shortcuts": {
       "ctrlShiftV": "Ctrl + Shift + V",
       "ctrlShiftD": "Ctrl + Shift + D",
@@ -55,6 +55,7 @@
   },
   "files": {
     "errors": {
+      "notFound404": "This file could not be found. It may be private or removed. Check the link with its owner.",
       "fileNotPublic": "This file isn't shared publicly. Ask the owner to share it with anyone who has the link.",
       "fileRateLimited": "This site is limiting downloads right now. Try again later.",
       "fileCancelled": "Download paused.",

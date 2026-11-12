@@ -73,6 +73,25 @@ async fn linkedin_bound_android_fixtures_produce_ordered_images() {
   );
 }
 
+#[test]
+fn private_telegram_messages_require_login_without_claiming_public_posts() {
+  for raw in [
+    "https://t.me/c/1234567890/7",
+    "https://telegram.me/c/1234567890/7/",
+    "https://t.me/c/1234567890/42/7",
+  ] {
+    assert!(telegram::private_message(raw), "{raw}");
+  }
+  for raw in [
+    "https://t.me/bbcrussian/101014",
+    "https://t.me/s/bbcrussian/101014",
+    "https://t.me/c/not-an-id/7",
+    "https://t.me.evil.test/c/123456/7",
+  ] {
+    assert!(!telegram::private_message(raw), "{raw}");
+  }
+}
+
 #[tokio::test]
 async fn telegram_bound_android_fixtures_exclude_previews_replies_and_other_posts() {
   for (name, expected) in [

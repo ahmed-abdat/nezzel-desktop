@@ -67,6 +67,13 @@ class SourceBundleTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         bundle.download(dict(url='https://upstream.invalid/source.tar.gz', path='sources/source.tar.gz', **row), destination)
                     self.assertFalse(destination.exists())
+            # Derived pinned libraries must abort the build on a checksum mismatch too.
+            (Path(tmp) / 'versions.txt').write_text('libklvanc 1.6.0\n')
+            planned = {'downloads': [{'component': 'riedl-build-info', 'path': 'versions.txt',
+                                      'url': 'https://provider.invalid/versions.txt'}], 'layout': []}
+            with patch.object(bundle.urllib.request, 'urlopen', return_value=io.BytesIO(b'wrong source')):
+                with self.assertRaisesRegex(ValueError, 'Checksum mismatch'):
+                    bundle.provider_sources(planned, Path(tmp))
 
     def test_archive_carries_sources_licences_recipes_and_internal_checksums(self):
         source = io.BytesIO()
@@ -97,43 +104,71 @@ class SourceBundleTests(unittest.TestCase):
 
     def test_provider_library_versions_resolve_exact_sources_and_report_ambiguous_pins(self):
         sources, missing = bundle.library_sources('ffmpeg version 9.0.2\nconfiguration: --enable-gpl\n'
-                                                  'libass     0.17.5\nopus 1.6.1\nx264 0.165.x\nunknownlib 2.0\n')
+                                                  'libass     0.17.5\nopus 1.6.1\nlibklvanc 1.6.0\nx264 0.165.x\nx264 0.166.x\nunknownlib 2.0\n',
+                                                  '0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee')
         self.assertEqual([row['url'] for row in sources], [
             'https://github.com/libass/libass/archive/refs/tags/0.17.5.tar.gz',
-            'https://github.com/xiph/opus/archive/refs/tags/v1.6.1.tar.gz'])
-        self.assertEqual(missing, ['x264 0.165.x: no exact source revision',
+            'https://github.com/xiph/opus/archive/refs/tags/v1.6.1.tar.gz',
+            'https://github.com/stoth68000/libklvanc/archive/refs/tags/vid.obe.1.6.0.tar.gz',
+            'https://code.videolan.org/videolan/x264/-/archive/0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee/x264-0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee.tar.gz'])
+        self.assertTrue(all(len(row['sha256']) == 64 for row in sources[2:]))
+        self.assertEqual(missing, ['x264 0.166.x: no exact source revision',
                                    'unknownlib 2.0: no source URL mapping'])
+        self.assertEqual(bundle.library_sources('x264 0.165.x'),
+                         ([], ['x264 0.165.x: no exact source revision']))
 
-    def test_historical_recipe_and_dependency_resolution_preserves_provider_gaps(self):
+    def test_pinned_provider_dependencies_resolve_without_historical_lookup(self):
+        planned = bundle.plan('1.0.0')
+        recipe = next(row for row in planned['downloads'] if row['component'] == 'riedl-recipe')
+        self.assertEqual(recipe['version'], 'f63b8aab8f5ce1a067da86ba69e34a36a7e217e5')
+        self.assertEqual(len(recipe['sha256']), 64)
+        self.assertFalse(any(row['component'] == 'riedl-recipe-history' for row in planned['downloads']))
+        self.assertEqual(sum(row['component'] == 'x264' for row in planned['downloads']), 1)
         with tempfile.TemporaryDirectory() as tmp:
             stage = Path(tmp)
-            history = stage / 'history.json'
-            history.write_text(json.dumps([{'sha': 'a' * 40, 'commit': {
-                'committer': {'date': '2026-09-19T01:00:00Z'}}}]))
-            (stage / 'versions.txt').write_text('libass 0.17.5\nx264 0.165.x\n')
-            planned = {'downloads': [
-                {'component': 'riedl-recipe-history', 'path': 'history.json', 'before': '2026-09-20T01:00:00Z'},
-                {'component': 'riedl-build-info', 'path': 'versions.txt', 'url': 'https://provider.invalid/versions.txt'},
-            ], 'layout': []}
+            for row in planned['downloads']:
+                if row['component'] == 'riedl-build-info':
+                    path = stage / row['path']
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('libass 0.17.5\nlibklvanc 1.6.0\nx264 0.165.x\n')
 
             def fetch(row, destination):
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                if row['component'] == 'libass':
-                    raise OSError('upstream unavailable')
-                destination.write_bytes(b'historical recipe')
+                destination.write_bytes(b'source fixture')
 
-            with patch.object(bundle, 'download', side_effect=fetch) as download, \
+            with patch.object(bundle, 'download', side_effect=fetch) as download:
+                bundle.provider_sources(planned, stage)
+            self.assertEqual(download.call_count, 2)  # shared libraries; x264 already planned
+            self.assertEqual(planned['unresolved_sources'], [])
+            readme = bundle.readme(planned, 'owner/repo')
+            self.assertIn('None reported by the source resolver.', readme)
+            self.assertIn('inferred from upstream history', readme)
+
+            # Failed upstream downloads still surface in the generated README.
+            planned['downloads'] = [row for row in planned['downloads'] if row['component'] != 'libass']
+            for row in planned['downloads']:
+                if row['component'] == 'riedl-build-info':
+                    (stage / row['path']).write_text('libass 0.17.5\n')
+            with patch.object(bundle, 'download', side_effect=OSError('upstream unavailable')), \
                     contextlib.redirect_stderr(io.StringIO()):
                 bundle.provider_sources(planned, stage)
-            self.assertEqual(download.call_args_list[0].args[0]['url'],
-                             bundle.RIEDL_REPO + '/archive/' + 'a' * 40 + '.tar.gz')
-            readme = bundle.readme(dict(planned, tag='app-v1.0.0', binaries=[]), 'owner/repo')
-            self.assertIn('x264 0.165.x: no exact source revision', readme)
-            self.assertIn('upstream unavailable', readme)
-            history.write_text(json.dumps([{'sha': 'b' * 40, 'commit': {
-                'committer': {'date': '2026-09-21T01:00:00Z'}}}]))
-            with self.assertRaisesRegex(ValueError, 'newer than the pinned build'):
-                bundle.provider_sources(planned, stage)
+            self.assertIn('upstream unavailable', bundle.readme(planned, 'owner/repo'))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for relative in ('src-tauri/src/binaries/manifest.json', 'scripts/aria2-manifest.json',
+                             'scripts/gallery-dl-manifest.json'):
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes((ROOT / relative).read_bytes())
+            manifest_path = root / 'src-tauri/src/binaries/manifest.json'
+            original = manifest_path.read_text()
+            for before, after in [('1789931006_9.0.2', '1789931007_9.0.2'),
+                                  ('autobuild-2026-11-01-19-06', 'autobuild-2026-11-02-19-06')]:
+                with self.subTest(provider=before):
+                    manifest_path.write_text(original.replace(before, after))
+                    with self.assertRaisesRegex(ValueError, 'Unverified'):
+                        bundle.plan('1.0.0', root)
 
     def test_release_checksums_cover_downloaded_assets_and_exclude_old_sums(self):
         with tempfile.TemporaryDirectory() as tmp:

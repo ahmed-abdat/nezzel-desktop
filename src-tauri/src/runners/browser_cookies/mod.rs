@@ -13,7 +13,10 @@ mod tests;
 
 use crate::sites::{self, SiteId};
 pub(super) use access::{read_error_code, CookieAccess, CookieContext, COOKIE_READ_ERROR};
-pub(super) use hint::{cookie_hint, CookieHint};
+pub(super) use firefox::containers as firefox_containers;
+#[cfg(test)]
+pub(super) use hint::cookie_hint;
+pub(super) use hint::{cookie_hint_for_container, CookieHint};
 pub(crate) use jar::sweep_cookie_exports;
 use std::collections::{HashMap, HashSet};
 
@@ -96,7 +99,7 @@ pub(super) fn same_site(cookie_host: &str, host: &str) -> bool {
   registrable_domain(cookie_host).is_some_and(|domain| Some(domain) == registrable_domain(host))
 }
 
-fn cookie_domains(host: &str) -> Vec<String> {
+pub(crate) fn cookie_domains(host: &str) -> Vec<String> {
   let Some(key) = site_key(host) else {
     return vec![];
   };
@@ -105,6 +108,11 @@ fn cookie_domains(host: &str) -> Vec<String> {
     // Threads signs in with the Instagram session.
     Some(SiteId::Threads) => {
       owned(&[SiteId::Threads.domains(), SiteId::Instagram.domains()].concat())
+    }
+    Some(SiteId::YouTube) => {
+      let mut domains = owned(SiteId::YouTube.domains());
+      domains.push("google.com".into());
+      domains
     }
     Some(site) if SHARED_SIGN_IN.contains(&site) => owned(site.domains()),
     _ => vec![key],
@@ -122,7 +130,7 @@ fn session_cookies(host: &str) -> Option<SessionCookies> {
     Instagram | Threads | TikTok => Some(Any(&["sessionid"])),
     Facebook => Some(All(&["c_user", "xs"])),
     X => Some(Any(&["auth_token"])),
-    YouTube => Some(Any(&["SAPISID", "__Secure-3PSID", "LOGIN_INFO"])),
+    YouTube => Some(Any(&["SID", "SAPISID", "__Secure-3PSID", "LOGIN_INFO"])),
     Reddit => Some(Any(&["reddit_session"])),
     LinkedIn => Some(Any(&["li_at"])),
     Pinterest => Some(Any(&["_pinterest_sess"])),
@@ -143,9 +151,38 @@ pub(super) fn session_present(host: &str, names: &HashSet<String>) -> bool {
 }
 
 /// Use the same site-specific names for encryption hints and sign-in detection.
-fn is_session_cookie(host: &str, name: &str) -> bool {
+pub(crate) fn is_session_cookie(host: &str, name: &str) -> bool {
   match session_cookies(host) {
     Some(SessionCookies::Any(required) | SessionCookies::All(required)) => required.contains(&name),
     None => false,
   }
+}
+
+/// Only site-scoped, nonempty, live cookies may establish an automatic session.
+pub(crate) fn proof_cookies<'a>(
+  host: &str,
+  cookies: impl IntoIterator<Item = (&'a str, &'a str, &'a str, i64)>,
+  now: i64,
+) -> bool {
+  let names = cookies
+    .into_iter()
+    .filter(|(domain, _, value, expiry)| {
+      jar::allowed_cookie_host(domain, host) && !value.is_empty() && (*expiry == 0 || *expiry > now)
+    })
+    .map(|(_, name, _, _)| name.to_owned())
+    .collect();
+  session_present(host, &names)
+}
+
+pub(crate) fn session_directory(path: &std::path::Path) -> Result<(), &'static str> {
+  jar::private_directory(path).map_err(|_| COOKIE_READ_ERROR)
+}
+pub(crate) fn session_marker(path: &std::path::Path) -> Result<(), &'static str> {
+  jar::private_file(path)
+    .map(|_| ())
+    .map_err(|_| COOKIE_READ_ERROR)
+}
+
+pub(crate) fn cookie_host_allowed(cookie_host: &str, host: &str) -> bool {
+  jar::allowed_cookie_host(cookie_host, host)
 }

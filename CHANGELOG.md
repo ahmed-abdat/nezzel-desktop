@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0
+
+First stable release.
+
+- Automatic login: when a site needs you signed in, Nezzel uses your browser's login with no questions asked. The first time, a short note says so; you can turn it off in Settings > Logins. If you are not signed in anywhere, Nezzel can open a sign-in window for that site. Only that site's cookies are used, and they never leave your computer.
+- Many more link shapes work: TikTok short links and photo posts, Bilibili player links, Facebook share/photo/m./web. links, Threads share links, and links copied with invisible characters around them. Expired links say "removed" and unsupported sites say so plainly instead of a generic error.
+- New file hosts: pixeldrain, Yandex Disk, MediaFire, Internet Archive and GitHub (release files, raw and blob links).
+- yt-dlp now updates without a new Nezzel release, from a signed list we publish.
+- Linux: copied links are picked up on Wayland too (via wl-paste); the menu shows the right category; tray menu follows the app language.
+- Cancel really stops a download and removes its leftover partial files; paused downloads keep theirs.
+- Library keeps each download's details and failed rows across restarts; the card stays open while your mouse is on it; Instagram reels show their caption as the title.
+- Windows: first YouTube link works without a retry, Facebook share links retry once, language switch updates every menu.
+- Fixed many smaller issues found in the beta.4 test round on macOS, Windows and Linux.
+
 ## 0.1.0-beta.4
 
 - Facebook photo posts (single photos, albums shared with "share/p", photo.php links) now save the photos instead of stopping at "this post has photos, not a video".

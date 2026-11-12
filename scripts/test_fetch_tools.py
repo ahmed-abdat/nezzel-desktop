@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 import tempfile
 import tarfile
@@ -18,6 +19,137 @@ class FetchToolsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         spec.loader.exec_module(bootstrap)
+
+    def test_manifest_keygen_keeps_disposable_test_key_private_and_refuses_overwrite(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix='nezzel-test-key-') as tmp:
+            path = Path(tmp) / 'disposable.key'
+            generated = subprocess.run(['node', 'scripts/manifest-keygen.mjs', str(path)],
+                                       cwd=root, capture_output=True, text=True)
+            self.assertEqual(generated.returncode, 0, generated.stderr)
+            public = generated.stdout.strip()
+            self.assertEqual(len(bytes.fromhex(public)), 32)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            private = path.read_bytes()
+            self.assertNotIn(private.decode(), generated.stdout + generated.stderr)
+            check = subprocess.run(['node', '--input-type=module', '-e', r"""
+import assert from 'node:assert/strict';
+import {createPrivateKey, createPublicKey} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+const key = createPrivateKey({key: Buffer.from(readFileSync(process.argv[1], 'utf8'), 'base64'), format: 'der', type: 'pkcs8'});
+assert.equal(Buffer.from(createPublicKey(key).export({format: 'jwk'}).x, 'base64url').toString('hex'), process.argv[2]);
+""", str(path), public], cwd=root, capture_output=True, text=True)
+            self.assertEqual(check.returncode, 0, check.stderr)
+            again = subprocess.run(['node', 'scripts/manifest-keygen.mjs', str(path)],
+                                   cwd=root, capture_output=True, text=True)
+            self.assertNotEqual(again.returncode, 0)
+            self.assertEqual(again.stdout, '')
+            self.assertEqual(path.read_bytes(), private)
+
+    def test_manifest_bump_rejects_unhashable_assets_and_signs_exact_bytes(self):
+        result = subprocess.run(['node', '--input-type=module', '-e', r"""
+import assert from 'node:assert/strict';
+import { createPublicKey, verify } from 'node:crypto';
+import { hashAsset, signManifest, updateGithubTool } from './scripts/manifest-bump.mjs';
+const bytes = Buffer.from('abc');
+assert.equal(await hashAsset('https://github.com/test/asset', async () => new Response(bytes)),
+  'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+for (const response of [new Response(null), new Response('', {status: 404}),
+  new Response(new ReadableStream({start(c) { c.error(new Error('interrupted')); }}))]) {
+  await assert.rejects(hashAsset('https://github.com/test/asset', async () => response));
+}
+const tool = {version: 'old', files: {test: {url: 'https://github.com/test/tool/releases/download/old/tool.zip',
+  sha256: 'old', bundle: {entry: 'tool', keep_folder: true}}}};
+await updateGithubTool(tool, {tag_name: 'new', assets: [
+  {name: 'tool.zip', browser_download_url: 'https://github.com/test/tool/releases/download/new/tool.zip'}]},
+  new Map(), async () => new Response(bytes));
+assert.equal(tool.version, 'new');
+assert.equal(tool.files.test.sha256, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+assert.deepEqual(tool.files.test.bundle, {entry: 'tool', keep_folder: true});
+await assert.rejects(updateGithubTool(structuredClone(tool), {tag_name: 'bad', assets: []}, new Map()));
+// Deterministic test seed only; never a production key.
+const key = Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.alloc(32, 1)]).toString('base64');
+const signature = signManifest(bytes, key);
+const {createPrivateKey} = await import('node:crypto');
+const privateKey = createPrivateKey({key: Buffer.from(key, 'base64'), format: 'der', type: 'pkcs8'});
+assert(verify(null, bytes, createPublicKey(privateKey), Buffer.from(signature, 'base64')));
+assert(!verify(null, Buffer.from('changed'), createPublicKey(privateKey), Buffer.from(signature, 'base64')));
+assert.throws(() => signManifest(bytes, 'bad'));
+const publicHex = Buffer.from(createPublicKey(privateKey).export({format: 'jwk'}).x, 'base64url').toString('hex');
+assert.equal(signManifest(bytes, key, publicHex), signature);
+assert.throws(() => signManifest(bytes, key, '00'.repeat(32)));
+assert.throws(() => signManifest(bytes, key, 'bad-public-key'));
+process.env.GITHUB_TOKEN = 'disposable-fixture-token';
+await hashAsset('https://github.com/test/asset', async (url, {headers}) => {
+  assert.equal(headers.Authorization, undefined);
+  return new Response(bytes);
+});
+"""], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_manifest_bump_preserves_sources_and_pins_immutable_ffmpeg_release(self):
+        result = subprocess.run(['node', '--input-type=module', '-e', r"""
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {bump} from './scripts/manifest-bump.mjs';
+const load = async path => JSON.parse(await readFile(path));
+const input = await Promise.all(['src-tauri/src/binaries/manifest.json',
+  'scripts/gallery-dl-manifest.json', 'scripts/aria2-manifest.json'].map(load));
+input[0].tools['yt-dlp'].rollback = true;
+const original = structuredClone(input);
+const asset = (repo, tag, name) => ({name, browser_download_url: `https://github.com/${repo}/releases/download/${tag}/${name}`});
+const release = (repo, tag, names) => ({tag_name: tag, assets: names.map(name => asset(repo, tag, name))});
+const releases = {
+  'yt-dlp/yt-dlp': release('yt-dlp/yt-dlp', '2026.11.11', Object.values(input[0].tools['yt-dlp'].files).map(f => f.url.split('/').pop())),
+  'denoland/deno': release('denoland/deno', 'v2.9.9', Object.values(input[0].tools.deno.files).map(f => f.url.split('/').pop())),
+  'mikf/gallery-dl': release('mikf/gallery-dl', 'v1.33.0', ['gallery_dl-1.33.0.tar.gz', 'gallery-dl.bin', 'gallery-dl.exe']),
+  'aria2/aria2': release('aria2/aria2', 'release-1.38.0', ['aria2-1.38.0.tar.xz', 'aria2-1.38.0-win-64bit-build1.zip']),
+};
+const ff = release('yt-dlp/FFmpeg-Builds', 'autobuild-2026-11-11-00-00',
+  ['linux64-gpl.tar.xz', 'linuxarm64-gpl.tar.xz', 'win64-gpl.zip', 'winarm64-gpl.zip'].map(s => `ffmpeg-N-123-gabc-${s}`));
+const fetcher = async url => {
+  if (url.includes('FFmpeg-Builds/releases?')) return Response.json([{tag_name: 'latest', assets: []}, ff]);
+  const match = url.match(/repos\/(.+)\/releases\/latest$/);
+  if (match) { assert(releases[match[1]], url); return Response.json(releases[match[1]]); }
+  if (url.includes('/redirect/latest/')) {
+    const final = url.replace('/redirect/latest/', '/download/').replace('/release/', '/123_9.1.0/');
+    return Object.defineProperty(new Response(null), 'url', {value: final});
+  }
+  return new Response('abc');
+};
+const out = await bump(...input, fetcher);
+assert.deepEqual(input, original);
+const manifest = out['manifest.json'];
+assert.equal(manifest.tools['yt-dlp'].version, '2026.11.11');
+assert.equal(manifest.tools['yt-dlp'].rollback, undefined);
+assert.equal(manifest.tools.ffmpeg.files['linux-x86_64'].entry, 'ffmpeg-N-123-gabc-linux64-gpl/bin/ffmpeg');
+assert.equal(manifest.tools.ffprobe.files['windows-aarch64'].entry, 'ffmpeg-N-123-gabc-winarm64-gpl/bin/ffprobe.exe');
+assert.equal(manifest.tools.ffmpeg.files['darwin-aarch64'].version, '9.1.0');
+assert(manifest.tools.ffmpeg.files['linux-x86_64'].url.includes('/autobuild-2026-11-11-00-00/'));
+assert.deepEqual(manifest.tools['yt-dlp'].files['darwin-aarch64'].bundle, original[0].tools['yt-dlp'].files['darwin-aarch64'].bundle);
+assert.equal(out['gallery-dl-manifest.json'].version, '1.33.0');
+assert.equal(out['aria2-manifest.json'].version, '1.38.0');
+assert.deepEqual(manifest.tools.AtomicParsley, original[0].tools.AtomicParsley);
+for (const tool of ['yt-dlp', 'ffmpeg', 'ffprobe', 'deno']) {
+  for (const file of Object.values(manifest.tools[tool].files))
+    assert.equal(file.sha256, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+}
+const partial = await bump(...input, async url => url.includes('denoland/deno')
+  ? new Response('', {status: 502}) : fetcher(url));
+assert.deepEqual(partial['manifest.json'].tools.deno, original[0].tools.deno);
+assert.equal(partial['manifest.json'].tools['yt-dlp'].version, '2026.11.11');
+const downloadFailure = await bump(...input, async url => url.endsWith('yt-dlp_win_arm64.zip')
+  ? new Response('', {status: 502}) : fetcher(url));
+assert.deepEqual(downloadFailure['manifest.json'].tools['yt-dlp'], original[0].tools['yt-dlp']);
+assert.equal(downloadFailure['manifest.json'].tools.deno.version, 'v2.9.9');
+const ffFailure = await bump(...input, async url => url.endsWith('/release/ffmpeg.zip')
+  ? new Response('', {status: 502}) : fetcher(url));
+assert.deepEqual(ffFailure['manifest.json'].tools.ffmpeg, original[0].tools.ffmpeg);
+assert.equal(ffFailure['manifest.json'].tools.ffprobe.files['darwin-aarch64'].version, '9.1.0');
+await assert.rejects(bump(...input, async () => new Response('', {status: 502})), /Every tool source failed/);
+assert.deepEqual(input, original);
+"""], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_archive_and_raw_assets_keep_manifest_layout_and_cache_is_verified(self):
         with tempfile.TemporaryDirectory() as tmp:

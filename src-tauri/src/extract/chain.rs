@@ -654,73 +654,77 @@ pub async fn run(
       resolved_url: entry.prior_resolved_url.clone(),
     },
     cancel,
-    |step, login, resolved_url| async move {
-      let stage = match step {
-        ChainStep::Stage(stage) => stage,
-        ChainStep::Login { stage, .. } => stage,
-      };
-      if !is_group_running(&entry.group_id) {
-        return StageResult::new(stage, Confidence::Medium).finish(
-          Outcome::Cancelled,
-          false,
-          Instant::now(),
-        );
-      }
-      match step {
-        ChainStep::Stage(StageId::Files) => {
-          let mut result = crate::files::runner::info(app, entry).await;
-          result.login = login;
-          result
+    // A stage contains large file/page/engine futures. Keep those on the heap instead of
+    // copying them through every coordinator timeout/select frame on a 2 MiB worker stack.
+    |step, login, resolved_url| {
+      Box::pin(async move {
+        let stage = match step {
+          ChainStep::Stage(stage) => stage,
+          ChainStep::Login { stage, .. } => stage,
+        };
+        if !is_group_running(&entry.group_id) {
+          return StageResult::new(stage, Confidence::Medium).finish(
+            Outcome::Cancelled,
+            false,
+            Instant::now(),
+          );
         }
-        ChainStep::Stage(StageId::Gallery) => {
-          let mut gallery_entry = entry.clone();
-          if let Some(url) = resolved_url
-            .as_deref()
-            .filter(|url| crate::resolve::facebook_photo_target(url))
-          {
-            gallery_entry.url = url.to_owned();
+        match step {
+          ChainStep::Stage(StageId::Files) => {
+            let mut result = crate::files::runner::info(app, entry).await;
+            result.login = login;
+            result
           }
-          crate::runners::gallery::run_gallery_info(
-            app,
-            &gallery_entry,
-            login,
-            gallery_claim(&entry.url, resolved_url.as_deref()),
-          )
-          .await
-        }
-        ChainStep::Stage(StageId::PageScan) => {
-          page_scan(
-            app,
-            entry,
-            login,
-            resolved_url.as_deref().unwrap_or(&entry.url),
-            page_probe,
-          )
-          .await
-        }
-        ChainStep::Login { stage, reason } => {
-          let Some(mut login) = login else {
-            return StageResult::new(stage, Confidence::Medium);
-          };
-          let mut result = StageResult::new(stage, Confidence::Medium);
-          match login.request_fetch_login(app, entry, reason) {
-            crate::runners::retry_policy::RetryAction::Browser => {}
-            crate::runners::retry_policy::RetryAction::AskLogin => {
-              result = result.finish(Outcome::LoginPending, false, Instant::now());
+          ChainStep::Stage(StageId::Gallery) => {
+            let mut gallery_entry = entry.clone();
+            if let Some(url) = resolved_url.as_deref().filter(|url| {
+              crate::resolve::facebook_photo_target(url) || crate::resolve::tiktok_photo_target(url)
+            }) {
+              gallery_entry.url = url.to_owned();
             }
-            _ => {}
+            crate::runners::gallery::run_gallery_info(
+              app,
+              &gallery_entry,
+              login,
+              gallery_claim(&entry.url, resolved_url.as_deref()),
+            )
+            .await
           }
-          result.login = Some(login);
-          result
-        }
+          ChainStep::Stage(StageId::PageScan) => {
+            page_scan(
+              app,
+              entry,
+              login,
+              resolved_url.as_deref().unwrap_or(&entry.url),
+              page_probe,
+            )
+            .await
+          }
+          ChainStep::Login { stage, reason } => {
+            let Some(mut login) = login else {
+              return StageResult::new(stage, Confidence::Medium);
+            };
+            let mut result = StageResult::new(stage, Confidence::Medium);
+            match login.request_fetch_login(app, entry, reason) {
+              crate::runners::retry_policy::RetryAction::Browser => {}
+              crate::runners::retry_policy::RetryAction::AskLogin
+              | crate::runners::retry_policy::RetryAction::Pending => {
+                result = result.finish(Outcome::LoginPending, false, Instant::now());
+              }
+              _ => {}
+            }
+            result.login = Some(login);
+            result
+          }
 
-        _ => match login {
-          Some(login) => {
-            crate::runners::ytdlp_info::run_ytdlp_info_with_login(app, entry, login).await
-          }
-          None => crate::runners::ytdlp_info::run_ytdlp_info_fetch(app, entry).await,
-        },
-      }
+          _ => match login {
+            Some(login) => {
+              crate::runners::ytdlp_info::run_ytdlp_info_with_login(app, entry, login).await
+            }
+            None => crate::runners::ytdlp_info::run_ytdlp_info_fetch(app, entry).await,
+          },
+        }
+      })
     },
   )
   .await;
@@ -849,6 +853,35 @@ mod tests {
       assert_eq!(
         capabilities, *expected_capabilities,
         "{site}: {url} capabilities"
+      );
+    }
+  }
+
+  // These futures are moved through several timeout/selection frames on Tokio's default
+  // 2 MiB workers. Keep each frame within 1/32 of that stack instead of raising its size.
+  #[test]
+  fn fetch_futures_fit_the_default_worker_stack() {
+    fn fetch_size<F>(_: impl FnOnce(&'static AppHandle, &'static FetchEntry) -> F) -> usize {
+      std::mem::size_of::<F>()
+    }
+    fn resolve_size<F>(_: impl FnOnce(&'static str) -> F) -> usize {
+      std::mem::size_of::<F>()
+    }
+    let sizes = [
+      ("chain", fetch_size(run)),
+      (
+        "ytdlp",
+        fetch_size(crate::runners::ytdlp_info::run_ytdlp_info_fetch),
+      ),
+      ("resolve", resolve_size(crate::resolve::resolve)),
+    ];
+    for (name, bytes) in sizes {
+      println!("{name} future: {bytes} bytes");
+    }
+    for (name, bytes) in sizes {
+      assert!(
+        bytes <= 64 * 1024,
+        "{name} future exceeds the default-stack frame budget: {bytes} bytes"
       );
     }
   }
@@ -1302,12 +1335,13 @@ mod tests {
         true,
         None,
       ),
+      // The URL matrix saved all eight NASA Tumblr images through the gallery-first post route.
       (
-        "Tumblr forbidden tries gallery",
+        "Tumblr gallery unsupported tries yt-dlp",
         "https://example.tumblr.com/post/123/photo",
         vec![
-          (StageId::Ytdlp, "accessForbidden403"),
-          (StageId::Gallery, "verified"),
+          (StageId::Gallery, "urlNotSupported"),
+          (StageId::Ytdlp, "verified"),
         ],
         None,
         true,
@@ -1317,8 +1351,8 @@ mod tests {
         "forbidden survives unsupported gallery",
         "https://example.tumblr.com/post/123/photo",
         vec![
-          (StageId::Ytdlp, "accessForbidden403"),
           (StageId::Gallery, "urlNotSupported"),
+          (StageId::Ytdlp, "accessForbidden403"),
           (StageId::PageScan, "noMatch"),
         ],
         Some("accessForbidden403"),

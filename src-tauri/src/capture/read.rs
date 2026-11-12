@@ -36,13 +36,24 @@ pub(super) async fn preview(app: AppHandle, window: CaptureWindow, value: Offer)
 /// The link's media item (plus the card facts when they come from a richer source than the item),
 /// or why it could not be read (a fixed reason word, never engine text).
 /// One engine's read of a copied link (files, reader, yt-dlp and gallery each get this long). The card stays up
-/// untouched for at most one read plus 5 s to show its result (`CARD_LIMIT`); a Download clicked while the card
-/// reads waits two reads plus 6 s for the row's item (`ITEM_WAIT`: a second engine after a failed first), then
+/// untouched for at most one read plus 5 s to show its result; a Download clicked while the card
+/// reads waits two reads plus 6 s for the row's item (a second engine after a failed first), then
 /// the main window reads the link itself.
 const READ_SECS: u64 = 20;
 pub(super) const READ_LIMIT: Duration = Duration::from_secs(READ_SECS);
-pub(super) const CARD_LIMIT: Duration = Duration::from_secs(READ_SECS + 5);
-pub(super) const ITEM_WAIT: Duration = Duration::from_secs(2 * READ_SECS + 6);
+const COLD_READ_SECS: u64 = 60;
+pub(super) fn ytdlp_read_limit(url: &str, cold_spent: &std::sync::atomic::AtomicBool) -> Duration {
+  let youtube = reqwest::Url::parse(url)
+    .ok()
+    .and_then(|u| u.host_str().and_then(crate::sites::site_of))
+    == Some(crate::sites::SiteId::YouTube);
+  // Reserve the one cold attempt before spawning it: a hang/cancel cannot renew the allowance.
+  if youtube && !cold_spent.swap(true, std::sync::atomic::Ordering::Relaxed) {
+    Duration::from_secs(COLD_READ_SECS)
+  } else {
+    READ_LIMIT
+  }
+}
 
 /// An engine a preview can read a link with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,7 +199,8 @@ async fn preview_ytdlp(
   input.rewrite(target.url.clone());
   let mut first_vimeo_reason = None;
   let started = std::time::Instant::now();
-  let deadline = tokio::time::Instant::now() + READ_LIMIT;
+  let limit = value.read_limit();
+  let deadline = tokio::time::Instant::now() + limit;
   let bytes = loop {
     // URL retries and the fast/full pair all consume the same preview budget.
     match tokio::time::timeout_at(deadline, async {
@@ -201,7 +213,7 @@ async fn preview_ytdlp(
           let mut command = preview_command(executable, network, input, fast)
             .ok_or((FailReason::Unknown, String::new()))?;
           command.env("PATH", path);
-          preview::read_output_stderr(&mut command, process_guard).await
+          preview::read_output_stderr_with_limit(&mut command, process_guard, limit).await
         }
       };
       if reqwest::Url::parse(&input.url)
@@ -219,6 +231,12 @@ async fn preview_ytdlp(
     {
       Ok(bytes) => break bytes,
       Err((reason, stderr)) => {
+        if tokio::time::timeout_at(deadline, input.retry_facebook_share(&stderr))
+          .await
+          .map_err(|_| FailReason::Slow)?
+        {
+          continue;
+        }
         if input.impersonation_unavailable(&stderr) {
           return Err(first_vimeo_reason.unwrap_or(reason));
         }
@@ -296,15 +314,20 @@ fn ytdlp_preview(
   {
     return Err(FailReason::Unsupported);
   }
-  let parsed = crate::parsers::ytdlp_info::parse_ytdlp_info(json, format!("capture-{id}"))
-    .map_err(|_| FailReason::Unknown)?;
+  let parsed =
+    crate::parsers::ytdlp_info::parse_ytdlp_info_for_url(json, format!("capture-{id}"), Some(url))
+      .map_err(|_| FailReason::Unknown)?;
   match parsed {
     crate::models::ParsedMedia::Single(item) => {
       let item = serde_json::to_value(item).map_err(|_| FailReason::Unknown)?;
       let from_item = preview::summarize(&item);
       let details = raw.map(|raw| {
         let mut details = preview::summarize(&raw);
-        details.title = Some(card_title(&raw));
+        details.title = item["title"]
+          .as_str()
+          .filter(|title| raw["title"].as_str() != Some(*title))
+          .map(str::to_owned)
+          .or_else(|| Some(crate::parsers::ytdlp_info::caption_title(&raw)));
         details.media_kind = from_item.media_kind.clone();
         details.photos = from_item.photos;
         details.thumbnail = details.thumbnail.or(from_item.thumbnail.clone());
@@ -320,42 +343,6 @@ fn ytdlp_preview(
       .map_err(|_| FailReason::Unknown),
     _ => Err(FailReason::Unsupported),
   }
-}
-
-/// yt-dlp's generated social title is a fallback; a post's caption is more useful on the card.
-fn card_title(raw: &serde_json::Value) -> String {
-  let title = raw["title"].as_str().unwrap_or("").trim();
-  let generic = title.is_empty()
-    || ["uploader", "uploader_id", "channel"].iter().any(|key| {
-      raw[*key].as_str().is_some_and(|user| {
-        title == format!("Video by {user}") || title == format!("Post by {user}")
-      })
-    })
-    || title
-      .strip_prefix("Video ")
-      .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
-  let noise =
-    |c: char| c.is_whitespace() || matches!(c, '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{200b}');
-  let caption = ["description", "caption"].iter().find_map(|key| {
-    raw[*key]
-      .as_str()?
-      .lines()
-      .map(|line| line.trim_matches(noise))
-      .find(|line| {
-        line.split_whitespace().any(|word| {
-          let word = word.trim_matches(noise);
-          !word.is_empty() && !word.starts_with('#') && !word.starts_with('@')
-        })
-      })
-  });
-  (if generic {
-    caption.unwrap_or(title)
-  } else {
-    title
-  })
-  .chars()
-  .take(300)
-  .collect()
 }
 
 fn preview_command(
@@ -423,6 +410,42 @@ mod login_privacy_tests {
 mod tests {
   use super::*;
 
+  #[tokio::test(start_paused = true)]
+  async fn cold_youtube_read_survives_windows_first_run_latency() {
+    let url = "https://www.youtube.com/watch?v=abc";
+    for (seconds, succeeds) in [(26, true), (61, false)] {
+      let state = CaptureState::default();
+      assert_eq!(
+        ytdlp_read_limit("https://example.com/v", &state.youtube_cold_spent),
+        READ_LIMIT
+      );
+      let read_limit = ytdlp_read_limit(url, &state.youtube_cold_spent);
+      let offer = Offer {
+        read_limit,
+        ..Offer::default()
+      };
+      assert_eq!(offer.card_limit(), Duration::from_secs(65));
+      assert_eq!(offer.item_wait(), Duration::from_secs(126));
+      let result = tokio::time::timeout(read_limit, async {
+        tokio::time::sleep(Duration::from_secs(seconds)).await;
+      })
+      .await;
+      assert_eq!(result.is_ok(), succeeds);
+      let next = Offer {
+        read_limit: ytdlp_read_limit(url, &state.youtube_cold_spent),
+        ..Offer::default()
+      };
+      assert_eq!(next.read_limit(), READ_LIMIT);
+      assert_eq!(next.card_limit(), Duration::from_secs(25));
+      assert_eq!(next.item_wait(), Duration::from_secs(46));
+      state.tools_changed();
+      assert_eq!(
+        ytdlp_read_limit(url, &state.youtube_cold_spent),
+        Duration::from_secs(60)
+      );
+    }
+  }
+
   #[test]
   fn card_title_prefers_captions_only_over_generated_titles() {
     for (title, caption, expected) in [
@@ -472,11 +495,13 @@ mod tests {
       ),
     ] {
       assert_eq!(
-        card_title(&serde_json::json!({"title":title,"description":caption,"channel":"nasa"})),
+        crate::parsers::ytdlp_info::caption_title(
+          &serde_json::json!({"title":title,"description":caption,"channel":"nasa"})
+        ),
         expected
       );
     }
-    assert_eq!(card_title(&serde_json::json!({"title":"Video by nasa","channel":"nasa","description":"ع🚀".repeat(200)})).chars().count(), 300);
+    assert_eq!(crate::parsers::ytdlp_info::caption_title(&serde_json::json!({"title":"Video by nasa","channel":"nasa","description":"ع🚀".repeat(200)})).chars().count(), 300);
   }
 
   #[tokio::test]
@@ -583,9 +608,17 @@ mod tests {
       Some("Caption first line")
     );
     assert_eq!(
-      cached["title"], "Video by nasa",
-      "card text never changes the cached download title"
+      cached["title"], "Caption first line",
+      "caption titles also name the cached download"
     );
+    captioned["description"] = serde_json::Value::Null;
+    let (cached, details) = ytdlp_preview(
+      "https://www.instagram.com/nasa/reel/abc/",
+      &captioned.to_string(),
+      9,
+    )
+    .unwrap();
+    assert_eq!(details.unwrap().title.as_deref(), cached["title"].as_str());
   }
 
   /// Routing comes from the extract registry: files alone, gallery before or after yt-dlp, site readers first.

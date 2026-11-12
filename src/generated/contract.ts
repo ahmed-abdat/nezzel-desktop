@@ -106,7 +106,7 @@ export const LOGIN_REASONS = ['browserAppBound', 'changeProfile', 'browserLoginF
 export type LoginReason = (typeof LOGIN_REASONS)[number];
 
 /** Row events the engine emits to the webview (`events.rs`). */
-export const ROW_EVENTS = { mediaAttempts: 'media_attempts', mediaComplete: 'media_complete', mediaDestination: 'media_destination', mediaDiagnostic: 'media_diagnostic', mediaFatal: 'media_fatal', mediaLoginNeeded: 'media_login_needed', mediaLoginUsing: 'media_login_using', mediaProgress: 'media_progress', mediaProgressStage: 'media_progress_stage', mediaTransport: 'media_transport' } as const;
+export const ROW_EVENTS = { mediaAttempts: 'media_attempts', mediaComplete: 'media_complete', mediaDestination: 'media_destination', mediaDiagnostic: 'media_diagnostic', mediaFatal: 'media_fatal', mediaLoginNeeded: 'media_login_needed', mediaLoginUsing: 'media_login_using', mediaLoginNotice: 'media_login_notice', mediaProgress: 'media_progress', mediaProgressStage: 'media_progress_stage', mediaTransport: 'media_transport' } as const;
 
 /** Known sites (`sites.rs`): display name, hosts (the host or a subdomain), yt-dlp extractor keys. */
 export const SITES = [
@@ -115,7 +115,7 @@ export const SITES = [
   { key: 'tiktok', name: 'TikTok', hosts: ['tiktok.com'], extractors: ['tiktok'] },
   { key: 'instagram', name: 'Instagram', hosts: ['instagram.com'], extractors: ['instagram'] },
   { key: 'facebook', name: 'Facebook', hosts: ['facebook.com', 'fb.watch'], extractors: ['facebook'] },
-  { key: 'x', name: 'X', hosts: ['x.com', 'twitter.com'], extractors: ['twitter'] },
+  { key: 'x', name: 'X', hosts: ['x.com', 'twitter.com', 'fxtwitter.com', 'vxtwitter.com'], extractors: ['twitter'] },
   { key: 'twitch', name: 'Twitch', hosts: ['twitch.tv'], extractors: ['twitch'] },
   { key: 'soundcloud', name: 'SoundCloud', hosts: ['soundcloud.com'], extractors: ['soundcloud'] },
   { key: 'dailymotion', name: 'Dailymotion', hosts: ['dailymotion.com', 'dai.ly'], extractors: ['dailymotion'] },
@@ -135,4 +135,14 @@ export const SITES = [
   { key: 'googledrive', name: 'Google Drive', hosts: ['drive.google.com'], extractors: [] },
   { key: 'googledocs', name: 'Google Docs', hosts: ['docs.google.com'], extractors: [] },
   { key: 'dropbox', name: 'Dropbox', hosts: ['dropbox.com'], extractors: [] },
+  { key: 'tumblr', name: 'Tumblr', hosts: ['tumblr.com'], extractors: ['tumblr'] },
+  { key: 'kick', name: 'Kick', hosts: ['kick.com'], extractors: ['kick:clips'] },
+  { key: 'vk', name: 'VK', hosts: ['vk.com', 'vkvideo.ru'], extractors: ['vk'] },
+  { key: 'ok', name: 'OK.ru', hosts: ['ok.ru'], extractors: ['odnoklassniki'] },
+  { key: 'streamable', name: 'Streamable', hosts: ['streamable.com'], extractors: ['streamable'] },
+  { key: 'imgur', name: 'Imgur', hosts: ['imgur.com'], extractors: ['imgur'] },
+  { key: '9gag', name: '9GAG', hosts: ['9gag.com'], extractors: ['9gag'] },
+  { key: 'likee', name: 'Likee', hosts: ['likee.video'], extractors: ['likee'] },
+  { key: 'kwai', name: 'Kwai', hosts: ['kwai.com'], extractors: [] },
+  { key: 'flickr', name: 'Flickr', hosts: ['flickr.com', 'flic.kr'], extractors: ['flickr'] },
 ] as const;

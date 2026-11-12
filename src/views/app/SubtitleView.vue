@@ -100,7 +100,7 @@ const { t } = useI18n();
 const settingsStore = useSettingsStore();
 const toastStore = useToastStore();
 
-const subtitleFormatOptions = buildSubtitleFormatOptions(t);
+const subtitleFormatOptions = computed(() => buildSubtitleFormatOptions(t));
 
 const subtitleSettings = ref<SubtitleSettings>(
   createSubtitleSettings(settingsStore.settings.subtitles),

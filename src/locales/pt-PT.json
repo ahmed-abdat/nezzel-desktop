@@ -1080,11 +1080,6 @@
         "shortMessage": "A tentar novamente o fragmento",
         "message": "A transferência de um fragmento falhou e será repetida automaticamente."
       },
-      "facebookVideoUnavailable": {
-        "shortMessage": "O Facebook não disponibilizou este vídeo",
-        "message": "O Facebook não disponibilizou este vídeo ao Nezzel. Abra a ligação num navegador e copie a ligação da barra de endereços ou tente novamente mais tarde.",
-        "action": "Copie a ligação da barra de endereços do navegador ou tente novamente mais tarde"
-      },
       "unknown": {
         "shortMessage": "Erro desconhecido",
         "message": "Ocorreu um erro desconhecido ao processar este item."

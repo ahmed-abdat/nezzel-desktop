@@ -1108,11 +1108,6 @@
         "shortMessage": "正在重試片段",
         "message": "片段下載失敗，將自動重試。"
       },
-      "facebookVideoUnavailable": {
-        "shortMessage": "Facebook 未提供這部影片",
-        "message": "Facebook 未向 Nezzel 提供這部影片。請在瀏覽器中開啟連結並複製網址列中的連結，或稍後再試。",
-        "action": "複製瀏覽器網址列中的連結，或稍後再試"
-      },
       "unknown": {
         "shortMessage": "未知錯誤",
         "message": "處理此項目時發生未知錯誤。"

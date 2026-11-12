@@ -150,7 +150,10 @@ async function reportEngaged(id: number, value: boolean) {
   if (!id) return;
   try {
     const visible = await invoke<boolean>('capture_fit', { id, engaged: value });
-    if (!disposed && visible === false && offer.value.id === id) resetInteraction();
+    if (!disposed && visible === false && offer.value.id === id) {
+      resetInteraction();
+      clearInterval(heartbeat);
+    }
   } catch { /* A missing heartbeat expires in Rust. */ }
 }
 // The webview survives native hide/show. Never carry a click/focus latch into the next offer.
@@ -159,10 +162,12 @@ watch(() => [offer.value.id, engaged.value] as const, ([id, value]) => {
   clearInterval(heartbeat);
   void reportEngaged(id, value);
   if (id && value) touch();
-  heartbeat = id && value
+  // A non-focusable macOS card can miss enter, including when shown under a stationary pointer.
+  // Rust checks the native cursor on every ping, even before the webview reports engagement.
+  heartbeat = id
     ? setInterval(() => {
-        if (Date.now() - lastActivity > CARD_IDLE_MS) resetInteraction();
-        else void reportEngaged(id, true);
+        if (engaged.value && Date.now() - lastActivity > CARD_IDLE_MS) resetInteraction();
+        else void reportEngaged(id, engaged.value);
       }, 3000)
     : undefined;
 }, { immediate: true, flush: 'sync' });

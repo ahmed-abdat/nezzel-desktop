@@ -114,6 +114,8 @@ pub async fn write_text(app: &AppHandle, text: String, suppress_offer: bool) -> 
 pub enum Reader {
   /// arboard through the clipboard plugin.
   Plugin,
+  /// Optional wl-clipboard executable (Linux Wayland only).
+  WlPaste,
   /// GTK on the main thread (Linux only).
   Gtk,
 }
@@ -298,6 +300,13 @@ pub async fn read_text(
         let app = app.clone();
         bounded(&PLUGIN_BUSY, READ_LIMIT, move || read_plugin(&app)).await
       }
+      Reader::WlPaste => {
+        let state = app.state::<CaptureState>();
+        match state.wl_paste.get().and_then(|tool| tool.path.as_deref()) {
+          Some(path) => wl_paste_output(path, &["--no-newline", "--type", "text"]).await,
+          None => Err(ReadError::NotSupported),
+        }
+      }
       Reader::Gtk => read_gtk(app).await,
     };
     match result {
@@ -307,6 +316,71 @@ pub async fn read_text(
     }
   }
   (last, None)
+}
+
+/// Probe only selection MIME types; an installed tool is not proof of background access on GNOME.
+#[derive(Default)]
+pub(super) struct WlPaste {
+  pub path: Option<std::path::PathBuf>,
+  pub background: bool,
+}
+
+impl WlPaste {
+  pub async fn probe() -> Self {
+    #[cfg(target_os = "linux")]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let path = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+          .map(|dir| dir.join("wl-paste"))
+          .find(|path| {
+            std::fs::metadata(path)
+              .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+          })
+      });
+      let background = match &path {
+        Some(path) => wl_paste_output(path, &["--list-types"]).await.is_ok(),
+        None => false,
+      };
+      Self { path, background }
+    }
+    #[cfg(not(target_os = "linux"))]
+    Self::default()
+  }
+}
+
+/// Bound both runtime and output; kill/reap a stalled helper instead of accumulating processes.
+async fn wl_paste_output(path: &std::path::Path, args: &[&str]) -> Result<String, ReadError> {
+  use tokio::io::AsyncReadExt;
+  let mut child = tokio::process::Command::new(path)
+    .args(args)
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .kill_on_drop(true)
+    .spawn()
+    .map_err(|_| ReadError::NotSupported)?;
+  let stdout = child.stdout.take().ok_or(ReadError::Other)?;
+  let result = tokio::time::timeout(READ_LIMIT, async {
+    let mut bytes = Vec::new();
+    stdout
+      .take(64 * 1024 + 1)
+      .read_to_end(&mut bytes)
+      .await
+      .map_err(|_| ReadError::Other)?;
+    // Text over 64 KiB is NotSupported by design: clipboard polling must stay bounded.
+    if bytes.len() > 64 * 1024 {
+      return Err(ReadError::NotSupported);
+    }
+    if !child.wait().await.map_err(|_| ReadError::Other)?.success() {
+      return Err(ReadError::Other);
+    }
+    String::from_utf8(bytes).map_err(|_| ReadError::NotSupported)
+  })
+  .await;
+  // Also covers an oversized clipboard before wait() was reached.
+  let _ = child.kill().await;
+  result.unwrap_or(Err(ReadError::Timeout))
 }
 
 /// One diagnostic line per state change, at most `BUDGET` lines per `WINDOW`.

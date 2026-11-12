@@ -24,6 +24,21 @@ pub(super) fn may_reuse_remembered(auth: &AuthSettings, host: &str) -> bool {
     || EXPLICIT_SITES.lock().unwrap().contains(host)
 }
 
+/// Explicit refusal and the legacy off policy always win over remembered sources.
+pub(crate) fn global_consent(auth: &AuthSettings) -> Option<bool> {
+  Some(
+    !matches!(
+      crate::runners::browsers::BrowserSetting::of(auth),
+      crate::runners::browsers::BrowserSetting::Never
+    ) && auth.browser_login_consent != Some(false),
+  )
+}
+pub(crate) fn migrate_global_consent(auth: &mut AuthSettings) {
+  let enabled = global_consent(auth) == Some(true);
+  auth.browser_login_consent = Some(enabled);
+  auth.always_use_browser_logins = enabled;
+}
+
 struct RowBrowser {
   browser: String,
   host: String,

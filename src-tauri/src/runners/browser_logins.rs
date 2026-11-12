@@ -1,5 +1,7 @@
 //! Profile names and site-session metadata. Cookie values are never projected or decrypted.
-use super::browser_cookies::{cookie_hint, CookieHint};
+#[cfg(test)]
+use super::browser_cookies::cookie_hint;
+use super::browser_cookies::{cookie_hint_for_container, firefox_containers, CookieHint};
 use super::browsers::{BrowserKind, BrowserSource, CookieStore};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -288,7 +290,16 @@ fn discover_in(
             cookie_paths
               .iter()
               .filter(|p| p.is_file())
-              .map(|p| cookie_hint(env, p, browser, host, now))
+              .map(|p| {
+                cookie_hint_for_container(
+                  env,
+                  p,
+                  browser,
+                  host,
+                  now,
+                  (browser.store() == CookieStore::Firefox).then_some(0),
+                )
+              })
               .fold(CookieHint::default(), |best, hint| {
                 // An old root Cookies file must not hide the active Network database's v20.
                 let app_bound = best.app_bound || hint.app_bound;
@@ -311,7 +322,7 @@ fn discover_in(
         {
           continue;
         }
-        found.push(BrowserCandidate {
+        let candidate = BrowserCandidate {
           id: format!("{}:{}", browser.name(), path.to_string_lossy()),
           browser,
           profile: if browser.store() == CookieStore::Firefox {
@@ -333,7 +344,41 @@ fn discover_in(
               .filter(|v| v.is_finite())
               .unwrap_or(0.0)
           },
-        });
+        };
+        if browser == BrowserKind::Firefox {
+          let containers = firefox_containers(&path);
+          for (name, id) in containers {
+            let hint = host
+              .map(|host| {
+                cookie_hint_for_container(
+                  env,
+                  &path.join("cookies.sqlite"),
+                  browser,
+                  host,
+                  now,
+                  Some(id),
+                )
+              })
+              .unwrap_or_default();
+            let source = BrowserSource {
+              kind: browser,
+              keyring: None,
+              profile: Some(path.to_string_lossy().into_owned()),
+              container: Some(name.clone()),
+            };
+            if BrowserSource::parse(&source.spec()).as_ref() != Some(&source) {
+              continue;
+            }
+            found.push(BrowserCandidate {
+              id: source.spec(),
+              profile: format!("{} · {}", candidate.profile, name),
+              signed_in: hint.signed_in,
+              active_time: hint.last_access as f64,
+              ..candidate.clone()
+            });
+          }
+        }
+        found.push(candidate);
       }
     }
   }
@@ -512,6 +557,10 @@ pub fn describe(id: &str) -> Option<BrowserCandidate> {
       &directory,
     )
   };
+  let profile = match source.container.as_deref() {
+    Some(container) if container != "none" => format!("{profile} · {container}"),
+    _ => profile,
+  };
   Some(BrowserCandidate {
     id: id.into(),
     browser,
@@ -578,6 +627,68 @@ mod tests {
     std::fs::create_dir_all(&p).unwrap();
     p
   }
+  #[test]
+  fn firefox_container_candidates_keep_profile_and_session_separate() {
+    let temp = crate::runners::gallery_files::Staging::new().unwrap();
+    let profile = temp.path.join(".mozilla/firefox/main");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::write(
+      profile.join("containers.json"),
+      r#"{"identities":[
+      {"userContextId":1,"name":"Work","public":true},
+      {"userContextId":2,"l10nID":"userContextPersonal.label","public":true},
+      {"userContextId":3,"name":"Hidden","public":false}
+    ]}"#,
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(profile.join("cookies.sqlite")).unwrap();
+    db.execute_batch("CREATE TABLE moz_cookies (host TEXT, name TEXT, expiry INTEGER, lastAccessed INTEGER, originAttributes TEXT);
+      INSERT INTO moz_cookies VALUES ('.instagram.com', 'sessionid', 4102444800, 42, '^userContextId=1&privateBrowsingId=0');").unwrap();
+    let found = discover_in(
+      &BrowserEnv::test(Os::Linux).at(&temp.path),
+      None,
+      Some("instagram.com"),
+    );
+    let specs: Vec<_> = found
+      .iter()
+      .map(|c| {
+        (
+          c.id
+            .strip_prefix(&format!("firefox:{}", profile.display()))
+            .unwrap(),
+          c.signed_in,
+        )
+      })
+      .collect();
+    assert_eq!(
+      specs,
+      [
+        ("::Work", true),
+        ("", false),
+        ("::userContextPersonal.label", false)
+      ]
+    );
+    assert_eq!(found[0].profile, "main · Work");
+    assert_eq!(describe(&found[0].id).unwrap().profile, "main · Work");
+    for contents in [
+      "invalid json",
+      r#"{"identities":[]}"#,
+      r#"{"identities":[{"name":"none","userContextId":1},{"name":" Work","userContextId":2},{"name":"Duplicate","userContextId":3},{"name":"Duplicate","userContextId":4}]}"#,
+    ] {
+      std::fs::write(profile.join("containers.json"), contents).unwrap();
+      let found = discover_in(
+        &BrowserEnv::test(Os::Linux).at(&temp.path),
+        None,
+        Some("instagram.com"),
+      );
+      assert_eq!(found.len(), 1, "{contents}");
+      assert!(
+        !found[0].signed_in,
+        "container session must not leak into the default: {contents}"
+      );
+    }
+  }
+
   fn touch(root: &Path, rel: &str, seconds: u64) {
     let p = root.join(rel);
     std::fs::create_dir_all(p.parent().unwrap()).unwrap();

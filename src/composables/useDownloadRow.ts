@@ -111,6 +111,12 @@ export function useDownloadRow(group: Ref<Group>) {
   const choice = computed(() => choiceForOptions(optionsStore.getOptions(group.value.id), group.value.formats ?? [], group.value.mediaKind));
   /** Photo posts have no formats; their label is what gets saved, never a video/audio choice. */
   const photoLabel = computed(() => {
+    const summary = group.value.savedAttachmentSummary;
+    if (summary) {
+      const key = summary.videos ? 'items' : 'photos';
+      const n = summary.photos + summary.videos;
+      return t(`downloads.row.${key}`, { n }, n);
+    }
     const saved = savedAttachments(group.value.mediaKind, group.value.attachments ?? [], optionsStore.getAttachmentSelection(group.value.id));
     return saved && t(`downloads.row.${saved.key}`, { n: saved.n }, saved.n);
   });

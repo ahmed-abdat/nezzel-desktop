@@ -31,6 +31,16 @@ pub(crate) enum SiteId {
   GoogleDrive,
   GoogleDocs,
   Dropbox,
+  Tumblr,
+  Kick,
+  Vk,
+  Ok,
+  Streamable,
+  Imgur,
+  NineGag,
+  Likee,
+  Kwai,
+  Flickr,
 }
 
 pub(crate) struct Site {
@@ -106,7 +116,14 @@ pub(crate) const SITES: &[Site] = {
       &["fb.watch"],
       &["facebook"],
     ),
-    site(X, "x", "X", &["x.com", "twitter.com"], &[], &["twitter"]),
+    site(
+      X,
+      "x",
+      "X",
+      &["x.com", "twitter.com"],
+      &["fxtwitter.com", "vxtwitter.com"],
+      &["twitter"],
+    ),
     site(Twitch, "twitch", "Twitch", &["twitch.tv"], &[], &["twitch"]),
     site(
       SoundCloud,
@@ -217,6 +234,38 @@ pub(crate) const SITES: &[Site] = {
       &[],
     ),
     site(Dropbox, "dropbox", "Dropbox", &["dropbox.com"], &[], &[]),
+    site(
+      Tumblr,
+      "tumblr",
+      "Tumblr",
+      &["tumblr.com"],
+      &[],
+      &["tumblr"],
+    ),
+    site(Kick, "kick", "Kick", &["kick.com"], &[], &["kick:clips"]),
+    site(Vk, "vk", "VK", &["vk.com", "vkvideo.ru"], &[], &["vk"]),
+    site(Ok, "ok", "OK.ru", &["ok.ru"], &[], &["odnoklassniki"]),
+    site(
+      Streamable,
+      "streamable",
+      "Streamable",
+      &["streamable.com"],
+      &[],
+      &["streamable"],
+    ),
+    site(Imgur, "imgur", "Imgur", &["imgur.com"], &[], &["imgur"]),
+    site(NineGag, "9gag", "9GAG", &["9gag.com"], &[], &["9gag"]),
+    site(Likee, "likee", "Likee", &["likee.video"], &[], &["likee"]),
+    // Identity for display/refusal only; not in capture's supported-site allowlist.
+    site(Kwai, "kwai", "Kwai", &["kwai.com"], &[], &[]),
+    site(
+      Flickr,
+      "flickr",
+      "Flickr",
+      &["flickr.com"],
+      &["flic.kr"],
+      &["flickr"],
+    ),
   ]
 };
 

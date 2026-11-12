@@ -924,6 +924,21 @@ async fn changing_google_export_format_does_not_reuse_the_other_formats_partial(
     })
     .await;
   assert!(matches!(result, Err(super::Error::Cancelled)));
+  let office = engine.clone().with_export(super::hosts::Export::Office);
+  let (tx, rx) = watch::channel(true);
+  let result = office
+    .download(url, &dir.0, "owner", None, rx, &mut |event| {
+      if matches!(event, Event::Progress { bytes, .. } if bytes > 32768) {
+        let _ = tx.send(false);
+      }
+    })
+    .await;
+  assert!(matches!(result, Err(super::Error::Cancelled)));
+  // This is the same record constructor and cleanup used by the runner's registry.
+  let partial = super::runner::Partial::new(office.clone(), dir.0.clone(), url, "owner");
+  partial.discard().await.unwrap();
+  assert!(!dir.0.join("sample.docx.nezzel-part").exists());
+  assert!(dir.0.join("sample.pdf.nezzel-part").exists());
   let (_tx, rx) = watch::channel(true);
   let path = engine
     .clone()
@@ -940,4 +955,428 @@ async fn changing_google_export_format_does_not_reuse_the_other_formats_partial(
     .unwrap();
   assert_eq!(path.file_name().unwrap(), "sample.pdf");
   assert_eq!(pdf_gets.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn anonymous_host_api_fixtures_resolve_metadata_and_keep_final_html_and_json() {
+  use reqwest::ResponseBuilderExt;
+  for (share, name, expected) in [
+    (
+      "https://pixeldrain.com/u/Ab123xyz",
+      "report.html",
+      b"<html>test file</html>".as_slice(),
+    ),
+    (
+      "https://yadi.sk/d/public",
+      "report.json",
+      b"{\"a\":1}".as_slice(),
+    ),
+    (
+      "https://www.mediafire.com/file/abc123/report.html/file",
+      "report.html",
+      b"<html>test file</html>".as_slice(),
+    ),
+    (
+      "https://archive.org/details/test-item",
+      "report.json",
+      b"{\"a\":1}".as_slice(),
+    ),
+  ] {
+    let engine = Engine::scripted(Arc::new(|url, range| {
+      assert!(range.is_none());
+      let (mime, body) = if url.ends_with("/info") {
+        (
+          "application/json",
+          include_str!("fixtures/pixeldrain-info.json").to_owned(),
+        )
+      } else if url.starts_with("https://cloud-api.yandex.net/v1/disk/public/resources/download?") {
+        (
+          "application/json",
+          include_str!("fixtures/yandex-download.json").to_owned(),
+        )
+      } else if url.starts_with("https://cloud-api.yandex.net/") {
+        (
+          "application/json",
+          include_str!("fixtures/yandex-resource.json").to_owned(),
+        )
+      } else if url.starts_with("https://www.mediafire.com/") {
+        (
+          "text/html",
+          include_str!("fixtures/mediafire-download.html").to_owned(),
+        )
+      } else if url == "https://archive.org/metadata/test-item" {
+        ("application/json", r#"{"files":[{"name":"test-item_meta.xml","source":"metadata"},{"name":"report.json","source":"original","size":"7"}]}"#.to_owned())
+      } else if url.contains("report.json") {
+        ("application/json", "{\"a\":1}".to_owned())
+      } else {
+        assert!(
+          url == "https://pixeldrain.com/api/file/Ab123xyz?download"
+            || url.starts_with("https://download123.mediafire.com/"),
+          "{url}"
+        );
+        ("text/html", "<html>test file</html>".to_owned())
+      };
+      Ok(
+        http::Response::builder()
+          .url(url.parse().unwrap())
+          .header("content-type", mime)
+          .body(body)
+          .unwrap()
+          .into(),
+      )
+    }));
+    let (_tx, rx) = watch::channel(true);
+    let probe = engine.probe(share, rx.clone()).await.unwrap();
+    assert_eq!(probe.name, name, "{share}");
+    assert_eq!(probe.size, Some(expected.len() as u64), "{share}");
+    let dir = Dir::new();
+    let path = engine
+      .download(share, &dir.0, "owner", Some(probe), rx, &mut |_| {})
+      .await
+      .unwrap();
+    assert_eq!(path.file_name().unwrap(), name);
+    assert_eq!(std::fs::read(path).unwrap(), expected);
+  }
+}
+
+#[tokio::test]
+async fn github_file_downloads_reject_html_pages_without_saving_them() {
+  use reqwest::ResponseBuilderExt;
+  for (source, status, mime, expected_error) in [
+    (
+      "https://github.com/o/r/blob/main/a.html",
+      200,
+      "text/html; charset=utf-8",
+      Some("fileNotFile"),
+    ),
+    (
+      "https://github.com/o/r/raw/main/a.txt",
+      200,
+      "TEXT/HTML",
+      Some("fileNotFile"),
+    ),
+    (
+      "https://raw.githubusercontent.com/o/r/main/a.html",
+      200,
+      "text/html",
+      Some("fileNotFile"),
+    ),
+    (
+      "https://raw.githubusercontent.com/o/r/main/missing.txt",
+      404,
+      "text/html",
+      Some("notFound404"),
+    ),
+    (
+      "https://github.com/o/r/blob/main/a.html",
+      200,
+      "text/plain",
+      None,
+    ),
+    (
+      "https://github.com/o/r/releases/download/v1/a.html",
+      200,
+      "text/html",
+      None,
+    ),
+  ] {
+    let engine = Engine::scripted(Arc::new(move |url, _| {
+      Ok(
+        http::Response::builder()
+          .url(url.parse().unwrap())
+          .status(status)
+          .header("content-type", mime)
+          .body("<html>test page</html>")
+          .unwrap()
+          .into(),
+      )
+    }));
+    let dir = Dir::new();
+    let (_tx, rx) = watch::channel(true);
+    let result = engine
+      .download(source, &dir.0, "owner", None, rx, &mut |_| {})
+      .await;
+    match (result, expected_error) {
+      (Err(error), Some(code)) => {
+        assert_eq!(error.code(), code, "{source}");
+        assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 0, "{source}");
+      }
+      (Ok(path), None) => assert_eq!(
+        std::fs::read(path).unwrap(),
+        b"<html>test page</html>",
+        "{source}"
+      ),
+      (actual, expected) => panic!("{source}: got {actual:?}, expected {expected:?}"),
+    }
+  }
+}
+
+#[tokio::test]
+async fn anonymous_hosts_report_removed_private_and_quota_responses() {
+  use reqwest::ResponseBuilderExt;
+  for (share, status, mime, body, code) in [
+    (
+      "https://pixeldrain.com/u/missing",
+      404,
+      "application/json",
+      r#"{"success":false,"value":"not_found"}"#,
+      "notFound404",
+    ),
+    (
+      "https://pixeldrain.com/u/quota",
+      403,
+      "application/json",
+      r#"{"success":false,"value":"file_rate_limited_captcha_required"}"#,
+      "fileRateLimited",
+    ),
+    (
+      "https://pixeldrain.com/u/private",
+      403,
+      "application/json",
+      r#"{"success":false,"value":"access_denied"}"#,
+      "fileNotPublic",
+    ),
+    (
+      "https://yadi.sk/d/missing",
+      404,
+      "application/json",
+      r#"{"error":"DiskNotFoundError"}"#,
+      "notFound404",
+    ),
+    (
+      "https://yadi.sk/d/quota",
+      403,
+      "application/json",
+      r#"{"error":"DiskDownloadLimitExceededError"}"#,
+      "fileRateLimited",
+    ),
+    (
+      "https://yadi.sk/d/private",
+      403,
+      "application/json",
+      r#"{"error":"DiskForbiddenError"}"#,
+      "fileNotPublic",
+    ),
+    (
+      "https://yadi.sk/d/folder",
+      200,
+      "application/json",
+      r#"{"type":"dir","name":"folder"}"#,
+      "fileNotFile",
+    ),
+    (
+      "https://yadi.sk/d/rate",
+      429,
+      "application/json",
+      "{}",
+      "fileRateLimited",
+    ),
+    (
+      "https://www.mediafire.com/file/missing",
+      200,
+      "text/html",
+      "<html>Invalid or Deleted File.</html>",
+      "notFound404",
+    ),
+    (
+      "https://www.mediafire.com/file/private",
+      200,
+      "text/html",
+      "<html><input type=password></html>",
+      "fileNotPublic",
+    ),
+    (
+      "https://www.mediafire.com/file/quota",
+      509,
+      "text/html",
+      "",
+      "fileRateLimited",
+    ),
+    (
+      "https://archive.org/details/missing",
+      200,
+      "application/json",
+      "{}",
+      "notFound404",
+    ),
+    (
+      "https://archive.org/details/private",
+      200,
+      "application/json",
+      r#"{"is_dark":true}"#,
+      "fileNotPublic",
+    ),
+    (
+      "https://archive.org/details/album",
+      200,
+      "application/json",
+      r#"{"files":[{"name":"a.mp3","source":"original"},{"name":"b.mp3","source":"original"}]}"#,
+      "fileNotFile",
+    ),
+    (
+      "https://archive.org/download/item/folder",
+      200,
+      "text/html",
+      "<html>directory listing</html>",
+      "fileNotFile",
+    ),
+    (
+      "https://archive.org/download/missing/a.txt",
+      404,
+      "text/html",
+      "",
+      "notFound404",
+    ),
+    (
+      "https://github.com/o/r/releases/download/missing/a.zip",
+      404,
+      "text/plain",
+      "Not Found",
+      "notFound404",
+    ),
+    (
+      "https://github.com/o/r/blob/main/private.txt",
+      403,
+      "text/html",
+      "",
+      "fileNotPublic",
+    ),
+  ] {
+    let engine = Engine::scripted(Arc::new(move |url, _| {
+      Ok(
+        http::Response::builder()
+          .url(
+            if url.ends_with("/folder") && url.contains("archive.org/download/") {
+              format!("{url}/").parse().unwrap()
+            } else {
+              url.parse().unwrap()
+            },
+          )
+          .status(status)
+          .header("content-type", mime)
+          .body(body)
+          .unwrap()
+          .into(),
+      )
+    }));
+    let (_tx, rx) = watch::channel(true);
+    match engine.probe(share, rx).await {
+      Err(error) => assert_eq!(error.code(), code, "{share}"),
+      Ok(_) => panic!("accepted an error response: {share}"),
+    }
+  }
+}
+
+#[tokio::test(start_paused = true)]
+async fn archive_ambiguous_or_oversized_metadata_keeps_media_fallback() {
+  use reqwest::ResponseBuilderExt;
+  for (status, body) in [
+    (
+      200,
+      r#"{"files":[{"name":"a.mp3","source":"original"},{"name":"b.mp3","source":"original"}]}"#
+        .to_owned(),
+    ),
+    (200, " ".repeat(2 * 1024 * 1024 + 1)),
+    (503, "API unavailable".to_owned()),
+  ] {
+    let engine = Engine::scripted(Arc::new(move |url, _| {
+      Ok(
+        http::Response::builder()
+          .status(status)
+          .url(url.parse().unwrap())
+          .header("content-type", "application/json")
+          .body(body.clone())
+          .unwrap()
+          .into(),
+      )
+    }));
+    let (_tx, rx) = watch::channel(true);
+    assert!(
+      super::runner::probe_metadata(&engine, "https://archive.org/details/item", rx)
+        .await
+        .is_none()
+    );
+  }
+}
+
+#[tokio::test]
+async fn yandex_resume_renews_signed_endpoint_and_keeps_name_and_bytes() {
+  use reqwest::ResponseBuilderExt;
+  use std::sync::atomic::AtomicUsize;
+  let resolutions = Arc::new(AtomicUsize::new(0));
+  let calls = resolutions.clone();
+  let data = Arc::new(vec![42_u8; 1024 * 1024]);
+  let content = data.clone();
+  let engine = Engine::scripted(Arc::new(move |url, range| {
+    let mut response = http::Response::builder().url(url.parse().unwrap());
+    if url.starts_with("https://cloud-api.yandex.net/") {
+      let body = if url.contains("resources/download?") {
+        let version = calls.fetch_add(1, Ordering::SeqCst);
+        format!(r#"{{"href":"https://downloader.disk.yandex.ru/disk/{version}/payload.bin"}}"#)
+      } else {
+        format!(
+          r#"{{"type":"file","name":"original.bin","size":{}}}"#,
+          content.len()
+        )
+      };
+      return Ok(
+        response
+          .header("content-type", "application/json")
+          .body(body)
+          .unwrap()
+          .into(),
+      );
+    }
+    assert!(url.starts_with("https://downloader.disk.yandex.ru/disk/"));
+    let (start, end) = range.map_or((0, content.len() - 1), |(start, end, validator)| {
+      assert!(url.contains("/disk/1/"), "resume must use the renewed link");
+      assert_eq!(validator, "\"version1\"");
+      (
+        start as usize,
+        end.unwrap_or(content.len() as u64 - 1) as usize,
+      )
+    });
+    if range.is_some() {
+      response = response.status(206).header(
+        "content-range",
+        format!("bytes {start}-{end}/{}", content.len()),
+      );
+    }
+    let frames = content[start..=end]
+      .chunks(16384)
+      .map(|b| Ok::<_, std::io::Error>(b.to_vec()))
+      .collect::<Vec<_>>();
+    Ok(
+      response
+        .header("content-type", "application/octet-stream")
+        .header("content-length", end - start + 1)
+        .header("accept-ranges", "bytes")
+        .header("etag", "\"version1\"")
+        .body(reqwest::Body::wrap_stream(futures::stream::iter(frames)))
+        .unwrap()
+        .into(),
+    )
+  }))
+  .with_connections(1);
+  let dir = Dir::new();
+  let url = "https://yadi.sk/d/public";
+  let (tx, rx) = watch::channel(true);
+  assert!(matches!(
+    engine
+      .download(url, &dir.0, "owner", None, rx, &mut |event| {
+        if matches!(event, Event::Progress { bytes, .. } if bytes > 32768) {
+          let _ = tx.send(false);
+        }
+      })
+      .await,
+    Err(super::Error::Cancelled)
+  ));
+  let (_tx, rx) = watch::channel(true);
+  let path = engine
+    .download(url, &dir.0, "owner", None, rx, &mut |_| {})
+    .await
+    .unwrap();
+  assert_eq!(path.file_name().unwrap(), "original.bin");
+  assert_eq!(std::fs::read(path).unwrap(), *data);
+  assert_eq!(resolutions.load(Ordering::SeqCst), 2);
 }

@@ -6,7 +6,7 @@ use crate::parsers::gallery::{
 };
 use crate::runners::{
   gallery_files::{image_type, Staging},
-  gallery_process::execute,
+  gallery_process::execute_with_started,
   ytdlp_runner::YtdlpRunner,
 };
 use crate::scheduling::{
@@ -71,11 +71,21 @@ impl GalleryRunner {
       "--input-file".into(),
       input_path.to_string_lossy().into_owned(),
     ]);
-    let output = execute(
+    if let Some(cookies) = &self._cookies {
+      cookies
+        .check_live_consent()
+        .map_err(GalleryError::Refused)?;
+    }
+    let output = execute_with_started(
       &self.path,
       &args,
       subscribe_group(group),
       gallery_deadline(assets.len()),
+      || {
+        if let Some(cookies) = &self._cookies {
+          cookies.announce_used();
+        }
+      },
     )
     .await?;
     if output.code != 0 {

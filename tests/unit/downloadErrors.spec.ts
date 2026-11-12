@@ -1,4 +1,4 @@
-import { mount, shallowMount } from '@vue/test-utils';
+import { flushPromises, mount, shallowMount } from '@vue/test-utils';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { describe, expect, it } from 'vitest';
 import MediaDownloadOptions from '../../src/components/media-card/MediaDownloadOptions.vue';
@@ -12,8 +12,32 @@ import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
 import { installTauriMock } from '../utils/tauriMock';
 import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
+import { useLoginStore } from '../../src/stores/login';
 
 describe('download failure presentation', () => {
+  it.each(['en', 'ar', 'fr'] as const)('shows the cookie remedy inside a terminal login card in %s', async (locale) => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'cookies', url: 'https://reddit.com/post', title: 'Post', mediaKind: 'video', total: 1, processed: 1, errored: 1, isCombined: false, audioCodecs: [], formats: [], filesize: 0,
+      items: { item: { id: 'item', isLeader: true, url: 'https://reddit.com/post', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id: 'item', groupId: 'cookies', code: 'browserDpapiFailed', level: 'error', component: null, message: '', raw: '', timestamp: 1 });
+    useMediaStateStore().setGroupState('cookies', MediaState.error);
+    const login = useLoginStore();
+    login.receive({ requestId: 'cookies', id: 'item', groupId: 'cookies', host: 'reddit.com', status: 'exhausted', reason: 'browserLoginFailed', candidates: [] });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }, { path: '/settings/logins', name: 'settings.logins', component: { template: '<div />' } }] });
+    await router.push('/');
+    const row = mount(DownloadRow, { props: { group: groups.findGroupById('cookies')! }, global: { plugins: [router, i18n] } });
+    try {
+      expect(row.text()).toContain(i18n.global.t('errors.runner.browserDpapiFailed.action'));
+      expect(row.text()).not.toContain(i18n.global.t('downloads.login.noBrowser'));
+    } finally {
+      row.unmount();
+      login.forgetGroup('cookies');
+      i18n.global.locale.value = previous;
+    }
+  });
+
   it.each([['en', true], ['ar', true], ['fr', true], ['en', false]] as const)('offers recovery instead of Retry for no-audio failure (%s, video: %s)', async (locale, video) => {
     const previous = i18n.global.locale.value;
     i18n.global.locale.value = locale;
@@ -103,7 +127,10 @@ describe('download failure presentation', () => {
     });
     const router = createRouter({
       history: createMemoryHistory(),
-      routes: [{ path: '/', name: 'home', component: { template: '<div />' } }],
+      routes: [
+        { path: '/', name: 'home', component: { template: '<div />' } },
+        { path: '/group/:groupId', name: 'group.metadata', component: MediaView, props: true },
+      ],
     });
     await router.push('/');
     const global = { plugins: [router, i18n] };
@@ -112,6 +139,10 @@ describe('download failure presentation', () => {
     try {
       expect(row.find('.line-clamp-2').text()).toMatch(hint);
       expect(row.text()).not.toContain('Unexpected server response');
+      await row.get('[data-testid=row-error-details]').trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value).toMatchObject({ name: 'group.metadata', params: { groupId: 'g1' } });
+      expect(row.find('[data-testid=row-error-raw]').exists()).toBe(false);
       const details = view.find('[data-slot=collapsible]');
       expect(details.attributes('data-state')).toBe('closed');
       expect(view.text()).not.toContain('Unexpected server response');

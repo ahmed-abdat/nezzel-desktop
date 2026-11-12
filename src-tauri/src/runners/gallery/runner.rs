@@ -132,15 +132,33 @@ impl GalleryRunner {
     };
     let network = resolve_with_patch(&config.network, overrides.and_then(|o| o.network.as_ref()));
     let context = CookieContext::for_app(app).map_err(|_| GalleryError::Invalid)?;
-    let cookies = CookieAccess::prepare(&auth, browser, source, &context, subscribe_group(group))
-      .await
-      .map_err(|error| match error {
-        "cancelled" => GalleryError::Cancelled,
-        FETCH_TIMEOUT => GalleryError::Refused(FETCH_TIMEOUT),
-        _ => super::super::browser_cookies::read_error_code(error)
-          .map_or(GalleryError::Invalid, GalleryError::Refused),
-      })?;
+    let cookies = CookieAccess::prepare_for_app(
+      app,
+      &auth,
+      browser,
+      source,
+      &context,
+      subscribe_group(group),
+    )
+    .await
+    .map_err(|error| match error {
+      "cancelled" => GalleryError::Cancelled,
+      FETCH_TIMEOUT => GalleryError::Refused(FETCH_TIMEOUT),
+      _ => super::super::browser_cookies::read_error_code(error)
+        .map_or(GalleryError::Invalid, GalleryError::Refused),
+    })?;
     let mut runner = Self::configured(path, &secrets, &network, source)?;
+    // Developer runs must neither inherit the owner's gallery cache nor write outside their run.
+    #[cfg(feature = "link-matrix")]
+    runner.args.extend([
+      "--cache-file".into(),
+      app
+        .state::<crate::paths::PathsManager>()
+        .app_dir()
+        .join("gallery-cache.sqlite3")
+        .to_string_lossy()
+        .into_owned(),
+    ]);
     runner.args.extend(cookies.args.iter().cloned());
     runner._cookies = Some(cookies);
     Ok(runner)

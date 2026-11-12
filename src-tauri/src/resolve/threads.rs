@@ -1,6 +1,6 @@
 //! Port of Android's ThreadsPostIdentity / ThreadsPostParser.
 //! Read only the requested post's TargetQuery; recommendations and replies cannot supply media.
-use super::{html, http, Failure, Resolution, Verdict};
+use super::{html, http, Failure, Reason, Resolution, Verdict};
 use crate::models::parsed::{
   AttachmentKind, MediaAttachment, MediaKind, ParsedSingleVideo, SubtitleInventory,
 };
@@ -130,6 +130,11 @@ pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Verd
   let Some(post) = parse(body, &identity.code) else {
     return Verdict::Unknown;
   };
+  if post.no_media {
+    return Verdict::Verified(Resolution::Unsupported {
+      reason: Reason::NoMedia,
+    });
+  }
   // yt-dlp and the picker will fetch these URLs themselves. Match the generic reader's
   // public-address admission before handing off any stream or preview URL.
   let mut checked = BTreeSet::new();
@@ -145,17 +150,7 @@ pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Verd
       }
     }
   }
-  if !post.carousel
-    && post
-      .attachments
-      .iter()
-      .all(|a| matches!(a.kind, AttachmentKind::Video))
-  {
-    return post.video.map_or(Verdict::Unknown, |url| {
-      Verdict::Verified(Resolution::Passthrough(url))
-    });
-  }
-  match serde_json::to_string(&post.into_media(input, &identity.code)) {
+  match serde_json::to_string(&post.into_media(identity.url.as_str(), &identity.code)) {
     Ok(metadata) => Verdict::Verified(Resolution::Attachments { metadata }),
     Err(_) => Verdict::Unknown,
   }
@@ -164,9 +159,9 @@ pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Verd
 pub(super) struct Post {
   pub title: Option<String>,
   pub author: Option<String>,
-  pub video: Option<String>,
   pub attachments: Vec<MediaAttachment>,
   carousel: bool,
+  no_media: bool,
 }
 
 impl Post {
@@ -196,7 +191,7 @@ impl Post {
       thumbnail: self.attachments.first().and_then(|a| a.thumbnail.clone()),
       attachments: self.attachments,
       url: Some(source.into()),
-      title: self.title,
+      title: self.title.or_else(|| self.author.clone()),
       uploader: self.author,
       extractor: Some("Threads".into()),
       description: None,
@@ -244,12 +239,26 @@ pub(super) fn parse(body: &str, code: &str) -> Option<Post> {
   let mut post = Post {
     title: first_line(media.pointer("/caption/text")),
     author: first_line(media.pointer("/user/username")),
-    video: None,
     attachments: Vec::new(),
     carousel: false,
+    no_media: false,
   };
   let attachment = if media["media_type"] == 19 {
-    media.pointer("/text_post_app_info/linked_inline_media")?
+    let linked = media.pointer("/text_post_app_info/linked_inline_media")?;
+    let inline = Some(linked).filter(|value| !value.is_null()).or_else(|| {
+      // An explicit quote is part of the requested post, unlike replies or recommendations.
+      let quote = media.pointer("/text_post_app_info/share_info/quoted_attachment_post")?;
+      let identity = Identity::parse(quote["permalink"].as_str()?)?;
+      (!identity.share && same_post(quote, &identity.code)).then_some(quote)
+    });
+    match inline {
+      Some(inline) => inline,
+      None if bound_text_only(&media) => {
+        post.no_media = true;
+        return Some(post);
+      }
+      None => return None,
+    }
   } else {
     &media
   };
@@ -264,10 +273,40 @@ pub(super) fn parse(body: &str, code: &str) -> Option<Post> {
       for item in items {
         add_media(&mut post, item);
       }
+      if post.attachments.len() != items.len() {
+        return None;
+      }
     }
     _ => return None,
   }
   (!post.attachments.is_empty()).then_some(post)
+}
+
+// A link-preview image belongs to the external page, not to this post. Require the
+// complete empty-media shape; missing/hidden/unavailable representations remain inconclusive.
+fn bound_text_only(media: &Value) -> bool {
+  let empty = |value: Option<&Value>| {
+    value.is_some_and(|v| v.is_null() || v.as_array().is_some_and(Vec::is_empty))
+  };
+  let info = &media["text_post_app_info"];
+  empty(media.get("carousel_media"))
+    && empty(media.get("video_versions"))
+    && (media.get("image_versions2").is_some_and(Value::is_null)
+      || empty(media.pointer("/image_versions2/candidates")))
+    && info["is_post_unavailable"] != true
+    && [
+      "attachment_tombstone_info",
+      "post_tombstone_info",
+      "snippet_attachment_info",
+      "platform_podcast_info",
+      "platform_podcast_episode_info",
+    ]
+    .iter()
+    .all(|key| info[key].is_null())
+    && ["quoted_attachment_post", "quoted_post", "reposted_post"]
+      .iter()
+      .all(|key| info["share_info"][key].is_null())
+    && media["giphy_media_info"].is_null()
 }
 
 // Android enables STRICT_DUPLICATE_DETECTION: conflicting identity/media keys fail closed.
@@ -412,9 +451,6 @@ fn add_media(post: &mut Post, media: &Value) {
   let Some((_, url, candidate)) = best else {
     return;
   };
-  if video && post.video.is_none() {
-    post.video = Some(url.clone());
-  }
   let mut stable = Url::parse(&url).expect("admitted CDN URL");
   stable.set_query(None);
   let id = media["pk"]

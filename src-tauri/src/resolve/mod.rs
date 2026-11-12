@@ -8,7 +8,10 @@ mod post;
 pub(crate) mod reddit;
 mod snapchat;
 mod telegram;
+pub(crate) use telegram::private_message as private_telegram_message;
 mod threads;
+mod tiktok;
+pub(crate) use tiktok::photo_target as tiktok_photo_target;
 pub(crate) mod vimeo;
 use crate::routing::{ReaderId, StageId};
 use std::time::Duration;
@@ -86,12 +89,16 @@ impl Failure {
 pub enum Reason {
   PhotosOnly,
   NoMedia,
+  Removed,
+  SiteNotSupported,
 }
 impl Reason {
   pub fn code(self) -> &'static str {
     match self {
       Self::PhotosOnly => "photosOnly",
       Self::NoMedia => "noMediaFound",
+      Self::Removed => "notFound404",
+      Self::SiteNotSupported => "urlNotSupported",
     }
   }
 }
@@ -146,6 +153,20 @@ pub(crate) fn resolution_timeout(url: &str) -> Resolution {
 }
 
 async fn read_site<T: http::Transport>(url: &str, transport: &T) -> Verdict {
+  if reqwest::Url::parse(url).ok().is_some_and(|url| {
+    matches!(url.scheme(), "https" | "http")
+      && url.host_str().and_then(crate::sites::site_of) == Some(crate::sites::SiteId::Kwai)
+  }) {
+    return Verdict::Verified(Resolution::Unsupported {
+      reason: Reason::SiteNotSupported,
+    });
+  }
+  if let Some(player) = bilibili_player(url) {
+    return Verdict::Verified(Resolution::Passthrough(player));
+  }
+  if let Some(short) = tiktok::short(url) {
+    return tiktok::read(short, transport).await;
+  }
   if let Some(player) = vimeo::player_url(url) {
     return Verdict::Verified(Resolution::Passthrough(player));
   }
@@ -170,6 +191,36 @@ async fn read_site<T: http::Transport>(url: &str, transport: &T) -> Verdict {
   } else {
     Verdict::NoMatch
   }
+}
+
+fn bilibili_player(raw: &str) -> Option<String> {
+  let url = http::https_url(raw).ok()?;
+  if url.host_str() != Some("player.bilibili.com") || url.path() != "/player.html" {
+    return None;
+  }
+  let values = |key| {
+    url
+      .query_pairs()
+      .filter(|(k, _)| k == key)
+      .map(|(_, v)| v.into_owned())
+      .collect::<Vec<_>>()
+  };
+  let aid = values("aid");
+  let bvid = values("bvid");
+  if aid.len() > 1 || bvid.len() > 1 {
+    return None;
+  }
+  let id = if let Some(bv) = bvid.first().filter(|bv| {
+    bv.len() == 12 && bv.starts_with("BV") && bv.bytes().all(|c| c.is_ascii_alphanumeric())
+  }) {
+    bv.to_owned()
+  } else {
+    let aid = aid.first().filter(|id| {
+      !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit()) && id.bytes().any(|c| c != b'0')
+    })?;
+    format!("av{aid}")
+  };
+  Some(format!("https://www.bilibili.com/video/{id}"))
 }
 
 async fn read_facebook<T: http::Transport>(url: &str, transport: &T) -> Verdict {
@@ -322,6 +373,9 @@ pub struct ResolvedInput {
   pub source_page: Option<String>,
   original_retried: bool,
   vimeo_impersonated: bool,
+  // A single budget; impersonation records only the chosen transport.
+  facebook_retried: bool,
+  facebook_impersonated: bool,
 }
 impl ResolvedInput {
   pub fn new(url: &str) -> Self {
@@ -331,7 +385,26 @@ impl ResolvedInput {
       source_page: None,
       original_retried: false,
       vimeo_impersonated: false,
+      facebook_retried: false,
+      facebook_impersonated: false,
     }
+  }
+  pub(crate) fn can_retry_facebook(&self, used_cookies: bool) -> bool {
+    !used_cookies
+      && !self.facebook_retried
+      && reqwest::Url::parse(&self.original).ok().is_some_and(|url| {
+        url
+          .host_str()
+          .is_some_and(|host| host == "facebook.com" || host.ends_with(".facebook.com"))
+      })
+  }
+  pub(crate) fn retry_facebook(&mut self, used_cookies: bool, supported: bool) -> bool {
+    if !supported || !self.can_retry_facebook(used_cookies) {
+      return false;
+    }
+    self.facebook_retried = true;
+    self.facebook_impersonated = true;
+    true
   }
   pub fn rewrite(&mut self, url: String) {
     self.source_page = vimeo::referer(&url)
@@ -345,7 +418,7 @@ impl ResolvedInput {
     if let Some(page) = &self.source_page {
       args.extend(["--referer", page.as_str()]);
     }
-    if self.vimeo_impersonated {
+    if self.vimeo_impersonated || self.facebook_impersonated {
       args.extend(["--impersonate", "chrome"]);
     }
     args.extend(["--", self.url.as_str()]);
@@ -400,6 +473,48 @@ impl ResolvedInput {
     self.url.clone_from(&self.original);
     self.source_page = None;
     self.original_retried = true;
+    true
+  }
+
+  pub(crate) fn can_retry_facebook_share(&self, stderr: &str) -> bool {
+    if !self.can_retry_facebook(false)
+      || !facebook::Identity::parse(&self.original)
+        .is_some_and(|id| id.url.path().starts_with("/share/"))
+    {
+      return false;
+    }
+    use crate::parsers::ytdlp_error::{DiagnosticMatcher, YtdlpErrorParser};
+    let Ok(matcher) = DiagnosticMatcher::shared() else {
+      return false;
+    };
+    let parser = YtdlpErrorParser::new("share", "share", matcher);
+    stderr
+      .lines()
+      .filter_map(|line| parser.parse_line(line))
+      .any(|e| {
+        matches!(
+          e.code.as_str(),
+          "videoNotFoundOrPrivate"
+            | "mediaUnavailable"
+            | "notFound404"
+            | "facebookVideoUnavailable"
+        ) || (e.code == "unableToExtractInitialData"
+          && e
+            .component
+            .as_deref()
+            .is_some_and(|component| component.eq_ignore_ascii_case("facebook"))
+          && e.message.to_ascii_lowercase().contains("cannot parse data"))
+      })
+  }
+
+  /// Shares and fingerprint retries spend the same single anonymous retry budget.
+  pub(crate) async fn retry_facebook_share(&mut self, stderr: &str) -> bool {
+    if !self.can_retry_facebook_share(stderr) {
+      return false;
+    }
+    self.facebook_retried = true;
+    // Preserve a resolved/selected target: retrying the whole post can save unselected media.
+    tokio::time::sleep(Duration::from_millis(500)).await;
     true
   }
 }

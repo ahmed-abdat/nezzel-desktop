@@ -82,6 +82,30 @@ pub(crate) const CARD_MAX_HEIGHT: f64 = 480.;
 pub(crate) const BAR_WIDTH: f64 = 620.;
 pub(crate) const BAR_HEIGHT: f64 = 360.;
 
+/// Native coordinates work even when the non-focusable webview misses mouse-enter on macOS.
+/// All three getters use physical desktop coordinates, including Retina and negative monitor origins.
+pub(super) fn pointer_over_card(window: &WebviewWindow) -> bool {
+  match (
+    window.cursor_position(),
+    window.inner_position(),
+    window.inner_size(),
+  ) {
+    (Ok(cursor), Ok(origin), Ok(size)) => pointer_in_card(cursor, origin, size),
+    // Wayland may not expose the global cursor. The webview signal still holds the card there.
+    _ => false,
+  }
+}
+
+fn pointer_in_card(
+  cursor: tauri::PhysicalPosition<f64>,
+  origin: tauri::PhysicalPosition<i32>,
+  size: tauri::PhysicalSize<u32>,
+) -> bool {
+  let x = cursor.x - f64::from(origin.x);
+  let y = cursor.y - f64::from(origin.y);
+  x >= 0. && y >= 0. && x < f64::from(size.width) && y < f64::from(size.height)
+}
+
 /// Builds both capture windows, hidden.
 pub(super) fn create(app: &AppHandle) -> tauri::Result<()> {
   for window in CaptureWindow::ALL {
@@ -123,6 +147,11 @@ pub(super) fn offer(
   let feed = !url.is_empty() && policy::is_feed_page(&url);
   let config = app.state::<SharedConfig>().load();
   let value = Offer {
+    read_limit: if !resolving && !feed {
+      super::read::ytdlp_read_limit(&url, &state.youtube_cold_spent)
+    } else {
+      super::read::READ_LIMIT
+    },
     id: state.sequence.fetch_add(1, Ordering::Relaxed) + 1,
     url,
     site,
@@ -199,19 +228,30 @@ pub(super) fn offer(
             if app
               .run_on_main_thread(move || {
                 let state = ui_app.state::<CaptureState>();
+                let native = ui_app.get_webview_window(label);
+                // The pointer can arrive after the last heartbeat, without a webview enter event.
+                // Recheck at the actual hide boundary so polling never leaves a dismissal race.
+                let hovered = native.as_ref().is_some_and(|native| {
+                  native.is_visible().unwrap_or(false) && pointer_over_card(native)
+                });
                 let hide = state
                   .offers
                   .lock()
                   .unwrap()
-                  .holding(window, id)
+                  .slot_mut(window)
+                  .as_mut()
+                  .filter(|slot| slot.offer.id == id)
                   .is_some_and(|slot| {
+                    if hovered {
+                      slot.card_timer.engage(id, true);
+                    }
                     slot
                       .card_timer
                       .due()
                       .is_some_and(|due| due <= Instant::now())
                   });
                 if hide {
-                  if let Some(native) = ui_app.get_webview_window(label) {
+                  if let Some(native) = native {
                     let _ = native.hide();
                   }
                 }
@@ -252,6 +292,7 @@ struct CardHold {
 /// Hold spans are the union of pointer/focus/menu engagement and the explicit keep-open setting.
 #[derive(Debug)]
 pub(super) struct CardTimer {
+  card_limit: Duration,
   offer_id: u64,
   shown: Instant,
   read_after: Option<Duration>,
@@ -263,6 +304,7 @@ pub(super) struct CardTimer {
 impl CardTimer {
   pub(super) fn new(offer: &Offer) -> Self {
     Self {
+      card_limit: offer.card_limit(),
       offer_id: offer.id,
       shown: Instant::now(),
       read_after: (offer.url.is_empty() || offer.feed).then_some(Duration::ZERO),
@@ -329,7 +371,13 @@ impl CardTimer {
   }
 
   fn due(&self) -> Option<Instant> {
-    card_hide_due(self.read_after, &self.spans, self.keep_open).map(|after| self.shown + after)
+    card_hide_due(
+      self.read_after,
+      &self.spans,
+      self.keep_open,
+      self.card_limit,
+    )
+    .map(|after| self.shown + after)
   }
 }
 
@@ -340,6 +388,7 @@ fn card_hide_due(
   read_after: Option<Duration>,
   spans: &[CardHold],
   keep_open: bool,
+  card_limit: Duration,
 ) -> Option<Duration> {
   if keep_open {
     return None;
@@ -347,7 +396,7 @@ fn card_hide_due(
   let read = read_after?;
   let mut due = Duration::from_secs(8)
     .max(read + Duration::from_secs(5))
-    .min(super::read::CARD_LIMIT);
+    .min(card_limit);
   for span in spans {
     let end = span
       .end
@@ -471,6 +520,44 @@ mod tests {
   use super::*;
 
   #[test]
+  fn native_hover_holds_a_stationary_pointer_without_webview_enter_and_releases_with_grace() {
+    let origin = tauri::PhysicalPosition::new(-720, 50);
+    // A 360 × 160 logical card on a 2× display.
+    let size = tauri::PhysicalSize::new(720, 320);
+    for (x, y, inside) in [
+      (-720., 50., true),
+      (-1., 369., true),
+      (0., 50., false),
+      (-720., 370., false),
+      (-721., 50., false),
+      (-720., 49., false),
+      (f64::NAN, 100., false),
+    ] {
+      assert_eq!(
+        pointer_in_card(tauri::PhysicalPosition::new(x, y), origin, size),
+        inside
+      );
+    }
+    let s = Duration::from_secs;
+    let mut timer = CardTimer::new(&Offer {
+      id: 1,
+      ..Offer::default()
+    });
+    timer.read_after = Some(s(1));
+    // Shown underneath the pointer; no movement, focus or JS enter event for over 30 seconds.
+    for second in (0..=60).step_by(3) {
+      let hovered = pointer_in_card(tauri::PhysicalPosition::new(-500., 100.), origin, size);
+      timer.engage_at(1, hovered, s(second));
+      assert!(timer.due().unwrap() > timer.shown + s(second + 3));
+    }
+    timer.engage_at(1, false, s(61));
+    assert_eq!(timer.due(), Some(timer.shown + s(69)));
+    // If enter and the heartbeat are both late, the UI-thread hide recheck still renews the lease.
+    timer.engage_at(1, true, s(69));
+    assert!(timer.due().unwrap() > timer.shown + s(72));
+  }
+
+  #[test]
   fn card_stays_while_it_reads_the_link_or_is_engaged() {
     let s = Duration::from_secs;
     // Read completion, engagement spans relative to showing, keep-open → relative deadline.
@@ -478,7 +565,8 @@ mod tests {
       ("instant", Some(s(0)), vec![], false, Some(s(8))),
       ("quick read", Some(s(2)), vec![], false, Some(s(8))),
       ("slow read", Some(s(6)), vec![], false, Some(s(11))),
-      ("untouched cap", Some(s(23)), vec![], false, Some(s(25))),
+      ("late read", Some(s(23)), vec![], false, Some(s(25))),
+      ("cold read", Some(s(60)), vec![], false, Some(s(65))),
       ("unfinished read", None, vec![], false, None),
       (
         "stale engagement lease",
@@ -546,7 +634,20 @@ mod tests {
           last_ping: Some(start),
         })
         .collect();
-      assert_eq!(card_hide_due(read_after, &spans, keep_open), due, "{name}");
+      let read_limit = if name == "cold read" {
+        s(60)
+      } else {
+        super::super::read::READ_LIMIT
+      };
+      let offer = Offer {
+        read_limit,
+        ..Offer::default()
+      };
+      assert_eq!(
+        card_hide_due(read_after, &spans, keep_open, offer.card_limit()),
+        due,
+        "{name}"
+      );
     }
   }
 

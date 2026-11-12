@@ -555,6 +555,7 @@ mod failure_code_coverage {
       Error::Empty,
       Error::Space,
       Error::NotPublic,
+      Error::Removed,
       Error::RateLimited,
       Error::Proxy,
     ];
@@ -566,6 +567,8 @@ mod failure_code_coverage {
         error.code()
       );
     }
+    // A new local remedy does not widen the server vocabulary.
+    assert_eq!(failure_code(Some("browserDpapiFailed")), "unknown");
     for reason in ["browserAppBound", "browserLoginFailed"] {
       assert!(
         FAILURE_CODES.contains(&reason),

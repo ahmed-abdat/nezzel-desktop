@@ -972,7 +972,17 @@
       "browserCookiesUnreadable": {
         "shortMessage": "Connexion du navigateur illisible",
         "message": "Nezzel n’a pas pu lire la connexion du navigateur",
-        "action": "Choisissez un autre navigateur dans les réglages de connexion"
+        "action": "Choisissez un autre navigateur, ou ajoutez un fichier cookies.txt dans les réglages de connexion"
+      },
+      "browserDpapiFailed": {
+        "shortMessage": "Windows n’a pas pu déverrouiller la connexion du navigateur",
+        "message": "Windows n’a pas pu déchiffrer les cookies du navigateur avec DPAPI. Cela peut aussi se produire avec le chiffrement des navigateurs récents",
+        "action": "Utilisez le même compte Windows que le navigateur, ou connectez-vous avec Firefox, ou ajoutez un fichier cookies.txt dans les réglages de connexion"
+      },
+      "browserAppBound": {
+        "shortMessage": "Le chiffrement de cette connexion n’est pas pris en charge",
+        "message": "Nezzel ne peut pas lire les cookies chiffrés avec App-Bound, utilisés par Chrome 127+ et certains autres navigateurs sous Windows",
+        "action": "Connectez-vous à ce site dans Firefox, ou ajoutez un fichier cookies.txt dans les réglages de connexion"
       },
       "browserKeychainDenied": {
         "shortMessage": "Accès au trousseau refusé",
@@ -982,7 +992,7 @@
       "browserSafariAccessDenied": {
         "shortMessage": "Safari nécessite une autorisation",
         "message": "macOS n’a pas autorisé l’accès à la connexion Safari",
-        "action": "Accordez à Nezzel l’accès complet au disque dans les Réglages Système, puis réessayez"
+        "action": "Ouvrez Réglages Système → Confidentialité et sécurité → Accès complet au disque, activez Nezzel, puis redémarrez Nezzel et réessayez"
       },
       "browserDatabaseLocked": {
         "shortMessage": "Base du navigateur occupée",
@@ -1045,9 +1055,9 @@
         "action": "Si la publication est privée, connectez-vous. Sinon, copiez un nouveau lien et réessayez"
       },
       "notFound404": {
-        "shortMessage": "Il n'y a plus rien à ce lien",
-        "message": "Il n'y a plus rien à ce lien. Vérifiez le lien, ou s'il a été supprimé",
-        "action": "Vérifiez le lien, ou si la publication a été supprimée"
+        "shortMessage": "Aucun contenu trouvé à ce lien",
+        "message": "Aucun contenu trouvé à ce lien. Vérifiez que le lien est correct",
+        "action": "Vérifiez que le lien est correct ou essayez un autre lien"
       },
       "server5xx": {
         "shortMessage": "Le site rencontre un problème",
@@ -1121,8 +1131,8 @@
       },
       "imageSourceUnavailable": {
         "shortMessage": "Impossible d'enregistrer cette publication",
-        "message": "La source n’a pas fourni les médias sélectionnés, ou les données de l’image étaient incomplètes. Réessayez.",
-        "action": "Réessayez"
+        "message": "Le site n’a pas fourni les photos ou médias sélectionnés. Son service photo est peut-être temporairement indisponible, ou les données des médias sont incomplètes.",
+        "action": "Réessayez plus tard, ou ouvrez la publication sur le site"
       },
       "imageSelectionChanged": {
         "shortMessage": "Les éléments de cette publication ont changé",
@@ -1253,11 +1263,6 @@
         "shortMessage": "Une partie du téléchargement a échoué",
         "message": "Un fragment a échoué et sera automatiquement retéléchargé",
         "action": "Rien à faire : Nezzel réessaie"
-      },
-      "facebookVideoUnavailable": {
-        "shortMessage": "Facebook n’a pas fourni cette vidéo",
-        "message": "Facebook n’a pas fourni cette vidéo à Nezzel. Ouvrez le lien dans un navigateur et copiez le lien depuis la barre d’adresse, ou réessayez plus tard.",
-        "action": "Copiez le lien depuis la barre d’adresse du navigateur, ou réessayez plus tard"
       },
       "unknown": {
         "shortMessage": "Téléchargement impossible",
@@ -1551,10 +1556,17 @@
       "stillReading": "Lecture en cours… {s} s",
       "readingStuck": "Ce site met du temps à répondre. Réessayez ou retirez-le",
       "cancelled": "Téléchargement annulé",
+      "alreadyDownloaded": "Déjà téléchargé",
       "resuming": "Reprise…",
       "cancel": "Annuler le téléchargement"
     },
     "login": {
+      "containers": {
+        "personal": "Personnel",
+        "work": "Travail",
+        "banking": "Banque",
+        "shopping": "Achats"
+      },
       "needs": "Cette publication {site} nécessite que vous soyez connecté",
       "needsGeneric": "Cette publication nécessite que vous soyez connecté",
       "useFrom": "Utiliser la connexion de",
@@ -1562,8 +1574,11 @@
       "notNow": "Pas maintenant",
       "useBrowser": "Utiliser {browser}",
       "stillFailing": "Le site a reçu votre connexion de {browser}. Votre compte n’a peut-être pas accès à ce contenu. Ouvrez la publication dans {browser} pour vérifier",
-      "privacy": "Nezzel lit la connexion de ce navigateur pour ce téléchargement seulement. Elle n'est jamais enregistrée ni envoyée ailleurs qu'au site",
-      "keychain": "macOS peut demander une fois l'autorisation de lire la connexion du navigateur",
+      "notice": "Nezzel a utilisé votre session {browser} pour {host}",
+      "noticeOwn": "Nezzel a utilisé sa session enregistrée pour {host}",
+      "privacy": "Les sessions du navigateur sont activées par défaut. Nezzel utilise uniquement les cookies de ce site pour le téléchargement. Les fichiers temporaires protégés sont supprimés après utilisation ; les cookies ne sont jamais envoyés à Nezzel, aux rapports d’erreur ou aux statistiques. Désactivez cette option dans Paramètres → Connexions.",
+      "embeddedRemedy": "Connectez-vous à ce site dans Firefox, ou ajoutez un fichier cookies.txt dans les paramètres de connexion, puis réessayez.",
+      "keychain": "macOS peut demander d’autoriser Nezzel à accéder au trousseau du navigateur",
       "tryAnother": "Essayer un autre navigateur",
       "settings": "Réglages de connexion",
       "refusedBrowser": "{site} a reçu votre connexion de {browser}. Votre compte n’a peut-être pas accès à ce contenu. Ouvrez la publication dans {browser} pour vérifier",
@@ -1575,8 +1590,8 @@
       "profileStatus": "{profile} · {status}",
       "usingProfile": "Avec {profile}",
       "changeProfile": "Changer de profil",
-      "windowsAppBound": "Edge et Chrome sous Windows ne permettent pas aux autres applications d’utiliser leurs connexions. Connectez-vous à ce site dans Firefox, ou ajoutez un fichier de cookies dans les paramètres de connexion",
-      "windowsAppBoundBrowser": "{browser} sous Windows ne permet pas aux autres applications d’utiliser ses connexions. Connectez-vous à ce site dans Firefox, ou ajoutez un fichier de cookies dans les paramètres de connexion",
+      "windowsAppBound": "Nezzel ne peut pas lire les connexions chiffrées avec App-Bound de Chrome 127+ et de certains autres navigateurs sous Windows. Connectez-vous à ce site dans Firefox, ou ajoutez un fichier cookies.txt dans les réglages de connexion",
+      "windowsAppBoundBrowser": "Nezzel ne peut pas lire la connexion chiffrée avec App-Bound de {browser} sous Windows. Connectez-vous à ce site dans Firefox, ou ajoutez un fichier cookies.txt dans les réglages de connexion",
       "expired": "Cette demande de connexion a expiré. Réessayez le lien",
       "again": "Se reconnecter",
       "skipped": "Vous avez passé la connexion, {site} n’a donc pas autorisé ce téléchargement",
@@ -1706,7 +1721,7 @@
       "folderHint": "Les nouveaux téléchargements vont ici. Nezzel crée le dossier si besoin",
       "card": "Carte pour les liens copiés",
       "cardHint": "Affiche une petite carte par-dessus les autres apps quand vous copiez un lien, même si Nezzel est en arrière-plan. Rien ne se télécharge sans votre choix",
-      "cardFocusHint": "Sur ce bureau, les liens copiés sont détectés lorsque la fenêtre de Nezzel est au premier plan.",
+      "cardFocusHint": "Si les liens copiés ne sont pas détectés en arrière-plan, gardez Nezzel au premier plan",
       "cardKeepOpen": "Garder la carte ouverte jusqu’à sa fermeture",
       "cardPosition": "Position de la carte",
       "cardPositions": {
@@ -1720,10 +1735,12 @@
     },
     "logins": {
       "policy": "Connexions du navigateur",
-      "askChoice": "Demander",
+      "askChoice": "Demander une fois",
       "neverChoice": "Jamais",
       "alwaysChoice": "Toujours",
-      "note": "Quand un site exige une connexion, Nezzel utilise un profil de navigateur connecté à ce site. Votre connexion n'est jamais conservée ni envoyée ailleurs qu'à ce site",
+      "note": "Les sessions du navigateur sont utilisées automatiquement par défaut si un site en a besoin. Vous pouvez désactiver cette option ci-dessous.",
+      "autoLogins": "Utiliser automatiquement les sessions du navigateur",
+      "autoLoginsHint": "Utilise uniquement les cookies du site pour le téléchargement. Les fichiers temporaires protégés sont supprimés après utilisation. Les cookies ne sont jamais envoyés à Nezzel, aux rapports d’erreur ou aux statistiques.",
       "browser": "Utiliser les connexions de",
       "browserHint": "Le mode automatique trouve un profil connecté quand un site refuse. Changez de profil depuis un téléchargement, ou choisissez un navigateur pour tous les sites",
       "none": "Ne pas utiliser les connexions du navigateur",

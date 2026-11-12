@@ -1108,11 +1108,6 @@
         "shortMessage": "Fragment opnieuw proberen",
         "message": "Het downloaden van een fragment is mislukt en wordt automatisch opnieuw geprobeerd."
       },
-      "facebookVideoUnavailable": {
-        "shortMessage": "Facebook heeft deze video niet verstrekt",
-        "message": "Facebook heeft deze video niet aan Nezzel verstrekt. Open de link in een browser en kopieer de link uit de adresbalk, of probeer het later opnieuw.",
-        "action": "Kopieer de link uit de adresbalk van de browser, of probeer het later opnieuw"
-      },
       "unknown": {
         "shortMessage": "Onbekende fout",
         "message": "Er is een onbekende fout opgetreden tijdens het verwerken van dit item."

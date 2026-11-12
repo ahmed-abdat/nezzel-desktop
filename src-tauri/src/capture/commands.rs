@@ -6,7 +6,9 @@ use super::outbox::{emit_action, pull, send_to_main, ForMain, Message};
 use super::policy::supported_url;
 use super::state::{claim_action, dismiss_offer, Action, CaptureState, Offer};
 use super::watch::{data_control, read_current};
-use super::window::{close_after_action, fit_height, offer, place_card, CaptureWindow, CARD_WIDTH};
+use super::window::{
+  close_after_action, fit_height, offer, place_card, pointer_over_card, CaptureWindow, CARD_WIDTH,
+};
 use crate::SharedConfig;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -83,7 +85,8 @@ pub async fn capture_platform(app: AppHandle) -> CapturePlatform {
   let session = crate::platform::current_session();
   CapturePlatform {
     session,
-    background_clipboard: clipboard::background_clipboard(session, data_control(&app).await),
+    background_clipboard: clipboard::background_clipboard(session, data_control(&app).await)
+      || super::watch::wl_paste(&app).await.background,
     capture_command: system_shortcut_command(std::env::var("APPIMAGE").ok().as_deref()),
     desktop: crate::platform::current_desktop_blocking().await,
   }
@@ -146,6 +149,7 @@ pub fn capture_fit(
   let visible = window.is_visible().map_err(|_| "capture unavailable")?;
   if let Some(engaged) = engaged {
     let id = id.ok_or("capture unavailable")?;
+    let engaged = visible && (engaged || pointer_over_card(&window));
     let state = app.state::<CaptureState>();
     if let Some(slot) = state
       .offers
@@ -154,7 +158,7 @@ pub fn capture_fit(
       .slot_mut(CaptureWindow::Card)
       .as_mut()
     {
-      slot.card_timer.engage(id, engaged && visible);
+      slot.card_timer.engage(id, engaged);
     }
     state.changed.notify_waiters();
   }

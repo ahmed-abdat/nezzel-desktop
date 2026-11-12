@@ -112,6 +112,7 @@ export function useLinkIntake() {
   return {
     url,
     placeholder,
+    clipboardHasValidUrl,
     canSubmit,
     submit,
     importFile,

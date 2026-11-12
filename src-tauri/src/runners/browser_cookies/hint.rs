@@ -33,12 +33,24 @@ pub(super) struct HintSchema {
   pub access_micros: fn(i64) -> i64,
 }
 
+#[cfg(test)]
 pub(in crate::runners) fn cookie_hint(
   env: &BrowserEnv,
   path: &Path,
   browser: BrowserKind,
   host: &str,
   now: i64,
+) -> CookieHint {
+  cookie_hint_for_container(env, path, browser, host, now, None)
+}
+
+pub(in crate::runners) fn cookie_hint_for_container(
+  env: &BrowserEnv,
+  path: &Path,
+  browser: BrowserKind,
+  host: &str,
+  now: i64,
+  container: Option<u64>,
 ) -> CookieHint {
   let os = env.os;
   let copy_file = env.copy_file;
@@ -63,7 +75,7 @@ pub(in crate::runners) fn cookie_hint(
       &copy,
       OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    Ok(read_hint(&connection, browser, os, host, now)?)
+    Ok(read_hint(&connection, browser, os, host, now, container)?)
   })();
   copied
     .or_else(|_| {
@@ -81,7 +93,14 @@ pub(in crate::runners) fn cookie_hint(
           | OpenFlags::SQLITE_OPEN_NO_MUTEX
           | OpenFlags::SQLITE_OPEN_URI,
       )?;
-      Ok::<_, Box<dyn std::error::Error>>(read_hint(&connection, browser, os, host, now)?)
+      Ok::<_, Box<dyn std::error::Error>>(read_hint(
+        &connection,
+        browser,
+        os,
+        host,
+        now,
+        container,
+      )?)
     })
     // An unreadable jar is not evidence of a signed-in, app-bound session.
     .unwrap_or_default()
@@ -93,6 +112,7 @@ fn read_hint(
   os: Os,
   host: &str,
   now: i64,
+  container: Option<u64>,
 ) -> rusqlite::Result<CookieHint> {
   let domains = cookie_domains(host);
   if domains.is_empty() {
@@ -118,8 +138,14 @@ fn read_hint(
   } else {
     "0"
   };
+  let attributes =
+    if browser.store() == CookieStore::Firefox && columns.contains("originAttributes") {
+      "originAttributes"
+    } else {
+      "''"
+    };
   let v20 = (schema.app_bound)(os, &columns);
-  let sql = format!("SELECT {host_column}, name, {expiry}, {access}, {v20} FROM {table} WHERE {host_column} = ?1 OR {host_column} = '.' || ?1 OR {host_column} LIKE '%.' || ?1");
+  let sql = format!("SELECT {host_column}, name, {expiry}, {access}, {v20}, {attributes} FROM {table} WHERE {host_column} = ?1 OR {host_column} = '.' || ?1 OR {host_column} LIKE '%.' || ?1");
   let mut statement = connection.prepare(&sql)?;
   let mut names = HashSet::new();
   let mut hint = CookieHint::default();
@@ -131,10 +157,17 @@ fn read_hint(
         row.get::<_, i64>(2)?,
         row.get::<_, i64>(3)?,
         row.get::<_, bool>(4)?,
+        row.get::<_, String>(5)?,
       ))
     })?;
     for row in rows {
-      let (cookie_host, name, expires, access, app_bound) = row?;
+      let (cookie_host, name, expires, access, app_bound, attributes) = row?;
+      if browser.store() == CookieStore::Firefox {
+        let context = firefox::cookie_context(&attributes, host);
+        if context.is_none() || container.is_some_and(|id| context != Some(id)) {
+          continue;
+        }
+      }
       if !same_site(&cookie_host, &domain) {
         continue;
       }

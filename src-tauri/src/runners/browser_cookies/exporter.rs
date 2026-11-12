@@ -98,53 +98,11 @@ async fn run_cookie_export(
 
 /// Untrusted exporter text never crosses this boundary; even fallback is a fixed code.
 pub(super) fn classify_error(browser: BrowserKind, stderr: &str) -> &'static str {
-  let lower = stderr.to_ascii_lowercase();
-  if browser == BrowserKind::Safari
-    && [
-      "operation not permitted",
-      "permission denied",
-      "full disk access",
-    ]
-    .iter()
-    .any(|s| lower.contains(s))
-  {
-    "browserSafariAccessDenied"
-  } else if [
-    // yt-dlp 2026.10.26 cookies.py (macOS, Windows DPAPI/app-bound, Linux).
-    "find-generic-password failed",
-    "exception running find-generic-password",
-    "failed to decrypt",
-    "cannot decrypt v10 cookies",
-    "cannot decrypt v11 cookies",
-    "failed to read from keyring",
-    "secretstorage not available",
-    "kwallet-query command not found",
-    "kwallet-query failed",
-    "exception running kwallet-query",
-    "failed to read networkwallet",
-    "exception while obtaining networkwallet",
-  ]
-  .iter()
-  .any(|s| lower.contains(s))
-  {
-    "browserKeychainDenied"
-  } else if [
-    "database is locked",
-    "database is busy",
-    "could not copy chrome cookie database",
-    "being used by another process",
-  ]
-  .iter()
-  .any(|s| lower.contains(s))
-  {
-    "browserDatabaseLocked"
-  } else if lower.contains("cookies database")
-    && ["could not find", "not found", "no such file"]
-      .iter()
-      .any(|s| lower.contains(s))
-  {
-    "browserProfileMissing"
-  } else {
-    COOKIE_READ_ERROR
-  }
+  crate::parsers::ytdlp_error::CookieReadError::classify(
+    stderr,
+    true,
+    browser == BrowserKind::Safari,
+  )
+  .map(crate::parsers::ytdlp_error::CookieReadError::code)
+  .unwrap_or(COOKIE_READ_ERROR)
 }

@@ -8,6 +8,7 @@ on:
 
 jobs:
   publish-tauri:
+    if: github.repository == 'ahmed-abdat/nezzel-desktop'
     permissions:
       contents: write
     env:
@@ -216,6 +217,9 @@ jobs:
           NEZZEL_SENTRY_DSN: ${{ secrets.NEZZEL_SENTRY_DSN }}
           # Daily anonymous usage counts to our own Worker (docs/specs/usage-counts.md); unset means off.
           NEZZEL_USAGE_URL: ${{ secrets.NEZZEL_USAGE_URL }}
+          # Empty public key disables remote requests; embedded pins still build/work.
+          NEZZEL_MANIFEST_URL: https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tool-manifest/manifest.json
+          NEZZEL_MANIFEST_PUBKEY: ${{ vars.NEZZEL_MANIFEST_PUBKEY }}
           # TEMPORARY WORKAROUND:
           # This environment variable is needed to enable the new appimage features.
           TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: "true"
@@ -453,7 +457,7 @@ jobs:
     # Store package: needs the WINDOWS_PFX secrets; turn on with the MSIX_ENABLED repo variable.
     # Runs even when another leg (e.g. an AppImage) failed; the downloads below fail if a
     # Windows MSIX/PDB artifact is missing.
-    if: ${{ !cancelled() && vars.MSIX_ENABLED == 'true' }}
+    if: ${{ github.repository == 'ahmed-abdat/nezzel-desktop' && (!cancelled() && vars.MSIX_ENABLED == 'true') }}
     runs-on: windows-latest
     needs: publish-tauri
     permissions:
@@ -532,7 +536,7 @@ jobs:
     # The one writer of latest.json: pairs every updater bundle with its .sig on the release
     # and fails unless macOS, Windows and Linux (x86_64 + aarch64) are all present.
     needs: publish-tauri
-    if: ${{ !cancelled() }}
+    if: ${{ github.repository == 'ahmed-abdat/nezzel-desktop' && (!cancelled()) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -554,6 +558,7 @@ jobs:
           python3 scripts/updater-json.py --repo "$GITHUB_REPOSITORY" --tag "app-v$version" --notes "$NOTES"
 
   third-party-sources:
+    if: github.repository == 'ahmed-abdat/nezzel-desktop'
     # Hash the actual draft-release assets after every bundle leg and latest.json upload.
     needs: [publish-tauri, updater-json]
     runs-on: ubuntu-latest
@@ -588,7 +593,7 @@ jobs:
     # (scripts/linux-package-smoke.sh). Runs after every upload, so it never holds back
     # other platforms' assets; any FAIL line fails the run.
     needs: publish-tauri
-    if: ${{ !cancelled() }}
+    if: ${{ github.repository == 'ahmed-abdat/nezzel-desktop' && (!cancelled()) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

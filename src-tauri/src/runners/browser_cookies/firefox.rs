@@ -46,6 +46,66 @@ fn seconds(expiry: i64) -> i64 {
   }
 }
 
+/// Only public, unambiguous names that survive yt-dlp's argument grammar.
+/// Built-in containers use l10nID rather than name (yt-dlp accepts the full l10nID).
+pub(in crate::runners) fn containers(profile: &Path) -> Vec<(String, u64)> {
+  let data: serde_json::Value = std::fs::read(profile.join("containers.json"))
+    .ok()
+    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    .unwrap_or_default();
+  let entries: Vec<_> = data["identities"]
+    .as_array()
+    .into_iter()
+    .flatten()
+    .filter(|identity| identity["public"].as_bool() != Some(false))
+    .filter_map(|identity| {
+      let name = identity["name"].as_str().or_else(|| {
+        identity["l10nID"]
+          .as_str()
+          .filter(|name| name.starts_with("userContext") && name.ends_with(".label"))
+      })?;
+      let id = identity["userContextId"].as_u64().filter(|id| *id > 0)?;
+      if name.is_empty() || name.trim() != name || name == "none" {
+        return None;
+      }
+      let spec = format!("firefox::{}", name);
+      (BrowserSource::parse(&spec)?.spec() == spec).then(|| (name.to_owned(), id))
+    })
+    .collect();
+  entries
+    .iter()
+    .filter(|(name, id)| {
+      entries
+        .iter()
+        .filter(|(other_name, other_id)| other_name == name || other_id == id)
+        .count()
+        == 1
+    })
+    .cloned()
+    .collect()
+}
+
+/// A Netscape cookie cannot represent a private or partitioned browser context.
+/// Never promote these rows to an ordinary first-party session.
+pub(super) fn cookie_context(attributes: &str, host: &str) -> Option<u64> {
+  let mut container = 0;
+  for field in attributes.trim_start_matches('^').split('&') {
+    if let Some(id) = field.strip_prefix("userContextId=") {
+      container = id.parse().ok()?;
+    } else if field
+      .strip_prefix("firstPartyDomain=")
+      .is_some_and(|domain| !domain.is_empty() && !super::same_site(domain, host))
+      || field.starts_with("partitionKey=")
+      || field
+        .strip_prefix("privateBrowsingId=")
+        .is_some_and(|id| id != "0")
+    {
+      return None;
+    }
+  }
+  Some(container)
+}
+
 fn firefox_database(
   browser: &BrowserSource,
   host: &str,
@@ -76,23 +136,13 @@ pub(super) fn export_firefox(
 ) -> Result<usize, Box<dyn std::error::Error>> {
   let (database, container) = firefox_database(browser, host)?;
   let container = match container.as_deref() {
-    None => None,
-    Some("none") => Some(0),
-    Some(name) => {
-      let containers: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(database.with_file_name("containers.json"))?)?;
-      Some(
-        containers["identities"]
-          .as_array()
-          .and_then(|identities| {
-            identities
-              .iter()
-              .find(|identity| identity["name"].as_str() == Some(name))
-          })
-          .and_then(|identity| identity["userContextId"].as_u64())
-          .ok_or("unknown container")?,
-      )
-    }
+    // Unscoped legacy selections must not silently merge different accounts.
+    None | Some("none") => 0,
+    Some(name) => containers(database.parent().ok_or("browserProfileMissing")?)
+      .into_iter()
+      .find(|(candidate, _)| candidate == name)
+      .map(|(_, id)| id)
+      .ok_or("browserProfileMissing")?,
   };
   let copy = jar.directory.join("cookies.sqlite");
   std::fs::copy(&database, &copy)?;
@@ -144,15 +194,8 @@ pub(super) fn export_firefox(
     if !allowed_cookie_host(&domain, host) {
       continue;
     }
-    if let Some(container) = container {
-      let actual = attributes
-        .trim_start_matches('^')
-        .split('&')
-        .find_map(|field| field.strip_prefix("userContextId="))
-        .unwrap_or("0");
-      if actual.parse::<u64>().ok() != Some(container) {
-        continue;
-      }
+    if cookie_context(&attributes, host) != Some(container) {
+      continue;
     }
     NetscapeRow {
       domain: &domain,

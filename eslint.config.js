@@ -77,4 +77,9 @@ export default [
     files: ['src/components/ui/*/**/*.vue'],
     rules: { 'vue/multi-word-component-names': 'off' },
   },
+  {
+    // Node ESM scripts (import.meta, top-level await).
+    files: ['**/*.mjs'],
+    languageOptions: { ecmaVersion: 'latest', sourceType: 'module' },
+  },
 ];

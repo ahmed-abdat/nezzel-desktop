@@ -1,15 +1,55 @@
 import { describe, expect, it, vi } from 'vitest';
+import { flushPromises } from '@vue/test-utils';
+import { installTauriMock } from '../utils/tauriMock';
+import { i18n } from '../../src/i18n';
+import { useToastStore } from '../../src/stores/toast';
+import { useMediaDestinationStore } from '../../src/stores/media/destination';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaStateStore, MediaState } from '../../src/stores/media/state';
 import { ProgressStage } from '../../src/tauri/types/progress';
 import { useMediaProgressStore } from '../../src/stores/media/progress';
 import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
-}));
-
 describe('media progress store', () => {
+  it.each(['en', 'ar', 'fr'] as const)('reports an already downloaded final file once in %s, with a working Show action', async (locale) => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const reveal = vi.fn();
+    installTauriMock({ 'plugin:opener|reveal_item_in_dir': reveal });
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'existing', url: 'https://example.com/video', title: 'Video', total: 1, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'item', url: 'https://example.com/video', audioCodecs: [], formats: [], filesize: 0 } } });
+    const destinations = useMediaDestinationStore();
+    const progress = useMediaProgressStore();
+    const toast = useToastStore();
+    useMediaStateStore().setGroupState('existing', MediaState.downloading);
+    destinations.addDestination('existing', { path: '/Downloads/فيديو.mp4', confidence: 65, alreadyDownloaded: true });
+    try {
+      progress.processMediaCompletePayload({ id: 'item', groupId: 'existing' });
+      progress.processMediaCompletePayload({ id: 'item', groupId: 'existing' });
+      expect(toast.toasts).toHaveLength(1);
+      expect(toast.toasts[0]).toMatchObject({ message: i18n.global.t('downloads.row.alreadyDownloaded'), action: { label: i18n.global.t('downloads.row.show') } });
+      expect(i18n.global.te('downloads.row.alreadyDownloaded', locale)).toBe(true);
+      toast.toasts[0].action!.run();
+      await flushPromises();
+      expect(reveal).toHaveBeenCalledWith('plugin:opener|reveal_item_in_dir', { paths: ['/Downloads/فيديو.mp4'] });
+      reveal.mockRejectedValueOnce('missing');
+      toast.toasts[0].action!.run();
+      await flushPromises();
+      expect(toast.toasts.at(-1)?.message).toBe(i18n.global.t('feedback.fileMissing'));
+    } finally { i18n.global.locale.value = previous; }
+  });
+
+  it('does not call a fresh merged file already downloaded when only an intermediate stream was reused', () => {
+    useMediaGroupStore().createGroup({ id: 'merged', url: 'https://example.com/video', total: 1, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'item', url: 'https://example.com/video', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaStateStore().setGroupState('merged', MediaState.downloading);
+    const destinations = useMediaDestinationStore();
+    destinations.addDestination('merged', { path: '/Downloads/video.f137.mp4', confidence: 65, alreadyDownloaded: true });
+    destinations.addDestination('merged', { path: '/Downloads/video.mp4', confidence: 80 });
+    useMediaProgressStore().processMediaCompletePayload({ id: 'item', groupId: 'merged' });
+    expect(useToastStore().toasts).toHaveLength(0);
+  });
   it('tracks ready and downloading items separately', () => {
     const groupStore = useMediaGroupStore();
     const stateStore = useMediaStateStore();

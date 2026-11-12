@@ -5,7 +5,6 @@ Usage: sh scripts/source-bundle.sh <version> <outdir> [--dry-run]
        sh scripts/source-bundle.sh --checksums-only <downloaded-release-assets>
 """
 import argparse
-from datetime import datetime, timezone
 import gzip
 import hashlib
 import http.client
@@ -25,6 +24,20 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 FFMPEG_SIGNING_FINGERPRINT = 'FCF986EA15E6E293A5644F10B4322F04D67658D8'
 RIEDL_REPO = 'https://git.martin-riedl.de/ffmpeg/build-script'
+# Verified against both dated macOS build directories and the dated Windows/Linux recipe.
+# Riedl fetched x264 master; this was its tip at both build timestamps (see archive README).
+X264_REVISION = '0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee'
+X264_SOURCE = dict(component='x264', version=X264_REVISION,
+                   url=f'https://code.videolan.org/videolan/x264/-/archive/{X264_REVISION}/x264-{X264_REVISION}.tar.gz',
+                   path=f'sources/x264-{X264_REVISION}.tar.gz',
+                   sha256='d0967a1348c85dfde363bb52610403be898171493100561efa0dd05d5fd1ae50')
+RIEDL_BUILDS = {'1789931006_9.0.2', '1789931890_9.0.2'}
+RIEDL_RECIPE = 'f63b8aab8f5ce1a067da86ba69e34a36a7e217e5'
+RIEDL_RECIPE_SHA256 = '025ae571e47d09bc7fe74fceae7f7b0b3b73bf304849133e24d5c4581e592473'
+FFMPEG_BUILDS_TAG = 'autobuild-2026-11-01-19-06'
+LIBRARY_CHECKSUMS = {
+    ('libklvanc', '1.6.0'): '5076ca48455a4ef4ead2cd880ba189b21937a9ad8fd458adfc133d7bb1c948c3',
+}
 # URL conventions only; all versions come from the pinned provider's versions.txt.
 # Git-generated archives have no separate published upstream checksum.
 LIBRARY_URLS = {
@@ -36,7 +49,7 @@ LIBRARY_URLS = {
     'freetype': 'https://gitlab.freedesktop.org/freetype/freetype/-/archive/VER-{dashed}/freetype-VER-{dashed}.tar.gz',
     'fribidi': 'https://github.com/fribidi/fribidi/archive/refs/tags/v{version}.tar.gz',
     'harfbuzz': 'https://github.com/harfbuzz/harfbuzz/archive/refs/tags/{version}.tar.gz',
-    'libklvanc': 'https://github.com/stoth68000/libklvanc/archive/refs/tags/v{version}.tar.gz',
+    'libklvanc': 'https://github.com/stoth68000/libklvanc/archive/refs/tags/vid.obe.{version}.tar.gz',
     'lame': 'https://downloads.sourceforge.net/project/lame/lame/{version}/lame-{version}.tar.gz',
     'openh264': 'https://github.com/cisco/openh264/archive/refs/tags/v{version}.tar.gz',
     'openJPEG': 'https://github.com/uclouvain/openjpeg/archive/refs/tags/v{version}.tar.gz',
@@ -80,22 +93,27 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def library_sources(text):
+def library_sources(text, x264_revision=None):
     sources, missing = [], []
     for line in text.splitlines():
         match = re.fullmatch(r'([A-Za-z][A-Za-z0-9_-]*)\s+([0-9][A-Za-z0-9.+_-]*)\s*', line)
         if not match:
             continue
         name, version = match.groups()
-        if not re.fullmatch(r'[0-9]+(?:\.[0-9]+)+(?:[-_][0-9]+)?', version):
+        if (name, version, x264_revision) == ('x264', '0.165.x', X264_REVISION):
+            sources.append(dict(X264_SOURCE))
+        elif not re.fullmatch(r'[0-9]+(?:\.[0-9]+)+(?:[-_][0-9]+)?', version):
             missing.append(f'{name} {version}: no exact source revision')
         elif name not in LIBRARY_URLS:
             missing.append(f'{name} {version}: no source URL mapping')
         else:
             url = LIBRARY_URLS[name].format(version=version, dashed=version.replace('.', '-'))
             extension = '.tar.bz2' if url.endswith('.tar.bz2') else '.tar.gz'
-            sources.append(dict(component=name, version=version, url=url,
-                                path=f'sources/riedl-libraries/{name}-{version}{extension}'))
+            source = dict(component=name, version=version, url=url,
+                          path=f'sources/riedl-libraries/{name}-{version}{extension}')
+            if (name, version) in LIBRARY_CHECKSUMS:
+                source['sha256'] = LIBRARY_CHECKSUMS[name, version]
+            sources.append(source)
     return sources, missing
 
 
@@ -143,12 +161,14 @@ def plan(version, root=ROOT):
             timestamp = re.fullmatch(r'([0-9]+)_' + re.escape(version_ff), base.rsplit('/', 1)[1])
             if not timestamp:
                 raise ValueError('Riedl build directory must pin its timestamp/version')
-            until = datetime.fromtimestamp(int(timestamp[1]), timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-            add('riedl-recipe-history', version_ff,
-                'https://git.martin-riedl.de/api/v1/repos/ffmpeg/build-script/commits?sha=main&limit=1&until=' + until,
-                f'recipes/riedl/{platform}-history.json', before=until)
+            if base.rsplit('/', 1)[1] not in RIEDL_BUILDS:
+                raise ValueError('Unverified Riedl source pins: ' + base)
+            add('riedl-recipe', RIEDL_RECIPE, f'{RIEDL_REPO}/archive/{RIEDL_RECIPE}.tar.gz',
+                f'recipes/riedl/build-script-{RIEDL_RECIPE}.tar.gz', sha256=RIEDL_RECIPE_SHA256)
             # The immutable binary build directory supplies its configure flags/library versions.
-            add('riedl-build-info', version_ff, base + '/versions.txt', f'recipes/riedl/{platform}-versions.txt')
+            add('riedl-build-info', version_ff, base + '/versions.txt', f'recipes/riedl/{platform}-versions.txt',
+                x264_revision=X264_REVISION)
+            add(**X264_SOURCE)
         else:
             match = re.fullmatch(r'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/(autobuild-[0-9-]+)/ffmpeg-.*-gpl\.(?:zip|tar\.xz)', url)
             revision = re.fullmatch(r'N-[0-9]+-g([0-9a-f]{10,40})', version_ff)
@@ -157,6 +177,9 @@ def plan(version, root=ROOT):
             if probe['url'] != url:
                 raise ValueError('ffprobe must come from the same provider archive: ' + platform)
             tag, commit = match[1], revision[1]
+            if tag != FFMPEG_BUILDS_TAG:
+                raise ValueError('Unverified FFmpeg-Builds x264 pin: ' + tag)
+            add(**X264_SOURCE)
             add('ffmpeg', version_ff, f'https://github.com/FFmpeg/FFmpeg/archive/{commit}.tar.gz',
                 f'sources/ffmpeg-{commit}.tar.gz')
             add('ffmpeg-builds-recipe', tag,
@@ -166,11 +189,10 @@ def plan(version, root=ROOT):
     return dict(archive=f'Nezzel-{version}-SOURCES.tar.gz', tag='app-v' + version,
                 prefix=f'Nezzel-{version}-SOURCES', downloads=rows, binaries=binaries,
                 derived_downloads={
-                    'riedl_recipe': RIEDL_REPO + '/archive/{historical-commit-sha}.tar.gz',
+                    'x264_revision': X264_REVISION,
                     'riedl_libraries': LIBRARY_URLS,
                     'versions_from': 'recipes/riedl/*-versions.txt (fetched only in live mode)',
-                    'layout': ['recipes/riedl/build-script-{sha}.tar.gz',
-                               'sources/riedl-libraries/{library}-{version}.tar.{gz,bz2}'],
+                    'layout': ['sources/riedl-libraries/{library}-{version}.tar.{gz,bz2}'],
                 },
                 layout=sorted(['README.md', 'SHA256SUMS', 'provenance.json', *LOCAL_FILES.values(),
                                *(row['path'] for row in rows)]))
@@ -227,33 +249,23 @@ def verify_signatures(bundle, stage, work):
 
 
 def provider_sources(bundle, stage):
-    """Resolve immutable historical recipes and versioned linked-library sources."""
+    """Resolve versioned linked-library sources from the pinned provider metadata."""
     additions, missing = {}, []
     for row in list(bundle['downloads']):
-        if row['component'] == 'riedl-recipe-history':
-            history = json.loads((stage / row['path']).read_text())
-            commit = history[0]['sha'] if history else ''
-            if not re.fullmatch('[0-9a-f]{40}', commit):
-                raise ValueError('No immutable historical Riedl recipe found')
-            date = history[0]['commit']['committer']['date']
-            if datetime.fromisoformat(date.replace('Z', '+00:00')) > datetime.fromisoformat(row['before'].replace('Z', '+00:00')):
-                raise ValueError('Riedl recipe API returned a commit newer than the pinned build')
-            path = f'recipes/riedl/build-script-{commit}.tar.gz'
-            additions[path] = dict(component='riedl-recipe', version=commit,
-                                   url=f'{RIEDL_REPO}/archive/{commit}.tar.gz', path=path)
-        elif row['component'] == 'riedl-build-info':
-            sources, unresolved = library_sources((stage / row['path']).read_text())
+        if row['component'] == 'riedl-build-info':
+            sources, unresolved = library_sources((stage / row['path']).read_text(), row.get('x264_revision'))
             if not sources:
                 raise ValueError('No linked library versions found in ' + row['url'])
             missing.extend(f"{row['path']}: {item}" for item in unresolved)
             for source in sources:
-                additions[source['path']] = source
+                if not any(existing['path'] == source['path'] for existing in bundle['downloads']):
+                    additions[source['path']] = source
     for row in sorted(additions.values(), key=lambda item: item['path']):
         destination = stage / row['path']
         try:
             download(row, destination)
         except (OSError, ValueError) as error:
-            if row['component'] == 'riedl-recipe':
+            if row.get('sha256'):
                 raise
             destination.unlink(missing_ok=True)
             missing.append(f"{row['component']} {row['version']}: {row['url']} ({error})")
@@ -300,17 +312,29 @@ def readme(bundle, repo):
               'versions.txt (configure flags and dependency versions) are included.',
               'Linked-library archives are resolved from those per-build versions, without using latest.',
               'Riedl has no recipe tags or binary-to-recipe commit mapping. The recipe is the last',
-              'main-branch commit at/before the binary build timestamp, archived by immutable SHA.',
+              f'main-branch commit at/before both binary build timestamps: {RIEDL_RECIPE}.',
+              'Its archive SHA-256 is pinned locally; no mutable recipe/history lookup is used.',
               'This is a historical snapshot, not a provider-certified exact recipe commit.',
               'Windows/Linux: yt-dlp/FFmpeg-Builds GPL builds. FFmpeg source is taken at the',
               'commit embedded in the binary version; recipes/ contains the provider dated tag',
               '(scripts, patches and dependency recipes). No latest-release lookup is used.',
+              f'x264 source: {X264_REVISION} (shared by these pinned providers).',
+              'Windows/Linux evidence: scripts.d/50-x264.sh in the dated provider recipe pins that SHA.',
+              'macOS evidence: script/build-x264.sh in the pinned Riedl recipe downloads master.',
+              'The upstream x264 master history at both build timestamps ends at that SHA',
+              '(2025-09-10); no later commits precede either 2026-09-20 macOS build.',
+              'History: https://code.videolan.org/api/v4/projects/videolan%2Fx264/repository/commits'
+              '?ref_name=master&until=2026-09-20T19:18:10Z&per_page=1',
+              'This macOS revision is inferred from upstream history, not certified by Riedl;',
+              'both binary x264 version strings omit a revision (core 0000).',
+              'libklvanc 1.6.0 uses upstream tag vid.obe.1.6.0, as in the Riedl recipe.',
               'gallery-dl: official assets or native Python builds per its manifest; native build',
               'recipe and hash-locked Python requirements are in recipes/nezzel/.',
               'aria2: official Windows x64 binary or native AppleTLS/static OpenSSL builds;',
               'recipes/nezzel/fetch-aria2.py includes the Linux OpenSSL patch and configure flags.',
               'Windows ARM64 has no aria2 sidecar (disabled stub), per its manifest.', '',
               'aria2/gallery-dl source SHA-256 values are checked against the build manifests.',
+              'x264, libklvanc 1.6.0 and the Riedl recipe are checked against local SHA-256 pins.',
               f'FFmpeg release signatures are verified with primary key {FFMPEG_SIGNING_FINGERPRINT}.',
               'Git provider snapshots/build metadata have no upstream checksum; their downloaded',
               'SHA-256 values are recorded in provenance.json and the inner SHA256SUMS.',

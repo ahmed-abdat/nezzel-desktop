@@ -144,6 +144,8 @@ pub fn run() {
       handle.manage(DownloadRecords::default());
       handle.manage(library::Library::default());
 
+      runners::ytdlp_download::sweep_download_partials(handle);
+
       // setup dispatchers
       let cfg_snapshot = handle.state::<SharedConfig>().load();
       let max_concurrency = cfg_snapshot.performance.max_concurrency;
@@ -207,67 +209,82 @@ pub fn run() {
 
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![
-      app_ready,
-      commands::shortcuts_pause,
-      capture::capture_ready,
-      capture::capture_read_clipboard,
-      capture::capture_platform,
-      capture::capture_snapshot,
-      capture::capture_edit,
-      capture::capture_retry,
-      capture::capture_action,
-      capture::capture_fit,
-      capture::capture_pull,
-      capture::capture_write_clipboard,
-      commands::shortcuts::capture_shortcut_status,
-      tray::capture_tray_progress,
-      capture::capture_try_link,
-      background::close_note_ready,
-      background::close_note_done,
-      background::window_motion_pref,
-      media_size,
-      media_info,
-      media_playlist_expand,
-      media_download,
-      media_trash_file,
-      library::library_list,
-      library::library_remove,
-      crate::runners::login::registry::media_login_accept,
-      crate::runners::login::registry::media_login_choices,
-      crate::runners::login::registry::media_login_dismiss,
-      crate::runners::transport::engine_availability,
-      group_cancel,
-      logging_subscribe,
-      logging_unsubscribe,
-      config_get,
-      config_reset,
-      config_set,
-      preferences_get,
-      preferences_reset,
-      preferences_set,
-      binaries_check,
-      binaries_update_status,
-      binaries_update_now,
-      binaries_ensure,
-      updater_check,
-      updater_download,
-      updater_install,
-      stronghold_init,
-      stronghold_status,
-      stronghold_keys,
-      stronghold_get,
-      stronghold_set,
-      get_platform,
-      notify,
-      diagnostics::diagnostics_report,
-      diagnostics::diagnostics_send,
-      diagnostics::diagnostics_download_failed,
-      diagnostics::diagnostics_crash_check,
-      diagnostics::diagnostics_send_crash,
-      diagnostics::diagnostics_log,
-      usage::usage_count,
-    ])
+    .invoke_handler({
+      let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+        app_ready,
+        commands::shortcuts_pause,
+        capture::capture_ready,
+        capture::capture_read_clipboard,
+        capture::capture_platform,
+        capture::capture_snapshot,
+        capture::capture_edit,
+        capture::capture_retry,
+        capture::capture_action,
+        capture::capture_fit,
+        capture::capture_pull,
+        capture::capture_write_clipboard,
+        commands::shortcuts::capture_shortcut_status,
+        tray::capture_tray_progress,
+        capture::capture_try_link,
+        background::close_note_ready,
+        background::close_note_done,
+        background::window_motion_pref,
+        media_size,
+        media_info,
+        media_playlist_expand,
+        media_download,
+        media_trash_file,
+        library::library_list,
+        library::library_record_failure,
+        library::library_remove,
+        crate::runners::login::registry::media_login_accept,
+        crate::runners::login::registry::media_login_choices,
+        crate::runners::login::registry::media_login_dismiss,
+        crate::runners::login::notice::media_login_notice,
+        crate::runners::transport::engine_availability,
+        group_cancel,
+        logging_subscribe,
+        logging_unsubscribe,
+        config_get,
+        config_reset,
+        config_set,
+        preferences_get,
+        preferences_reset,
+        preferences_set,
+        binaries_check,
+        binaries_update_status,
+        binaries_update_now,
+        binaries_ensure,
+        updater_check,
+        updater_download,
+        updater_install,
+        stronghold_init,
+        stronghold_status,
+        stronghold_keys,
+        stronghold_get,
+        stronghold_set,
+        get_platform,
+        notify,
+        diagnostics::diagnostics_report,
+        diagnostics::diagnostics_send,
+        diagnostics::diagnostics_download_failed,
+        diagnostics::diagnostics_crash_check,
+        diagnostics::diagnostics_send_crash,
+        diagnostics::diagnostics_log,
+        usage::usage_count,
+      ];
+      move |invoke: tauri::ipc::Invoke| {
+        if invoke
+          .message
+          .webview_ref()
+          .label()
+          .starts_with("site-login-")
+        {
+          return false;
+        }
+        handler(invoke)
+      }
+    })
     .build(tauri::generate_context!())
     .expect("error while running tauri application");
 

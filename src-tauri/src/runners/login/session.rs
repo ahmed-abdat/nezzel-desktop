@@ -75,15 +75,17 @@ impl LoginSession {
   ) -> Self {
     let config = app.state::<SharedConfig>();
     let mut cfg = config.load();
-    if cfg
-      .auth
-      .site_browsers
-      .keys()
-      .any(|host| site_key(host).is_some_and(|key| key != *host))
+    if cfg.auth.browser_login_consent.is_none() && super::global_consent(&cfg.auth).is_some()
+      || cfg
+        .auth
+        .site_browsers
+        .keys()
+        .any(|host| site_key(host).is_some_and(|key| key != *host))
     {
       let _consent = CONSENT_WRITES.lock().unwrap();
       let _ = config.modify(app, |cfg| {
-        migrate_site_browsers(&mut cfg.auth.site_browsers)
+        migrate_site_browsers(&mut cfg.auth.site_browsers);
+        super::consent::migrate_global_consent(&mut cfg.auth);
       });
       cfg = config.load();
     }
@@ -94,6 +96,7 @@ impl LoginSession {
   }
   pub(super) fn from_auth(mut auth: AuthSettings, url: &str, accepted: Option<String>) -> Self {
     migrate_site_browsers(&mut auth.site_browsers);
+    super::consent::migrate_global_consent(&mut auth);
     let host = reqwest::Url::parse(url)
       .ok()
       .and_then(|u| {
@@ -104,19 +107,7 @@ impl LoginSession {
     let anonymous = accepted.as_deref() == Some(ANONYMOUS_BROWSER);
     let just_accepted = accepted.is_some() && !anonymous;
     let starting_browser = auth.site_browsers.get(&host).cloned();
-    // A remembered host is already consented, independently of the global opt-in.
-    // All fetch/download engines share this boundary, including gallery fallbacks.
-    let accepted = accepted.or_else(|| {
-      (browsers::automatic(&auth) && may_reuse_remembered(&auth, &host))
-        .then(|| {
-          auth
-            .site_browsers
-            .get(&host)
-            .filter(|s| !s.is_empty())
-            .cloned()
-        })
-        .flatten()
-    });
+    // Remembered values rank sources after a needs-login failure; they never pre-read cookies.
     Self {
       fetch_managed: false,
       fetch_browser: None,
@@ -172,6 +163,18 @@ impl LoginSession {
     entry: &FetchEntry,
     reason: &str,
   ) -> RetryAction {
+    if browsers::automatic(&self.auth) && reason != "drmProtected" {
+      let mut request = entry.clone();
+      request.prior_attempts = self.fetch_attempts.clone();
+      request.prior_resolved_url = self.fetch_resolved_url.clone();
+      return self.failed(
+        app,
+        LoginRequest::Fetch(request),
+        Some(reason),
+        false,
+        !is_group_running(&entry.group_id),
+      );
+    }
     if self.fetch_gate_used {
       return RetryAction::Stop;
     }
@@ -285,6 +288,9 @@ impl LoginSession {
   }
 
   pub fn uses_cookies(&self) -> bool {
+    if self.browser.as_deref() == Some(super::NEZZEL_SESSION) {
+      return true;
+    }
     !matches!(
       browsers::CookieSource::for_site(&self.auth, self.browser.as_deref(), &self.host),
       Ok(browsers::CookieSource::Anonymous)
@@ -430,6 +436,19 @@ impl LoginSession {
     aria_denied: bool,
     cancelled: bool,
   ) -> RetryAction {
+    if browsers::automatic(&self.auth)
+      && reason.is_some()
+      && !cancelled
+      && !aria_denied
+      && !self.network_down
+    {
+      let _consent = CONSENT_WRITES.lock().unwrap();
+      let auth = app.state::<SharedConfig>().load().auth.clone();
+      if super::global_consent(&auth) != Some(true) {
+        return RetryAction::Stop;
+      }
+      return super::automatic::schedule(app, request);
+    }
     let host = self.host.clone();
     let (action, candidates) = self.decide(reason, aria_denied, cancelled, |remembered| {
       discovered_candidates(&host, remembered)
@@ -481,6 +500,22 @@ impl LoginSession {
     find: impl FnOnce(Option<&str>) -> Vec<LoginCandidate>,
   ) -> (RetryAction, Vec<LoginCandidate>) {
     let automatic = browsers::automatic(&self.auth);
+    if automatic
+      && !self.just_accepted
+      && reason.is_some()
+      && !cancelled
+      && !aria_denied
+      && !self.network_down
+    {
+      return (
+        match super::global_consent(&self.auth) {
+          Some(true) => RetryAction::Browser,
+          Some(false) => RetryAction::Stop,
+          None => RetryAction::Browser,
+        },
+        vec![],
+      );
+    }
     let timed_out = self
       .best_failure
       .as_ref()
@@ -561,7 +596,7 @@ impl LoginSession {
       self.state.browser_attempted = true;
       return (RetryAction::Browser, candidates);
     }
-    (RetryAction::AskLogin, candidates)
+    (RetryAction::Stop, candidates)
   }
   pub(super) fn success_patch(&self) -> Option<serde_json::Value> {
     self
@@ -619,6 +654,8 @@ fn diagnostic_priority(code: &str) -> u8 {
     "urlNotSupported" | "urlUnsupported" | "unknownUrlType" | "photosOnly" => 1,
     "accountAccessDenied"
     | "browserCookiesUnreadable"
+    | "browserDpapiFailed"
+    | "browserAppBound"
     | "browserKeychainDenied"
     | "browserSafariAccessDenied"
     | "browserDatabaseLocked"

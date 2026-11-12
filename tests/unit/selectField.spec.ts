@@ -74,4 +74,18 @@ describe('SelectField', () => {
     expect(mkv.getAttribute('aria-disabled')).toBe('true');
     wrapper.unmount();
   });
+
+  it('updates the selected value when translated labels change without remounting', async () => {
+    const translated = ref([{ value: 'best', label: 'Best quality' }]);
+    const host = mount(defineComponent(() => () => h(SelectField, { id: 'translated', options: translated.value, modelValue: 'best' })));
+    try {
+      await flushPromises();
+      expect(host.find('#translated').text()).toContain('Best quality');
+      for (const label of ['أفضل جودة', 'Meilleure qualité']) {
+        translated.value = [{ value: 'best', label }];
+        await flushPromises();
+        expect(host.find('#translated').text()).toContain(label);
+      }
+    } finally { host.unmount(); }
+  });
 });
