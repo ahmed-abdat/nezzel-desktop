@@ -643,7 +643,11 @@ pub async fn run(
     entry.login_browser.clone(),
     entry.login_was_accepted,
   );
-  session.begin_fetch(phase);
+  session.set_fetch_history(
+    entry.prior_attempts.clone(),
+    entry.prior_resolved_url.clone(),
+  );
+  let phase = session.begin_fetch(phase);
   let mut report = coordinate_row(
     &entry.url,
     ytdlp_budget,
@@ -2123,6 +2127,10 @@ mod tests {
     ] {
       let (_tx, cancel) = watch::channel(true);
       let mut session = crate::runners::login::test_consented_session();
+      session.set_fetch_history(
+        failed(StageId::Ytdlp, "signInRequired", false).attempts,
+        None,
+      );
       session.begin_fetch(Phase::Login);
       let mut cookie_stages = 0;
       let mut anonymous_stages = 0;
@@ -2200,6 +2208,18 @@ mod tests {
     );
     assert_eq!(&report.attempts[..2], &prior);
     assert_eq!(final_code(&report.attempts), Some("noMediaFound"));
+  }
+
+  #[test]
+  fn sign_in_walls_on_sites_outside_the_known_list_still_name_a_login_cause() {
+    // A fixed browser or cookie file covers any site; automatic mode stops in LoginSession::failed.
+    let result = failed(StageId::Ytdlp, "signInRequired", false);
+    for url in [
+      "https://www.patreon.com/posts/1",
+      "https://www.twitch.tv/videos/1",
+    ] {
+      assert!(login_cause(&result.attempts, url).is_some(), "{url}");
+    }
   }
 
   #[test]

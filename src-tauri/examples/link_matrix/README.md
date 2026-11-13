@@ -22,9 +22,10 @@ the local macOS app paths and compile-time resource directory. Linux still needs
 an X display and D-Bus session for the windowless Tauri/Wry host.
 
 `--login firefox` uses the browser's default profile; `chrome:Default` is another
-example. This explicitly consents once for every selected row. Fetches, playlist
-children and downloads pass that choice through the app's normal `LoginSession`
-path. The login run is **local-only** and refuses to start under `CI=1`; never
+example. This explicitly consents once for every selected row. Fresh fetches start
+anonymously; automatic login resumes run through the app's normal `LoginSession`
+path. Downloads retain the fetch's item ID and selected session (including anonymous).
+The login run is **local-only** and refuses to start under `CI=1`; never
 put a browser profile or cookie material in a CI job.
 
 Alternatively, supply a local Netscape cookies.txt export:
@@ -79,12 +80,16 @@ Use public fixtures for repository research matrices. Keep private/account-speci
 There is no GUI, dispatcher queue, clipboard watcher, tray, Sentry client, vault,
 updater, or persisted owner configuration. Default snapshots use isolated stores.
 Anonymous runs set browser cookies to `none` to prevent profile discovery. Gallery cache and file-engine state are isolated inside each run folder; a read-only personal cache cannot turn valid public metadata into a false extraction failure.
-Login runs set automatic mode and supply the explicitly accepted browser on each
-fetch/download entry. Cookie-file runs set only the manual cookie-file setting;
+Login runs set automatic mode and supply the explicitly accepted browser on fresh
+fetch entries. Cookie-file runs set only the manual cookie-file setting;
 browser discovery stays disabled. No saved owner credentials or vault are loaded. Harness
 settings remain in memory after login success; settings edits never save browser
-choices or invoke OS settings callbacks. Dummy scheduler channels exist only for
-the production login cleanup API. Direct worker calls retain real production routing, but do not exercise GUI events, queue fairness, or frontend
+choices or invoke OS settings callbacks. Scheduler channels route automatic fetch/download
+resumes back to the owning row, preserving retry history and resolved input. At most
+two resumes run per input row (shared by fetches, playlist children and downloads),
+within the original row deadline. New consent prompts remain LOGIN; resume-budget
+and deadline exhaustion are FAIL. Direct worker calls retain real production routing,
+but do not exercise GUI events, queue fairness, or frontend
 playlist-selection behavior.
 
 The frontend's request mapping is represented in Rust (reference:

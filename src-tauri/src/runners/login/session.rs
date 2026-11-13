@@ -13,7 +13,9 @@ use crate::extract::{outcome::Attempt, policy::Phase};
 use crate::models::download::DownloadOverrides;
 use crate::models::error::{DiagnosticEvent, DiagnosticLevel};
 use crate::parsers::ytdlp_error::CookieFetchFailure;
-use crate::runners::browser_cookies::{known_login_host, migrate_site_browsers, site_key};
+use crate::runners::browser_cookies::{
+  known_login_host, migrate_site_browsers, migration_key, site_key,
+};
 use crate::runners::browser_logins::describe;
 use crate::runners::browsers::{self, BrowserSetting};
 use crate::runners::override_resolver::resolve_with_patch;
@@ -48,6 +50,7 @@ pub struct LoginSession {
   pub(super) fetch_managed: bool,
   pub(super) fetch_browser: Option<String>,
   pub(super) fetch_gate_used: bool,
+  pub(super) fetch_resume_used: bool,
   pub(super) fetch_attempts: Vec<Attempt>,
   pub(super) fetch_resolved_url: Option<String>,
   pub state: RetryState,
@@ -80,7 +83,7 @@ impl LoginSession {
         .auth
         .site_browsers
         .keys()
-        .any(|host| site_key(host).is_some_and(|key| key != *host))
+        .any(|host| migration_key(host).is_some_and(|key| key != *host))
     {
       let _consent = CONSENT_WRITES.lock().unwrap();
       let _ = config.modify(app, |cfg| {
@@ -112,6 +115,7 @@ impl LoginSession {
       fetch_managed: false,
       fetch_browser: None,
       fetch_gate_used: false,
+      fetch_resume_used: false,
       fetch_attempts: Vec::new(),
       fetch_resolved_url: None,
       state: RetryState {
@@ -138,13 +142,21 @@ impl LoginSession {
     }
   }
 
-  pub(crate) fn begin_fetch(&mut self, phase: Phase) {
+  pub(crate) fn begin_fetch(&mut self, phase: Phase) -> Phase {
+    // A selected browser is not evidence that the public attempt needed a session.
+    let phase = if browsers::automatic(&self.auth) && self.fetch_attempts.is_empty() {
+      Phase::Anonymous
+    } else {
+      phase
+    };
     self.fetch_managed = true;
     self.fetch_browser = self.browser.clone();
     self.fetch_gate_used = phase == Phase::Login;
+    self.fetch_resume_used = phase == Phase::Login;
     if phase == Phase::Anonymous {
       self.browser = Some(ANONYMOUS_BROWSER.into());
     }
+    phase
   }
   pub(crate) fn degrade_fetch(&mut self) {
     self.browser = Some(ANONYMOUS_BROWSER.into());
@@ -428,6 +440,26 @@ impl LoginSession {
     }
   }
 
+  pub(super) fn automatic_retry(
+    &mut self,
+    mut request: LoginRequest,
+    schedule: impl FnOnce(LoginRequest) -> RetryAction,
+  ) -> RetryAction {
+    if let LoginRequest::Fetch(entry) = &mut request {
+      if self.fetch_managed {
+        // Stages must finish anonymously before the coordinator records the login cause.
+        // Otherwise the queued fetch has no history and begin_fetch clears its browser again.
+        if self.fetch_attempts.is_empty() || self.fetch_resume_used {
+          return RetryAction::Stop;
+        }
+        entry.prior_attempts = self.fetch_attempts.clone();
+        entry.prior_resolved_url = self.fetch_resolved_url.clone();
+        self.fetch_resume_used = true;
+      }
+    }
+    schedule(request)
+  }
+
   pub fn failed(
     &mut self,
     app: &AppHandle,
@@ -436,6 +468,10 @@ impl LoginSession {
     aria_denied: bool,
     cancelled: bool,
   ) -> RetryAction {
+    // Automatic mode never asks for a login outside known login sites; the aria2 → native fallback still applies.
+    if browsers::automatic(&self.auth) && !known_login_host(&self.host) && !aria_denied {
+      return RetryAction::Stop;
+    }
     if browsers::automatic(&self.auth)
       && reason.is_some()
       && !cancelled
@@ -447,7 +483,7 @@ impl LoginSession {
       if super::global_consent(&auth) != Some(true) {
         return RetryAction::Stop;
       }
-      return super::automatic::schedule(app, request);
+      return self.automatic_retry(request, |request| super::automatic::schedule(app, request));
     }
     let host = self.host.clone();
     let (action, candidates) = self.decide(reason, aria_denied, cancelled, |remembered| {
@@ -500,6 +536,9 @@ impl LoginSession {
     find: impl FnOnce(Option<&str>) -> Vec<LoginCandidate>,
   ) -> (RetryAction, Vec<LoginCandidate>) {
     let automatic = browsers::automatic(&self.auth);
+    if automatic && !known_login_host(&self.host) && !aria_denied {
+      return (RetryAction::Stop, vec![]);
+    }
     if automatic
       && !self.just_accepted
       && reason.is_some()

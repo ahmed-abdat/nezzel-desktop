@@ -1,16 +1,18 @@
 //! Developer harness. See README.md beside this file for scope and stand-ins.
 mod options;
+mod retries;
 mod support;
 
 use crate::{
   models::{download::*, parsed::MediaKind, ParsedMedia},
-  runners::{gallery, template_context::TemplateContext},
+  runners::template_context::TemplateContext,
   scheduling::{download_pipeline::DownloadEntry, fetch_pipeline::FetchEntry, group_state},
   state::{config_models::Config, preferences_models::Preferences},
   SharedConfig, SharedPreferences,
 };
 use futures::{stream, StreamExt};
 use options::{prepare_evidence, AttemptsColumns, Options};
+use retries::{ResumeRouter, RowRetries, Work};
 use serde_json::{json, Value};
 use std::{
   cell::RefCell,
@@ -167,9 +169,10 @@ fn start() -> Result<(), Box<dyn Error>> {
   handle.manage(crate::download_records::DownloadRecords::default());
   handle.manage(crate::library::Library::default());
   handle.manage(GalleryResources(resources));
-  // LoginSession needs cleanup channels even when consent was supplied on the command line.
-  let (fetch_tx, _fetch_rx) = tokio::sync::mpsc::unbounded_channel();
-  let (download_tx, _download_rx) = tokio::sync::mpsc::unbounded_channel();
+  let (fetch_tx, fetch_rx) = tokio::sync::mpsc::unbounded_channel();
+  let (download_tx, download_rx) = tokio::sync::mpsc::unbounded_channel();
+  let resumes = ResumeRouter::default();
+  handle.manage(resumes.clone());
   handle.manage(crate::scheduling::fetch_pipeline::FetchSender(fetch_tx));
   handle.manage(crate::scheduling::download_pipeline::DownloadSender(
     download_tx,
@@ -182,6 +185,7 @@ fn start() -> Result<(), Box<dyn Error>> {
     "media_complete",
   ] {
     let collected = events.clone();
+    let resumes = resumes.clone();
     handle.listen(event_name, move |event| {
       if let Ok(mut value) = serde_json::from_str::<Value>(event.payload()) {
         // Only fields displayed by the app; never retain browser/profile candidates.
@@ -194,13 +198,17 @@ fn start() -> Result<(), Box<dyn Error>> {
           .unwrap()
           .entry(group)
           .or_default()
-          .push((event_name.into(), value));
+          .push((event_name.into(), value.clone()));
+        resumes.event(event_name, &value);
       }
     });
   }
   let handle = handle.clone();
   tauri::async_runtime::spawn(async move {
-    let outcome = run_all(&handle, options, links, run_dir, bin_dir, events).await;
+    let outcome = tokio::select! {
+      result = run_all(&handle, options, links, run_dir, bin_dir, events) => result,
+      _ = resumes.drain(fetch_rx, download_rx) => Err("Harness scheduler channels closed".into()),
+    };
     if let Err(error) = &outcome {
       eprintln!("link matrix: {error}");
     }
@@ -209,7 +217,12 @@ fn start() -> Result<(), Box<dyn Error>> {
     // settled here, so terminate the developer host explicitly.
     std::process::exit(if outcome.is_ok() { 0 } else { 2 });
   });
-  app.run(|_, _| {});
+  app.run(|_, event| {
+    // Closing the last automatic-login webview must not stop the remaining matrix rows.
+    if let tauri::RunEvent::ExitRequested { api, .. } = event {
+      api.prevent_exit();
+    }
+  });
   Ok(())
 }
 
@@ -240,6 +253,15 @@ async fn run_all(
       .map(|(index, link)| run_one(app, index, link, &run_dir, &bins, &events, &options)),
   )
   .buffer_unordered(options.jobs);
+  report_rows(&options, &run_dir, total, &mut pending).await
+}
+
+async fn report_rows(
+  options: &Options,
+  run_dir: &Path,
+  total: usize,
+  pending: &mut (impl futures::Stream<Item = ResultRow> + Unpin),
+) -> Result<(), String> {
   let mut results = Vec::new();
   while let Some(row) = pending.next().await {
     eprintln!(
@@ -253,7 +275,7 @@ async fn run_all(
     );
     results.push(row);
     results.sort_by_key(|r| r.index);
-    write_reports(&options, &run_dir, &results, total)?;
+    write_reports(options, run_dir, &results, total)?;
   }
   Ok(())
 }
@@ -294,19 +316,21 @@ async fn run_one(
     return row;
   }
   group_state::ensure_group_running(&group);
+  let mut resumes = app
+    .state::<ResumeRouter>()
+    .register(&group, options.login.as_deref());
   let outcome = GALLERY_ERRORS
     .scope(RefCell::new(Vec::new()), async {
       let (item_count, mut discovered) = tokio::sync::watch::channel(1usize);
-      let work = pipeline(
+      let mut work = Box::pin(pipeline(
         app,
         &row.link,
         &group,
         &folder,
         bins,
         &item_count,
-        options.login.as_deref(),
-      );
-      tokio::pin!(work);
+        &mut resumes,
+      ));
       let deadline = tokio::time::sleep(Duration::from_secs(180));
       tokio::pin!(deadline);
       let began = tokio::time::Instant::now();
@@ -440,7 +464,12 @@ async fn run_one(
         &last_engine_error(&log)
       };
       let evidence = format!("{} {}", row.reason, final_engine);
-      row.verdict = classify(&codes, &evidence).into();
+      row.verdict = if row.reason.starts_with("Harness ") {
+        "FAIL"
+      } else {
+        classify(&codes, &evidence)
+      }
+      .into();
       row.cause = root_cause(&codes, &evidence);
       // Include incomplete artifacts for inspection, never count them toward PASS.
       let listed = list_files(&folder, &mut row.files).is_ok();
@@ -522,7 +551,7 @@ async fn pipeline(
   folder: &Path,
   bins: &Path,
   item_count: &tokio::sync::watch::Sender<usize>,
-  login: Option<&str>,
+  resumes: &mut RowRetries,
 ) -> Result<(usize, usize, usize, Vec<String>), String> {
   // Clipboard normalization is production code; manual-paste validation is represented
   // by the URL parser fallback for public domains outside the clipboard allowlist.
@@ -534,14 +563,14 @@ async fn pipeline(
     total: 1,
     format: None,
     overrides: None,
-    login_browser: login.map(str::to_owned),
-    login_was_accepted: login.is_some(),
+    login_browser: resumes.login_browser.clone(),
+    login_was_accepted: resumes.login_browser.is_some(),
     prior_attempts: Vec::new(),
     prior_resolved_url: None,
   };
-  let media = gallery::run_media_info(app, &entry)
-    .await
-    .map_err(|e| format!("fetch: {e:?}: {e}"))?
+  let media = resumes
+    .run(app, Work::Fetch(Box::new(entry.clone())))
+    .await?
     .ok_or("fetch cancelled/no metadata")?;
   let mut media_items = Vec::new();
   match media {
@@ -550,15 +579,16 @@ async fn pipeline(
       item_count.send_replace(playlist.entries.len().max(1));
       // The UI asks for a playlist selection. Exercise every returned entry, within
       // the same per-link time budget (no silent first-item-only success).
-      for item in playlist.entries {
+      for (number, item) in playlist.entries.into_iter().enumerate() {
         let child = FetchEntry {
+          id: format!("{group}-child-{number}"),
           url: item.video_url,
           total: 2,
           ..entry.clone()
         };
-        match gallery::run_media_info(app, &child)
-          .await
-          .map_err(|e| format!("playlist fetch: {e:?}: {e}"))?
+        match resumes
+          .run(app, Work::Fetch(Box::new(child.clone())))
+          .await?
         {
           Some(ParsedMedia::Single(item)) => media_items.push((item, child.url.clone())),
           _ => return Err("Playlist child has no downloadable metadata".into()),
@@ -611,7 +641,7 @@ async fn pipeline(
     let download = DownloadItem {
       fetch_engine: item.fetch_engine,
       resolved_url: item.resolved_url,
-      id: format!("{group}-{number}"),
+      id: item.id,
       url: item.url.unwrap_or(fallback),
       format,
       attachment_ids: (!item.attachments.is_empty())
@@ -642,12 +672,8 @@ async fn pipeline(
     };
     // This is the production scheduler's DownloadItem -> DownloadEntry conversion,
     // followed by the identical worker function, including mixed/photo routing.
-    let mut download = DownloadEntry::from((download, group.into()));
-    download.login_browser = login.map(str::to_owned);
-    download.login_was_accepted = login.is_some();
-    gallery::run_media_download(app.clone(), download)
-      .await
-      .map_err(|e| format!("download: {e:?}: {e}"))?;
+    let download = DownloadEntry::from((download, group.into()));
+    resumes.run(app, Work::Download(Box::new(download))).await?;
     let (images, videos, audio, files) = verify_files(
       folder,
       bins,
@@ -947,4 +973,112 @@ fn write_reports(
     fs::rename(temporary, options.out.join(name)).map_err(|e| e.to_string())?;
   }
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[tokio::test(start_paused = true)]
+  async fn a_deadline_row_does_not_stop_later_rows_or_their_reports() {
+    let root = crate::runners::gallery_files::Staging::new().unwrap();
+    let options = Options {
+      inputs: vec![],
+      out: root.path.clone(),
+      only: None,
+      jobs: 1,
+      login: None,
+      cookies: None,
+    };
+    let mut pending = stream::iter(0..3)
+      .then(|index| async move {
+        let reason = if index == 0 {
+          assert!(
+            tokio::time::timeout(Duration::from_secs(1), std::future::pending::<()>())
+              .await
+              .is_err()
+          );
+          "Harness per-link deadline".into()
+        } else {
+          String::new()
+        };
+        ResultRow {
+          index,
+          link: Link {
+            site: "instagram".into(),
+            label: format!("row-{index}"),
+            expected: "video".into(),
+            url: format!("https://instagram.com/p/{index}/"),
+            note: String::new(),
+            count: None,
+            count_is_total: false,
+          },
+          got: "none".into(),
+          verdict: if index == 0 { "FAIL" } else { "PASS" }.into(),
+          reason,
+          ui: String::new(),
+          engine: String::new(),
+          cause: String::new(),
+          files: vec![],
+          seconds: 0.0,
+          attempts: AttemptsColumns::default(),
+        }
+      })
+      .boxed();
+    report_rows(&options, &root.path, 3, &mut pending)
+      .await
+      .unwrap();
+    let tsv = fs::read_to_string(root.path.join("results.tsv")).unwrap();
+    assert_eq!(tsv.lines().count(), 4);
+    for index in 0..3 {
+      assert!(tsv.contains(&format!("row-{index}")));
+    }
+    assert!(tsv.contains("Harness per-link deadline"));
+    assert!(fs::read_to_string(root.path.join("results.md"))
+      .unwrap()
+      .contains("Completed 3/3 rows"));
+  }
+
+  #[test]
+  fn matrix_futures_fit_the_default_worker_stack() {
+    fn pipeline_size<F>(
+      _: impl FnOnce(
+        &'static tauri::AppHandle,
+        &'static Link,
+        &'static str,
+        &'static Path,
+        &'static Path,
+        &'static tokio::sync::watch::Sender<usize>,
+        &'static mut RowRetries,
+      ) -> F,
+    ) -> usize {
+      std::mem::size_of::<F>()
+    }
+    fn row_size<F>(
+      _: impl FnOnce(
+        &'static tauri::AppHandle,
+        usize,
+        Link,
+        &'static Path,
+        &'static Path,
+        &'static Events,
+        &'static Options,
+      ) -> F,
+    ) -> usize {
+      std::mem::size_of::<F>()
+    }
+    let sizes = [
+      ("pipeline", pipeline_size(pipeline)),
+      ("row", row_size(run_one)),
+    ];
+    for (name, bytes) in sizes {
+      println!("{name} future: {bytes} bytes");
+    }
+    for (name, bytes) in sizes {
+      assert!(
+        bytes <= 16 * 1024,
+        "{name} exceeds nested harness frame budget: {bytes}"
+      );
+    }
+  }
 }
