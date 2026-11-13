@@ -17,6 +17,225 @@ use crate::state::config_models::AuthSettings;
 use tauri::Manager;
 use tokio::sync::watch;
 #[test]
+fn fresh_automatic_fetch_is_anonymous_even_with_an_accepted_browser() {
+  use crate::runners::browsers::{CookieSource, AUTOMATIC};
+  for host in [
+    "fb.watch",
+    "pin.it",
+    "www.snapchat.com",
+    "t.snapchat.com",
+    "facebook.com",
+    "unknown.example",
+  ] {
+    let auth = AuthSettings::default();
+    assert_eq!(auth.cookie_browser, AUTOMATIC);
+    let mut session = LoginSession::from_auth(
+      auth.clone(),
+      &format!("https://{host}/public"),
+      Some("chrome:Default".into()),
+    );
+    session.begin_fetch(Phase::Login);
+    assert_eq!(
+      CookieSource::for_site(&auth, session.browser.as_deref(), host),
+      Ok(CookieSource::Anonymous),
+      "{host}: the public attempt must reach extraction without a cookie read"
+    );
+    assert!(!session.uses_cookies(), "{host}");
+    assert_eq!(
+      session
+        .decide(None, false, false, |_| panic!(
+          "discovery before a login wall"
+        ))
+        .0,
+      RetryAction::Stop,
+      "{host}: no login pending on a public success or ordinary refusal"
+    );
+  }
+}
+
+#[tokio::test]
+async fn automatic_instagram_resume_runs_the_stage_with_cookies_once() {
+  use crate::extract::{
+    chain::StageResult,
+    outcome::{AuthUsed, Confidence, Outcome, StageId},
+  };
+  use crate::runners::browser_cookies::{CookieAccess, CookieContext};
+  let root = crate::runners::gallery_files::Staging::new().unwrap();
+  let profile = root.path.join("profile");
+  std::fs::create_dir(&profile).unwrap();
+  let db = rusqlite::Connection::open(profile.join("cookies.sqlite")).unwrap();
+  db.execute_batch("CREATE TABLE moz_cookies (host TEXT, name TEXT, value TEXT, path TEXT, expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER, originAttributes TEXT);
+    INSERT INTO moz_cookies VALUES ('.instagram.com', 'sessionid', 'fixture-session', '/', 4102444800, 1, 1, '');").unwrap();
+  drop(db);
+  let browser = format!("firefox:{}", profile.display());
+  let group = uuid::Uuid::new_v4().to_string();
+  crate::scheduling::group_state::ensure_group_running(&group);
+  let app = tauri::test::mock_app();
+  let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+  app.manage(FetchSender(tx));
+  let mut entry = match pending(&group).request {
+    LoginRequest::Fetch(entry) => entry,
+    _ => unreachable!(),
+  };
+  entry.url = "https://www.instagram.com/p/BCISVm-GVr7/".into();
+  let auth = AuthSettings::default();
+  let mut session = LoginSession::from_auth(auth.clone(), &entry.url, None);
+  assert_eq!(session.begin_fetch(Phase::Anonymous), Phase::Anonymous);
+  let context = CookieContext {
+    exporter: root.path.join("must-not-run"),
+    directory: root.path.join("cookies"),
+  };
+  let (_tx, cancel) = watch::channel(true);
+  let cookies = CookieAccess::prepare(
+    &auth,
+    session.browser.as_deref(),
+    &entry.url,
+    &context,
+    cancel.clone(),
+  )
+  .await
+  .unwrap();
+  assert!(!cookies.has_session);
+  let mut first = StageResult::<()>::new(StageId::Gallery, Confidence::High);
+  first.record_code("signInRequired", "", cookies.has_session, Instant::now());
+  let mut resumes = 0;
+  {
+    let mut schedule = |request: LoginRequest| {
+      resumes += 1;
+      request.enqueue(app.handle(), browser.clone()).unwrap();
+      RetryAction::Pending
+    };
+    // Gallery can report a login failure before the coordinator has recorded its history.
+    let action = session.automatic_retry(LoginRequest::Fetch(entry.clone()), &mut schedule);
+    if action == RetryAction::Stop {
+      session.set_fetch_history(first.attempts, Some(entry.url.clone()));
+      assert_eq!(
+        session.automatic_retry(LoginRequest::Fetch(entry), &mut schedule),
+        RetryAction::Pending
+      );
+    }
+  }
+  let DispatchRequest::Pipeline(FetchRequest::Resume(resumed)) = rx.try_recv().unwrap() else {
+    panic!("automatic fetch was not queued");
+  };
+  let mut retry =
+    LoginSession::from_auth(auth.clone(), &resumed.url, resumed.login_browser.clone());
+  retry.set_fetch_history(
+    resumed.prior_attempts.clone(),
+    resumed.prior_resolved_url.clone(),
+  );
+  retry.begin_fetch(Phase::Login);
+  let cookies = CookieAccess::prepare(
+    &auth,
+    retry.browser.as_deref(),
+    &resumed.url,
+    &context,
+    cancel,
+  )
+  .await
+  .unwrap();
+  let stage = StageResult::<()>::new(StageId::Gallery, Confidence::High).finish(
+    Outcome::Verified,
+    cookies.has_session,
+    Instant::now(),
+  );
+  assert_eq!(
+    stage.attempts[0].auth,
+    AuthUsed::Browser,
+    "resumed stage must send the site session"
+  );
+  assert!(cookies.has_proof("instagram.com"));
+  assert_eq!(resumes, 1);
+  assert_eq!(
+    retry.automatic_retry(LoginRequest::Fetch(*resumed), |_| panic!(
+      "second automatic fetch resume"
+    )),
+    RetryAction::Stop
+  );
+  assert!(rx.try_recv().is_err());
+  crate::scheduling::group_state::cancel_group(&group);
+  crate::scheduling::group_state::remove_group(&group);
+}
+
+#[test]
+fn short_links_use_the_parent_site_session_and_consent() {
+  use crate::runners::browser_cookies::{known_login_host, proof_cookies, site_key};
+  for (host, canonical, names, supported) in [
+    ("fb.watch", "facebook.com", vec!["c_user", "xs"], true),
+    ("pin.it", "pinterest.com", vec!["_pinterest_sess"], true),
+    (
+      "www.snapchat.com",
+      "snapchat.com",
+      vec!["sc-a-session"],
+      false,
+    ),
+    (
+      "t.snapchat.com",
+      "snapchat.com",
+      vec!["sc-a-session"],
+      false,
+    ),
+  ] {
+    assert_eq!(site_key(host).as_deref(), Some(canonical), "{host}");
+    assert_eq!(known_login_host(host), supported, "{host}");
+    assert_eq!(
+      proof_cookies(
+        host,
+        names.iter().map(|name| (canonical, *name, "session", 0)),
+        1,
+      ),
+      supported,
+      "{host}: only supported sites may prove a session on retry"
+    );
+    assert!(
+      !proof_cookies(
+        host,
+        names
+          .iter()
+          .map(|name| ("other.example", *name, "session", 0)),
+        1,
+      ),
+      "{host}: unrelated cookies must stay excluded"
+    );
+  }
+}
+
+#[test]
+fn unsupported_login_hosts_never_park_downloads_in_automatic_mode() {
+  use crate::runners::browser_cookies::known_login_host;
+  use crate::runners::browsers::CookieSource;
+  for (host, browser) in [
+    ("snapchat.com", None),
+    ("www.snapchat.com", Some(ANONYMOUS_BROWSER)),
+    ("t.snapchat.com", Some("chrome:Default")),
+    ("unknown.example", None),
+  ] {
+    assert!(!known_login_host(host), "{host}");
+    let auth = AuthSettings::default();
+    let mut session = LoginSession::from_auth(
+      auth.clone(),
+      &format!("https://{host}/spotlight/public"),
+      browser.map(str::to_owned),
+    );
+    assert_eq!(
+      session
+        .decide(Some("signInRequired"), false, false, |_| panic!(
+          "unsupported login discovery"
+        ))
+        .0,
+      RetryAction::Stop,
+      "{host} {browser:?}: downloads must never wait for automatic login"
+    );
+    if browser.is_none() {
+      assert_eq!(
+        CookieSource::for_site(&auth, None, host),
+        Ok(CookieSource::Anonymous)
+      );
+    }
+  }
+}
+
+#[test]
 fn consent_migration_preserves_explicit_answers_and_never_policy() {
   for (answer, browser, legacy, always, expected) in [
     (None, "automatic", "", false, Some(true)),
@@ -232,8 +451,28 @@ fn default_retry_does_not_offer_a_blocking_consent_prompt() {
 }
 
 #[test]
-fn global_consent_retries_any_site_without_another_question() {
-  for host in ["facebook.com", "instagram.com", "unknown.example"] {
+fn automatic_mode_keeps_the_native_fallback_on_public_sites() {
+  for host in ["snapchat.com", "unknown.example"] {
+    let mut session = LoginSession::from_auth(
+      AuthSettings::default(),
+      &format!("https://{host}/clip"),
+      None,
+    );
+    let (action, _) = session.decide(None, true, false, |_| panic!("inline discovery"));
+    assert_eq!(action, RetryAction::Native, "{host}");
+  }
+}
+
+#[test]
+fn global_consent_retries_only_known_login_sites_without_another_question() {
+  for (host, expected) in [
+    ("facebook.com", RetryAction::Browser),
+    ("instagram.com", RetryAction::Browser),
+    ("fb.watch", RetryAction::Browser),
+    ("pin.it", RetryAction::Browser),
+    ("t.snapchat.com", RetryAction::Stop),
+    ("unknown.example", RetryAction::Stop),
+  ] {
     let auth = AuthSettings {
       browser_login_consent: Some(true),
       ..Default::default()
@@ -245,7 +484,8 @@ fn global_consent_retries_any_site_without_another_question() {
           "inline discovery"
         ))
         .0,
-      RetryAction::Browser
+      expected,
+      "{host}"
     );
   }
 }
@@ -951,6 +1191,20 @@ async fn accept_and_change_leave_shared_config_unchanged_after_a_failed_attempt(
     assert_eq!(entry.login_browser.as_deref(), Some(browser.as_str()));
     let mut session =
       LoginSession::from_auth(config.load().auth.clone(), &entry.url, entry.login_browser);
+    session.set_fetch_history(
+      vec![crate::extract::outcome::Attempt::failed(
+        crate::extract::outcome::StageId::Ytdlp,
+        crate::extract::outcome::AuthUsed::Anonymous,
+        crate::extract::outcome::Confidence::Medium,
+        crate::extract::outcome::classify(
+          "signInRequired",
+          "",
+          crate::extract::outcome::NetworkScope::StageLocal,
+        ),
+        0,
+      )],
+      None,
+    );
     session.begin_fetch(Phase::Login);
     let outcome = crate::extract::chain::failed_login_for_test(&entry.url, session).await;
     assert_eq!(outcome, Some("signInRequired"));

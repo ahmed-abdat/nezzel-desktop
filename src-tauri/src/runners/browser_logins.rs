@@ -734,7 +734,7 @@ mod tests {
       ("twitter.com", Some("x.com")),
       ("mobile.twitter.com", Some("x.com")),
       ("threads.com", Some("threads.net")),
-      ("fb.watch", Some("fb.watch")),
+      ("fb.watch", Some("facebook.com")),
       ("music.youtube.com", Some("youtube.com")),
       ("youtube-nocookie.com", Some("youtube.com")),
       ("YouTube.COM.", Some("youtube.com")),
@@ -769,7 +769,7 @@ mod tests {
       ("threads.net", "sessionid", true),
       ("threads.com", "sessionid", true),
       ("vimeo.com", "vimeo", true),
-      ("snapchat.com", "sc-a-session", true),
+      ("snapchat.com", "sc-a-session", false),
       ("other.co.uk", "anything", false),
       ("other.co.uk", "", false),
     ] {

@@ -34,7 +34,15 @@ pub(super) fn registrable_domain(host: &str) -> Option<String> {
 }
 
 /// Sites whose sign-in covers all their hosts: consent is kept under the site's main domain.
-const SHARED_SIGN_IN: &[SiteId] = &[SiteId::YouTube, SiteId::Reddit, SiteId::Threads, SiteId::X];
+const SHARED_SIGN_IN: &[SiteId] = &[
+  SiteId::YouTube,
+  SiteId::Reddit,
+  SiteId::Threads,
+  SiteId::X,
+  SiteId::Facebook,
+  SiteId::Pinterest,
+  SiteId::Snapchat,
+];
 
 /// Canonical consent identity; cookie_domains enumerates the permitted cookie aliases.
 pub(super) fn site_key(host: &str) -> Option<String> {
@@ -45,7 +53,7 @@ pub(super) fn site_key(host: &str) -> Option<String> {
   })
 }
 
-/// The site a consent identity names, by the site's own domain only (`fb.watch` is not Facebook here).
+/// The site a consent identity names, including the shared sign-in aliases above.
 fn signed_in_site(host: &str) -> Option<SiteId> {
   site_key(host).and_then(|key| sites::site_by_domain(&key))
 }
@@ -61,7 +69,7 @@ const LEGACY_ALIASES: [(&str, &str); 4] = [
 ];
 
 /// The key a stored entry migrates to: its registrable domain, or the canonical site for a legacy alias.
-fn migration_key(host: &str) -> Option<String> {
+pub(super) fn migration_key(host: &str) -> Option<String> {
   let domain = registrable_domain(host)?;
   Some(
     LEGACY_ALIASES
@@ -135,7 +143,6 @@ fn session_cookies(host: &str) -> Option<SessionCookies> {
     LinkedIn => Some(Any(&["li_at"])),
     Pinterest => Some(Any(&["_pinterest_sess"])),
     Vimeo => Some(Any(&["vimeo"])),
-    Snapchat => Some(Any(&["sc-a-session", "__Host-sc-a-session"])),
     _ => None,
   }
 }
