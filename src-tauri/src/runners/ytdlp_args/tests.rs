@@ -1113,18 +1113,143 @@ fn temporary_output_preserves_the_final_destination_and_nested_templates() {
   let root = std::env::temp_dir();
   let output = root.join("saved/العنوان/%(playlist)s/%(title)s.%(ext)s");
   let temporary = root.join("private-parts");
-  let args = super::temporary_location_args(output.to_str().unwrap(), &temporary);
+  let location = super::temporary_location_args(output.to_str().unwrap(), &temporary);
+  let args = location.args;
+  assert_eq!(location.anchor.join(&args[5]), output);
   assert_eq!(args[0], "--paths");
-  assert_eq!(args[3], format!("temp:{}", temporary.display()));
+  assert_eq!(
+    args[3],
+    format!("temp:{}", temporary.join("parts").display())
+  );
   assert_eq!(args[4], "-o");
   assert!(!std::path::Path::new(&args[5]).is_absolute());
   assert_eq!(
     PathBuf::from(args[1].strip_prefix("home:").unwrap()).join(&args[5]),
-    output
+    temporary
+      .join("output")
+      .join(output.strip_prefix(&location.anchor).unwrap())
   );
   let outside = root.join("saved/../../elsewhere/%(title)s.mp4");
-  let args = super::temporary_location_args(outside.to_str().unwrap(), &temporary);
+  let args = super::temporary_location_args(outside.to_str().unwrap(), &temporary).args;
   assert!(!std::path::Path::new(&args[5])
     .components()
     .any(|c| c == std::path::Component::ParentDir));
+}
+
+#[test]
+fn absolute_templates_supply_their_own_publication_anchor() {
+  #[cfg(windows)]
+  let outputs = [
+    (r"D:\Clips\%(title)s.mp4", r"D:\"),
+    (r"E:\%(uploader)s\%(title)s.mp4", r"E:\"),
+  ];
+  #[cfg(not(windows))]
+  let outputs = [
+    ("/Volumes/External/Clips/%(title)s.mp4", "/"),
+    ("/mnt/external/%(uploader)s/%(title)s.mp4", "/"),
+  ];
+  for (output, expected) in outputs {
+    let location = super::temporary_location_args(output, &std::env::temp_dir());
+    assert_eq!(location.anchor, PathBuf::from(expected));
+    assert_eq!(
+      location.anchor.join(&location.args[5]),
+      PathBuf::from(output)
+    );
+  }
+}
+
+#[test]
+fn default_video_quality_is_conditional_when_extraction_has_not_supplied_height() {
+  let args = build_location_args(
+    &TrackType::Both,
+    &TemplateContext {
+      values: HashMap::new(),
+    },
+    &OutputSettings::default(),
+    &PathPreferences::default(),
+    PathBuf::from("/downloads"),
+  );
+  assert!(args[1].contains("%(nezzel_quality|)s"));
+}
+
+#[test]
+fn filename_metadata_replaces_generic_social_titles_and_preserves_real_titles() {
+  for (url, original, caption, expected) in [
+    ("https://www.instagram.com/reel/123/", "Video by instagram", "\u{202e}\u{2066}\u{200f}", "Video by instagram"),
+    ("https://www.instagram.com/reel/123/", "Video by instagram", "\u{202e}ع\u{202a}ن\u{202b}و\u{202c}ا\u{202d}ن\u{2066}\u{2067}\u{2068}\u{2069}\u{200e}\u{200f}", "عنوان"),
+    ("https://www.instagram.com/reel/123/", "Video by instagram", "می\u{200c}خواهم", "می\u{200c}خواهم"),
+    (
+      "https://www.instagram.com/reel/Chunk8-jurw/",
+      "Video by instagram",
+      "Gingerton",
+      "Gingerton",
+    ),
+    (
+      "https://www.instagram.com/p/abc/",
+      "A real title",
+      "Caption",
+      "A real title",
+    ),
+    (
+      "https://www.facebook.com/reel/123/",
+      "Facebook",
+      "Blick hinter die Kulissen…",
+      "Blick hinter die Kulissen…",
+    ),
+    (
+      "https://fb.watch/abc/",
+      "فيديو",
+      "Day 2 Semi Finals",
+      "Day 2 Semi Finals",
+    ),
+    (
+      "https://www.facebook.com/reel/123/",
+      "",
+      "Caption",
+      "Caption",
+    ),
+    (
+      "https://www.facebook.com/reel/123/",
+      "Video by an artist",
+      "Caption",
+      "Video by an artist",
+    ),
+    (
+      "https://www.facebook.com/reel/123/",
+      "Facebook video #123",
+      "Caption",
+      "Caption",
+    ),
+    (
+      "https://www.instagram.com/reel/123/",
+      "instagram video #123",
+      "Caption",
+      "Caption",
+    ),
+    (
+      "https://www.youtube.com/watch?v=123",
+      "Video by creator",
+      "Caption",
+      "Video by creator",
+    ),
+  ] {
+    let context = TemplateContext {
+      values: HashMap::from([("enriched_title".into(), caption.into())]),
+    };
+    let args = super::filename_metadata_args(url, &context);
+    let title_rule = args
+      .windows(4)
+      .find(|args| args[0] == "--replace-in-metadata" && args[1] == "video:title,fulltitle");
+    let selected = title_rule
+      .filter(|rule| regex::Regex::new(&rule[2]).unwrap().is_match(original))
+      .map_or(original, |rule| rule[3].as_str());
+    assert_eq!(selected, expected, "{url} {original}");
+    let context = TemplateContext {
+      values: HashMap::from([("title".into(), selected.into())]),
+    };
+    assert_eq!(
+      context.render_template("%(title).200B.mp4"),
+      format!("{expected}.mp4")
+    );
+  }
 }

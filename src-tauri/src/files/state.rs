@@ -388,7 +388,7 @@ pub(crate) fn native_publish(from: &Path, to: &Path) -> std::io::Result<()> {
   Ok(())
 }
 
-fn unsupported_publish(error: &std::io::Error) -> bool {
+pub(crate) fn unsupported_publish(error: &std::io::Error) -> bool {
   if error.kind() == std::io::ErrorKind::Unsupported {
     return true;
   }
@@ -462,7 +462,7 @@ pub(crate) fn publish_with(
   }
   sync_directory(to.parent().ok_or(Error::State)?)
 }
-fn remove_owned(file: &File, path: &Path) -> Result<()> {
+pub(crate) fn remove_owned(file: &File, path: &Path) -> Result<()> {
   let other = regular(path, false)?;
   #[cfg(unix)]
   {

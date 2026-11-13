@@ -225,7 +225,8 @@ impl PartialDownloads {
       Ok(()) if running => self.complete(group, item),
       Err(YtdlpDownloadError::LoginPending) => self.item_state(group, item, PartialState::Queued),
       Err(
-        YtdlpDownloadError::Unsupported(_)
+        YtdlpDownloadError::Filtered
+        | YtdlpDownloadError::Unsupported(_)
         | YtdlpDownloadError::InvalidArguments(_)
         | YtdlpDownloadError::InvalidDiagnosticRules(_),
       ) => self.complete(group, item),
@@ -316,6 +317,26 @@ pub(crate) fn download_finished(
 }
 
 /// The row displays the last diagnostic; ffmpeg's exit code must not hide a proven cause.
+fn filtered_download_diagnostics(
+  parser: &YtdlpErrorParser,
+  diagnostics: &[crate::models::error::DiagnosticEvent],
+) -> Vec<crate::models::error::DiagnosticEvent> {
+  let mut skipped: Vec<_> = diagnostics
+    .iter()
+    .filter(|event| event.code == "input_filter_skipped")
+    .cloned()
+    .collect();
+  if skipped.is_empty() {
+    skipped.extend(parser.parse_line("[download] Skipping: nothing matched input filters"));
+  }
+  if let Some(mut terminal) = skipped.last().cloned() {
+    // Preserve the skipped-items detail and use the existing localized terminal row message.
+    terminal.code = "rejectedByFilter".into();
+    skipped.push(terminal);
+  }
+  skipped
+}
+
 fn download_failure_diagnostics(
   mut events: Vec<crate::models::error::DiagnosticEvent>,
 ) -> Vec<crate::models::error::DiagnosticEvent> {
@@ -364,6 +385,7 @@ fn retry_vimeo(
 
 #[derive(Debug)]
 pub enum YtdlpDownloadError {
+  Filtered,
   ExpiredMedia,
   LoginPending,
   Unsupported(Reason),
@@ -378,6 +400,7 @@ pub enum YtdlpDownloadError {
 impl fmt::Display for YtdlpDownloadError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
+      Self::Filtered => write!(f, "input_filter_skipped"),
       Self::ExpiredMedia => write!(f, "Selected media URL expired"),
       Self::LoginPending => write!(f, "Waiting for browser login consent"),
       Self::Unsupported(reason) => write!(f, "{}", reason.code()),
@@ -955,14 +978,19 @@ async fn run_download_attempts(
     };
     let _thumbnail_stage = stage_thumbnails(&mut output_args)?;
     let runner = runner.with_args(selected_video_args(&entry));
-    let runner = runner
+    let (runner, publication_anchor) = runner
       .with_args(output_args)
+      .with_args(super::ytdlp_args::filename_metadata_args(
+        &entry.url,
+        &entry.template_context,
+      ))
       .with_location_args(
         &entry.format.track_type,
         &entry.template_context,
         entry.overrides.as_ref(),
       )
-      .with_temporary_files(temporary);
+      .with_temporary_files(temporary.clone());
+    let mut pending_files = super::ytdlp_files::PendingFiles::default();
     // Refresh the source immediately before transfer. Snapchat's opaque CDN suffix is
     // not a file format; normalize only that provider's video/thumbnail metadata.
     let snapchat_info = if snapchat_media_page(&entry.url) {
@@ -1066,6 +1094,7 @@ async fn run_download_attempts(
           match event {
             YtdlpCommandEvent::Stdout(line) => {
               let line_str = String::from_utf8_lossy(&line);
+              pending_files.record(&line_str);
               cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
               store_log_line(&line_str, &entry, log_state, &app);
               parse_progress_line(&line_str, &mut progress_parser, &app);
@@ -1111,6 +1140,46 @@ async fn run_download_attempts(
                   }
                 }
                 if is_cancelled_now(&cancel_rx) { return Ok(()); }
+                let stage = temporary.path.join("output");
+                let anchor = publication_anchor.clone();
+                let source_url = entry.url.clone();
+                let receipts = super::ytdlp_files::receipt_directory(&app)
+                  .map_err(|error| YtdlpDownloadError::RunnerError(error.to_string()))?;
+                let publish_cancel = cancel_rx.clone();
+                let outcome = tauri::async_runtime::spawn_blocking(move || {
+                  pending_files.publish(&stage, &anchor, &source_url, &receipts, || is_cancelled_now(&publish_cancel))
+                }).await.map_err(|error| YtdlpDownloadError::RunnerError(error.to_string()))?;
+                let published = match outcome {
+                  Ok(super::ytdlp_files::PublishOutcome::Files(files)) => files,
+                  Ok(super::ytdlp_files::PublishOutcome::Filtered) => {
+                    let skipped = filtered_download_diagnostics(&error_parser, &diagnostics);
+                    let message = skipped.last().map(|event| event.message.clone()).unwrap_or_default();
+                    for event in skipped {
+                      crate::events::emit(&app, crate::events::MEDIA_DIAGNOSTIC, MediaDiagnosticPayload::from_diagnostic_event(event));
+                    }
+                    crate::events::emit(&app, crate::events::MEDIA_FATAL,
+                      MediaFatalPayload::with_exit(entry.group_id.clone(), entry.id.clone(), 0, message));
+                    PARTIAL_DOWNLOADS.complete(&entry.group_id, &entry.id);
+                    return Err(YtdlpDownloadError::Filtered);
+                  }
+                  Err(_) if is_cancelled_now(&cancel_rx) => return Ok(()),
+                  Err(error) => {
+                    emit_internal_fatal(&app, &entry, "Could not save download without replacing an existing file".into(), None);
+                    return Err(YtdlpDownloadError::RunnerError(error.to_string()));
+                  }
+                };
+                for file in published {
+                  let destination = crate::models::MediaDestination {
+                    id: entry.id.clone(), group_id: entry.group_id.clone(), is_merged: false,
+                    destination: crate::models::progress::MediaDestinationPath {
+                      path: file.path.to_string_lossy().into_owned(), confidence: 100, already_downloaded: file.reused,
+                    },
+                  };
+                  if let Some(records) = app.try_state::<DownloadRecords>() {
+                    records.record_item(&entry.group_id, &entry.id, &destination.destination.path);
+                  }
+                  crate::events::emit(&app, crate::events::MEDIA_DESTINATION, destination);
+                }
                 if let Some(records) = app.try_state::<DownloadRecords>() {
                   records.seal(&entry.group_id);
                 }
@@ -1297,16 +1366,8 @@ fn parse_progress_line(line: &str, progress_parser: &mut YtdlpProgressParser, ap
 
   for progress_event in progress_events {
     match progress_event {
-      ProgressEvent::Destination(destination) => {
-        if let Some(records) = app.try_state::<DownloadRecords>() {
-          records.record_item(
-            &destination.group_id,
-            &destination.id,
-            &destination.destination.path,
-          );
-        }
-        crate::events::emit(app, crate::events::MEDIA_DESTINATION, destination);
-      }
+      // Only publication can grant a final path; engine destinations are private staging files.
+      ProgressEvent::Destination(_) => {}
       ProgressEvent::Progress(progress) => {
         crate::usage::speed_sample(app, &progress.group_id, &progress.id, progress.speed_bps);
         crate::events::emit(app, crate::events::MEDIA_PROGRESS, progress);
@@ -1348,6 +1409,40 @@ fn parse_clock_secs(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn zero_output_keeps_the_filter_warning_instead_of_a_save_error() {
+    let parser = YtdlpErrorParser::new("row", "group", DiagnosticMatcher::shared().unwrap());
+    for (line, expected) in [
+      (None, "Skipped by input filter"),
+      (
+        Some("[download] Video does not pass filter (!is_live), skipping .."),
+        "Skipped by advanced input filter",
+      ),
+      (
+        Some("[download] File is larger than max-filesize (123 > 100), skipping"),
+        "Skipped by maximum filesize filter",
+      ),
+      (
+        Some("[download] 2022-01-05 upload date is not in range 2026-06-18 to 9999-12-31"),
+        "Skipped by upload date filter",
+      ),
+    ] {
+      let diagnostics: Vec<_> = line
+        .and_then(|line| parser.parse_fetch_line(line, false))
+        .into_iter()
+        .collect();
+      let skipped = filtered_download_diagnostics(&parser, &diagnostics);
+      assert_eq!(skipped.len(), 2);
+      assert_eq!(skipped[0].code, "input_filter_skipped");
+      assert_eq!(skipped[0].message, expected);
+      assert_eq!(skipped[1].code, "rejectedByFilter");
+      assert!(matches!(
+        skipped[0].level,
+        crate::models::error::DiagnosticLevel::Warning
+      ));
+    }
+  }
 
   #[test]
   fn partials_survive_pause_and_discard_only_the_cancelled_item_after_exit() {

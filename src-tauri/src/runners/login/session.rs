@@ -110,7 +110,26 @@ impl LoginSession {
     let anonymous = accepted.as_deref() == Some(ANONYMOUS_BROWSER);
     let just_accepted = accepted.is_some() && !anonymous;
     let starting_browser = auth.site_browsers.get(&host).cloned();
-    // Remembered values rank sources after a needs-login failure; they never pre-read cookies.
+    // A fixed browser name still needs the remembered site profile. Keep it through
+    // the anonymous-first fetch so its login retry does not fall back to another profile.
+    let browser = accepted.clone().or_else(|| {
+      let BrowserSetting::Fixed(fixed) = BrowserSetting::of(&auth) else {
+        return None;
+      };
+      if super::global_consent(&auth) != Some(true)
+        || auth
+          .cookie_file
+          .as_deref()
+          .is_some_and(|file| !file.is_empty())
+      {
+        return None;
+      }
+      let fixed = browsers::BrowserSource::parse(fixed)?;
+      starting_browser.clone().filter(|saved| {
+        browsers::BrowserSource::parse(saved)
+          .is_some_and(|saved| fixed.profile.is_none() && fixed.kind == saved.kind)
+      })
+    });
     Self {
       fetch_managed: false,
       fetch_browser: None,
@@ -128,7 +147,7 @@ impl LoginSession {
         .filter(|browser| browser.as_str() != ANONYMOUS_BROWSER)
         .cloned()
         .collect(),
-      browser: accepted,
+      browser,
       has_session: false,
       auth,
       host,
