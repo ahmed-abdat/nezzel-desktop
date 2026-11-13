@@ -318,20 +318,23 @@ impl<'a> YtdlpRunner<'a> {
   pub(crate) fn with_temporary_files(
     mut self,
     stage: Arc<super::ytdlp_download::DownloadPartial>,
-  ) -> Self {
-    if let Some(index) = self.args.iter().rposition(|arg| arg == "-o") {
-      let location = super::ytdlp_args::temporary_location_args(&self.args[index + 1], &stage.path);
-      self.args.splice(index..=index + 1, location);
-    }
+  ) -> (Self, PathBuf) {
+    let index = self
+      .args
+      .iter()
+      .rposition(|arg| arg == "-o")
+      .expect("download output must be configured");
+    let location = super::ytdlp_args::temporary_location_args(&self.args[index + 1], &stage.path);
+    self.args.splice(index..=index + 1, location.args);
     // Destination logs refer to the private path until MoveFiles runs. Report the final receipt too.
     self.args.extend([
       "--print".into(),
-      "after_move:NEZZEL_FINAL|%(filepath)j".into(),
+      "after_move:NEZZEL_PUBLISH|[%(filepath)j,%(extractor_key)j,%(id)j]".into(),
       "--no-quiet".into(),
       "--no-simulate".into(),
     ]);
     self.temporary_files = Some(stage);
-    self
+    (self, location.anchor)
   }
 
   pub fn with_resolved_input(self, input: &crate::resolve::ResolvedInput) -> Self {

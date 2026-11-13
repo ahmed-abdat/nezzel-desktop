@@ -502,6 +502,26 @@ describe('media store', () => {
     });
   });
 
+  it.each([
+    ['https://www.instagram.com/reel/Chunk8-jurw/', 'Gingerton'],
+    ['https://www.facebook.com/reel/1248407763608788/', 'Blick hinter die Kulissen…'],
+  ])('carries the enriched title to filename selection for %s', async (url, title) => {
+    const calls: Record<string, unknown>[] = [];
+    installTauriMock({
+      media_download: (_cmd, args) => {
+        calls.push(args as Record<string, unknown>);
+      },
+    });
+    const store = useMediaStore();
+    const id = await store.dispatchMediaInfoFetch(url, false, false, {
+      id: 'social', url, title, fetchEngine: 'ytdlp', mediaKind: 'video', audioCodecs: [], formats: [], filesize: 0,
+    });
+    await store.downloadGroup(id, { trackType: TrackType.both });
+    expect((calls[0].items as Record<string, unknown>[])[0]).toMatchObject({
+      templateContext: { values: { enriched_title: title } },
+    });
+  });
+
   it('keeps a reader-resolved video target when downloading a verified fetch', async () => {
     const calls: Record<string, unknown>[] = [];
     installTauriMock({

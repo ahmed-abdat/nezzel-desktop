@@ -15,6 +15,7 @@ pub(crate) mod tool_process;
 pub mod transport;
 pub mod ytdlp_args;
 pub mod ytdlp_download;
+pub(crate) mod ytdlp_files;
 pub mod ytdlp_info;
 pub mod ytdlp_process;
 pub mod ytdlp_runner;

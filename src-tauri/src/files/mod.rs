@@ -11,6 +11,10 @@ pub mod probe;
 pub(crate) mod runner;
 pub(crate) mod sanitize;
 mod state;
+pub(crate) use state::{
+  native_publish as rename_without_replace, remove_owned as remove_owned_output,
+  unsupported_publish,
+};
 use std::fmt;
 #[derive(Debug)]
 pub enum Error {

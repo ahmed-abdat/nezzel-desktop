@@ -685,6 +685,7 @@ export const useMediaStore = defineStore('media', () => {
           templateContext: {
             values: {
               ...buildTemplateContext(item, group, overrides),
+              enriched_title: item.title ?? undefined,
               ...(item.attachments?.length || (item.resolvedUrl && item.resolvedUrl !== item.url)
                 ? { title: item.title ?? undefined, fulltitle: item.title ?? undefined, uploader: item.uploader ?? undefined }
                 : {}),

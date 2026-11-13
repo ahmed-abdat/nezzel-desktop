@@ -17,6 +17,59 @@ use crate::state::config_models::AuthSettings;
 use tauri::Manager;
 use tokio::sync::watch;
 #[test]
+fn fixed_browser_fetch_uses_the_saved_profile_without_another_prompt() {
+  use crate::runners::browsers::{BrowserSource, CookieSource};
+  for (fixed, accepted, saved, expected) in [
+    (
+      "chrome",
+      None,
+      "chrome:/saved/Default",
+      "chrome:/saved/Default",
+    ),
+    ("chrome", None, "firefox:/different", "chrome"),
+    (
+      "chrome:/explicit",
+      None,
+      "chrome:/saved/Default",
+      "chrome:/explicit",
+    ),
+    (
+      "chrome",
+      Some("chrome:/row"),
+      "chrome:/saved/Default",
+      "chrome:/row",
+    ),
+  ] {
+    let auth = AuthSettings {
+      cookie_browser: fixed.into(),
+      browser_login_consent: Some(true),
+      always_use_browser_logins: true,
+      site_browsers: std::collections::HashMap::from([("instagram.com".into(), saved.into())]),
+      ..Default::default()
+    };
+    let mut session = LoginSession::from_auth(
+      auth.clone(),
+      "https://www.instagram.com/p/BCISVm-GVr7/",
+      accepted.map(str::to_owned),
+    );
+    assert_eq!(
+      CookieSource::for_site(&auth, session.browser.as_deref(), "instagram.com"),
+      Ok(CookieSource::Browser(
+        BrowserSource::parse(expected).unwrap()
+      ))
+    );
+    assert_eq!(session.begin_fetch(Phase::Anonymous), Phase::Anonymous);
+    assert!(!session.uses_cookies());
+    assert_eq!(
+      CookieSource::for_site(&auth, session.fetch_browser.as_deref(), "instagram.com"),
+      Ok(CookieSource::Browser(
+        BrowserSource::parse(expected).unwrap()
+      ))
+    );
+  }
+}
+
+#[test]
 fn fresh_automatic_fetch_is_anonymous_even_with_an_accepted_browser() {
   use crate::runners::browsers::{CookieSource, AUTOMATIC};
   for host in [

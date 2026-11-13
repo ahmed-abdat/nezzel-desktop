@@ -71,6 +71,7 @@ pub fn build_location_args(
       } else {
         match template_context.values.get("height") {
           Some(height) if height.is_empty() || height == "0" => "%(title).200B.%(ext)s",
+          None => "%(title).200B%(nezzel_quality|)s.%(ext)s",
           _ => "%(title).200B-(%(height)sp%(fps|).0d).%(ext)s",
         }
       }
@@ -84,6 +85,47 @@ pub fn build_location_args(
   let rendered_output = template_context.render_template(output_path.to_string_lossy().as_ref());
 
   vec!["-o".into(), rendered_output]
+}
+
+/// Run after format selection, before yt-dlp prepares any filenames.
+pub fn filename_metadata_args(source: &str, context: &TemplateContext) -> Vec<String> {
+  let mut args = vec![
+    "--parse-metadata".into(),
+    "video:-(%(height|)sp%(fps|).0d):%(nezzel_quality)s".into(),
+    "--replace-in-metadata".into(),
+    "video:nezzel_quality".into(),
+    r"^-\((?:p.*|0p.*)\)$".into(),
+    "".into(),
+  ];
+  let host = reqwest::Url::parse(source)
+    .ok()
+    .and_then(|url| url.host_str().map(str::to_owned));
+  let instagram = host
+    .as_deref()
+    .is_some_and(|host| host == "instagram.com" || host.ends_with(".instagram.com"));
+  let facebook = host.as_deref().is_some_and(|host| {
+    host == "facebook.com" || host.ends_with(".facebook.com") || host == "fb.watch"
+  });
+  let title = context
+    .values
+    .get("enriched_title")
+    .map(|title| title.chars()
+      .filter(|c| !matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}'..='\u{200f}'))
+      .collect::<String>());
+  if let Some(title) = title.filter(|title| (instagram || facebook) && !title.trim().is_empty()) {
+    args.extend([
+      "--replace-in-metadata".into(),
+      "video:title,fulltitle".into(),
+      if instagram {
+        r"(?i)^\s*(?:Video by .+|Post by .+|Video \d+|instagram(?:-\w+)? video #\S+)?\s*$"
+      } else {
+        r"(?i)^\s*(?:Facebook|(?:facebook(?:-\w+)?|generic) video #\S+|(?:www\.)?facebook\.com|https?://\S+|فيديو)?\s*$"
+      }
+      .into(),
+      title.replace('\\', "\\\\"),
+    ]);
+  }
+  args
 }
 
 /// A folder picked for one download wins over the per-track (video/audio) folders from Preferences.
@@ -101,7 +143,12 @@ pub fn path_preferences_for(
 
 /// Absolute -o bypasses yt-dlp's temporary path. Keep the same final destination relative to its
 /// filesystem anchor, so nested/custom templates still expand in -o, while parts stay private.
-pub fn temporary_location_args(output: &str, temporary: &Path) -> Vec<String> {
+pub struct TemporaryLocation {
+  pub args: Vec<String>,
+  pub anchor: PathBuf,
+}
+
+pub fn temporary_location_args(output: &str, temporary: &Path) -> TemporaryLocation {
   let path = Path::new(output);
   let absolute = if path.is_absolute() {
     path.to_path_buf()
@@ -120,14 +167,15 @@ pub fn temporary_location_args(output: &str, temporary: &Path) -> Vec<String> {
       _ => normalized.push(part.as_os_str()),
     }
   }
-  let anchor = normalized.ancestors().last().unwrap();
-  let relative = normalized.strip_prefix(anchor).unwrap();
-  vec![
+  let anchor = normalized.ancestors().last().unwrap().to_path_buf();
+  let relative = normalized.strip_prefix(&anchor).unwrap();
+  let args = vec![
     "--paths".into(),
-    format!("home:{}", anchor.display()),
+    format!("home:{}", temporary.join("output").display()),
     "--paths".into(),
-    format!("temp:{}", temporary.display()),
+    format!("temp:{}", temporary.join("parts").display()),
     "-o".into(),
     relative.to_string_lossy().into_owned(),
-  ]
+  ];
+  TemporaryLocation { args, anchor }
 }
