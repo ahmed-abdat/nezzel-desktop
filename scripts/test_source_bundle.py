@@ -164,7 +164,7 @@ class SourceBundleTests(unittest.TestCase):
             manifest_path = root / 'src-tauri/src/binaries/manifest.json'
             original = manifest_path.read_text()
             for before, after in [('1789931006_9.0.2', '1789931007_9.0.2'),
-                                  ('autobuild-2026-11-01-19-06', 'autobuild-2026-11-02-19-06')]:
+                                  ('autobuild-2026-11-16-23-35', 'autobuild-2026-11-17-23-35')]:
                 with self.subTest(provider=before):
                     manifest_path.write_text(original.replace(before, after))
                     with self.assertRaisesRegex(ValueError, 'Unverified'):

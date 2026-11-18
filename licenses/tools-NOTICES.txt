@@ -15,8 +15,8 @@ All pinned builds use GPLv3 (--enable-gpl --enable-version3), without
 --enable-nonfree. They are GPL builds, not LGPL-only builds.
 macOS ARM64 / Intel: FFmpeg 9.0.2, built and signed by Martin Riedl.
 Build/distribution: https://ffmpeg.martin-riedl.de/
-Linux x64 / ARM64 and Windows x64 / ARM64: N-128280-ga88838af48 from
-https://github.com/yt-dlp/FFmpeg-Builds/releases/tag/autobuild-2026-11-01-19-06
+Linux x64 / ARM64 and Windows x64 / ARM64: N-128970-g11337618b2 from
+https://github.com/yt-dlp/FFmpeg-Builds/releases/tag/autobuild-2026-11-16-23-35
 Build recipes: https://github.com/yt-dlp/FFmpeg-Builds
 GPL source is available from the upstream release/source links:
 https://github.com/FFmpeg/FFmpeg/tree/n9.0.2

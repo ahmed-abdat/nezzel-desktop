@@ -7390,20 +7390,20 @@ bzip2/libbzip2 version 1.0.8 of 13 July 2019
 
 
 yt-dlp (2026.10.26) — bundled installer tool
-ffmpeg (9.0.2 / N-128280-ga88838af48) — bundled installer tool
-  linux-x86_64: N-128280-ga88838af48
-  linux-aarch64: N-128280-ga88838af48
-  windows-x86_64: N-128280-ga88838af48
+ffmpeg (9.0.2 / N-128970-g11337618b2) — bundled installer tool
+  linux-x86_64: N-128970-g11337618b2
+  linux-aarch64: N-128970-g11337618b2
+  windows-x86_64: N-128970-g11337618b2
   darwin-x86_64: 9.0.2
   darwin-aarch64: 9.0.2
-  windows-aarch64: N-128280-ga88838af48
-ffprobe (9.0.2 / N-128280-ga88838af48) — bundled installer tool
-  linux-x86_64: N-128280-ga88838af48
-  linux-aarch64: N-128280-ga88838af48
-  windows-x86_64: N-128280-ga88838af48
+  windows-aarch64: N-128970-g11337618b2
+ffprobe (9.0.2 / N-128970-g11337618b2) — bundled installer tool
+  linux-x86_64: N-128970-g11337618b2
+  linux-aarch64: N-128970-g11337618b2
+  windows-x86_64: N-128970-g11337618b2
   darwin-x86_64: 9.0.2
   darwin-aarch64: 9.0.2
-  windows-aarch64: N-128280-ga88838af48
+  windows-aarch64: N-128970-g11337618b2
 deno (v2.9.8) — bundled installer tool
 
 NEZZEL INSTALLER TOOLS
@@ -7423,8 +7423,8 @@ All pinned builds use GPLv3 (--enable-gpl --enable-version3), without
 --enable-nonfree. They are GPL builds, not LGPL-only builds.
 macOS ARM64 / Intel: FFmpeg 9.0.2, built and signed by Martin Riedl.
 Build/distribution: https://ffmpeg.martin-riedl.de/
-Linux x64 / ARM64 and Windows x64 / ARM64: N-128280-ga88838af48 from
-https://github.com/yt-dlp/FFmpeg-Builds/releases/tag/autobuild-2026-11-01-19-06
+Linux x64 / ARM64 and Windows x64 / ARM64: N-128970-g11337618b2 from
+https://github.com/yt-dlp/FFmpeg-Builds/releases/tag/autobuild-2026-11-16-23-35
 Build recipes: https://github.com/yt-dlp/FFmpeg-Builds
 GPL source is available from the upstream release/source links:
 https://github.com/FFmpeg/FFmpeg/tree/n9.0.2

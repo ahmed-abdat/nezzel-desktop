@@ -1049,12 +1049,12 @@ mod tests {
     let info: super::ToolInfo = serde_json::from_value(serde_json::json!({
       "version": "mixed", "files": {
         "darwin-aarch64": {"url": "https://example.test/mac.zip", "sha256": "hash", "version": "9.0.2"},
-        "linux-x86_64": {"url": "https://example.test/linux.tar.xz", "sha256": "hash", "version": "N-128280-ga88838af48"},
+        "linux-x86_64": {"url": "https://example.test/linux.tar.xz", "sha256": "hash", "version": "N-128970-g11337618b2"},
         "windows-aarch64": {"url": "https://example.test/win.zip", "sha256": "hash"}
       }
     })).unwrap();
     assert_eq!(info.version_for("darwin-aarch64"), "9.0.2");
-    assert_eq!(info.version_for("linux-x86_64"), "N-128280-ga88838af48");
+    assert_eq!(info.version_for("linux-x86_64"), "N-128970-g11337618b2");
     assert_eq!(info.version_for("windows-aarch64"), "mixed");
   }
 

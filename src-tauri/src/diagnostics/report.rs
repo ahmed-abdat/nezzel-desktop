@@ -113,7 +113,7 @@ pub struct ReportInput {
   /// From the app bundle, not the user.
   pub app_version: String,
   pub os: OsInfo,
-  /// (tool, version or "missing"), from the bundled manifests (versions like `9.0.2 / N-128280-g…`).
+  /// (tool, version or "missing"), from the bundled manifests (versions like `9.0.2 / N-128970-g…`).
   pub tools: Vec<(String, String)>,
   /// (app language setting, system locale).
   pub locale: (Token, Token),
