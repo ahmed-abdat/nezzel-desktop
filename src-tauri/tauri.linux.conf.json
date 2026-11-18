@@ -16,7 +16,8 @@
         "depends": [
           "libssl.so.3()(64bit)",
           "libcrypto.so.3()(64bit)"
-        ]
+        ],
+        "desktopTemplate": "linux/nezzel.desktop"
       },
       "appimage": {
         "files": {

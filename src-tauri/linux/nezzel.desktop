@@ -6,3 +6,4 @@ Exec={{exec}}
 Icon={{icon}}
 Terminal=false
 Categories=AudioVideo;Network;
+StartupWMClass=nezzel

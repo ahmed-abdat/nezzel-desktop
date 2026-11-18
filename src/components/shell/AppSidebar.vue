@@ -38,6 +38,13 @@
             <span v-if="!collapsed" class="flex-1 truncate">{{ t('shell.nav.settings') }}</span>
           </router-link>
         </tooltip>
+        <!-- Maker's line: quiet, expanded sidebar only, leads to Settings → About. -->
+        <router-link
+          v-if="!collapsed"
+          :to="{ name: 'settings.about' }"
+          data-testid="sidebar-byline"
+          class="mb-1.5 mt-1 self-start rounded-[4px] px-2 py-0.5 text-[11px] text-muted-foreground outline-none transition-colors duration-100 hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)] rtl:text-[12px]"
+        >{{ t('about.hululsoft.by') }}</router-link>
       </div>
     </nav>
 

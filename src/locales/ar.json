@@ -1446,6 +1446,17 @@
     "rowLine": "{what}. {action}"
   },
   "about": {
+    "hululsoft": {
+      "madeBy": "من تطوير",
+      "by": "من تطوير Hululsoft",
+      "name": "Hululsoft",
+      "tagline": "برمجيات بإتقان",
+      "whoWeAre": "نبني التطبيقات والأنظمة التي تقوم عليها أعمالك، ونبقى معك بعد الإطلاق",
+      "visit": "زيارة Hululsoft",
+      "workWithUs": "ابدأ مشروعك",
+      "more": "المزيد من Hululsoft",
+      "nezzelAndroid": "Nezzel على أندرويد"
+    },
     "title": "حول",
     "credit": "مبني على Open Video Downloader من jely2002 والمساهمين",
     "poweredBy": "يعمل بفضل المصادر المفتوحة",

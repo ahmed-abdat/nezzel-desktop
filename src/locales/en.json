@@ -1446,6 +1446,17 @@
     "rowLine": "{what}. {action}"
   },
   "about": {
+    "hululsoft": {
+      "madeBy": "Made by",
+      "by": "by Hululsoft",
+      "name": "Hululsoft",
+      "tagline": "Software, done right",
+      "whoWeAre": "We build apps, websites and the systems your business runs on, and we stay on after launch",
+      "visit": "Visit Hululsoft",
+      "workWithUs": "Start a project",
+      "more": "More from Hululsoft",
+      "nezzelAndroid": "Nezzel for Android"
+    },
     "title": "About",
     "credit": "Based on Open Video Downloader by jely2002 & contributors",
     "poweredBy": "Powered by open source",

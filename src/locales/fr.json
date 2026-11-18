@@ -1345,6 +1345,17 @@
     "rowLine": "{what}. {action}"
   },
   "about": {
+    "hululsoft": {
+      "madeBy": "Conçu par",
+      "by": "par Hululsoft",
+      "name": "Hululsoft",
+      "tagline": "Le logiciel, bien fait",
+      "whoWeAre": "Nous concevons les applications et les logiciels métier qui font tourner votre activité, puis nous les faisons évoluer avec vous",
+      "visit": "Visiter Hululsoft",
+      "workWithUs": "Démarrer un projet",
+      "more": "Autres produits Hululsoft",
+      "nezzelAndroid": "Nezzel pour Android"
+    },
     "title": "À propos",
     "credit": "Fait avec ❤ par jely2002 & les contributeurs",
     "poweredBy": "Propulsé par open source",

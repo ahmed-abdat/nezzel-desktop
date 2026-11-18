@@ -276,8 +276,8 @@ async function shoot(page: Page, state: GalleryState, locale: Locale, entries: I
       if (state.name === 'settings-about-idle') {
         await expect(page).toHaveURL(/settings\/about/);
         await expect(page.getByTestId('about-report')).toBeVisible();
-        const external = page.locator('a[target=_blank]');
-        await expect(external).toHaveCount(2);
+        const external = page.locator('a[target=_blank]:not([data-slot=button])');
+        await expect(external).toHaveCount(3);
         for (const link of await external.all()) {
           await expect(link.locator('svg')).toBeVisible();
           expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(52);

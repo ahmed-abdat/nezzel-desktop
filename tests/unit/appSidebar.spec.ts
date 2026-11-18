@@ -10,17 +10,18 @@ vi.mock('../../src/composables/usePlatform', () => ({
 
 const { default: AppSidebar } = await import('../../src/components/shell/AppSidebar.vue');
 
-async function mountSidebar(locale: 'en' | 'ar') {
+async function mountSidebar(locale: 'en' | 'ar', collapsed = false) {
   i18n.global.locale.value = locale;
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'home', component: { render: () => null } },
       { path: '/settings', name: 'settings.general', component: { render: () => null } },
+      { path: '/settings/about', name: 'settings.about', component: { render: () => null } },
     ],
   });
   await router.push('/');
-  return mount(AppSidebar, { global: { plugins: [router, i18n], stubs: { Tooltip: { template: '<slot />' } } } });
+  return mount(AppSidebar, { props: { collapsed, canToggle: true }, global: { plugins: [router, i18n], stubs: { Tooltip: { template: '<slot />' } } } });
 }
 
 describe('sidebar brand on macOS', () => {
@@ -34,5 +35,12 @@ describe('sidebar brand on macOS', () => {
 
   it('shows the brand in RTL, where the traffic lights sit over the toolbar', async () => {
     expect((await mountSidebar('ar')).find('img').exists()).toBe(true);
+  });
+
+  it('shows the maker line only when expanded, linking to About', async () => {
+    const byline = (await mountSidebar('ar')).find('[data-testid=sidebar-byline]');
+    expect(byline.text()).toContain('Hululsoft');
+    expect(byline.attributes('href')).toBe('/settings/about');
+    expect((await mountSidebar('ar', true)).find('[data-testid=sidebar-byline]').exists()).toBe(false);
   });
 });

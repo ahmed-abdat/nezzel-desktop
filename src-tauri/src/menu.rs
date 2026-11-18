@@ -1,5 +1,5 @@
 use crate::models::payloads::NavigatePayload;
-use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter};
 
 pub fn setup_menu(handle: &AppHandle) {
@@ -25,17 +25,14 @@ fn setup_macos(handle: &AppHandle) {
     .build(handle)
     .expect("Could not build settings item.");
 
+  // Opens Settings → About in the app (owner: one About, no native panel).
+  let about_item = MenuItemBuilder::new("About Nezzel")
+    .id("about")
+    .build(handle)
+    .expect("Could not build about item.");
+
   let app_submenu = SubmenuBuilder::new(handle, "App")
-    .about(Some(AboutMetadata {
-      name: Some("Nezzel".into()),
-      copyright: Some(
-        "© 2026 Hululsoft. Based on Open Video Downloader, © Jelle Glebbeek and contributors"
-          .into(),
-      ),
-      license: Some("GNU Affero General Public License v3.0".into()),
-      website: Some("https://nezzel.hululsoft.mr".into()),
-      ..Default::default()
-    }))
+    .item(&about_item)
     .separator()
     .item(&settings_item)
     .separator()
@@ -66,14 +63,20 @@ fn setup_macos(handle: &AppHandle) {
 
   handle.set_menu(menu).expect("Could not attach menu.");
   handle.on_menu_event(move |app, event| {
-    if event.id() == settings_item.id() {
-      let _ = app.emit(
-        "navigate",
-        NavigatePayload {
-          route: "settings".into(),
-        },
-      );
-    }
+    let route = if event.id() == settings_item.id() {
+      "settings.general"
+    } else if event.id() == about_item.id() {
+      "settings.about"
+    } else {
+      return;
+    };
+    crate::background::show_main(app);
+    let _ = app.emit(
+      "navigate",
+      NavigatePayload {
+        route: route.into(),
+      },
+    );
   });
 }
 
