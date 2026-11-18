@@ -12,6 +12,7 @@ export const enum MediaState {
   paused = 'paused',
   pausedList = 'pausedList',
   error = 'error',
+  cancelled = 'cancelled',
   done = 'done',
 }
 

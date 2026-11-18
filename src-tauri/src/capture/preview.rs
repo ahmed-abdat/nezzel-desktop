@@ -524,6 +524,7 @@ mod summary_tests {
       ("ERROR: [youtube] abc: Sign in to confirm you're not a bot", "login"),
       ("ERROR: [youtube] abc: Join this channel to get access to members-only content", "login"),
       ("ERROR: [youtube] abc: Private video. Sign in if you've been granted access", "login"),
+      ("ERROR: [youtube] abc: Private video", "unavailable"),
       ("ERROR: [vimeo] 123: Video has not been found", "unavailable"),
       ("ERROR: [vimeo] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized", "unavailable"),
       ("ERROR: Unsupported URL: https://example.com/page", "unsupported"),

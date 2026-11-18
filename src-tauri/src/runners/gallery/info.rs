@@ -96,7 +96,7 @@ pub(crate) fn error_diagnostic(
     GalleryError::Login => "signInRequired",
     GalleryError::NetworkDown => "networkNameResolutionFailed",
     GalleryError::Unavailable => "imageEngineUnavailable",
-    GalleryError::Refused(FETCH_TIMEOUT) => "unknown",
+    GalleryError::Refused(FETCH_TIMEOUT) => FETCH_TIMEOUT,
     GalleryError::Refused(code) => code,
     GalleryError::Unsupported => "urlNotSupported",
     _ => "imageSourceUnavailable",
@@ -211,6 +211,20 @@ pub(super) async fn gallery_info_attempts(
     match image_post(result) {
       Ok(None) => return Some(Outcome::NoMatch),
       Ok(Some(post)) => {
+        if post.truncated && post.assets.len() < 100 {
+          let mut event = error_diagnostic(
+            &entry.group_id,
+            &entry.id,
+            &GalleryError::Refused("listingPartial"),
+            false,
+          );
+          event.level = DiagnosticLevel::Warning;
+          crate::events::emit(
+            app,
+            crate::events::MEDIA_DIAGNOSTIC,
+            MediaDiagnosticPayload::from_diagnostic_event(event),
+          );
+        }
         crate::diagnostics::send::network_response_received();
         let mixed = post
           .assets
@@ -223,7 +237,7 @@ pub(super) async fn gallery_info_attempts(
           .unwrap_or(&post.extract_url)
           .to_string();
         let mut media = post.into_media(entry.id.clone());
-        if mixed {
+        if mixed && crate::parsers::post::single_post_url(&entry.url) {
           let probe = YtdlpRunner::new(app)
             .with_auth_args(
               entry.overrides.as_ref(),
@@ -285,6 +299,11 @@ pub(super) async fn gallery_info_attempts(
           );
         } else {
           stage.record_diagnostics(&diagnostics, login.has_session, attempt_start);
+        }
+        if error == GalleryError::Refused("redditNetworkBlocked") {
+          // The site's explicit network denial is not a login wall; avoid another long fetch.
+          stage.terminal = true;
+          return None;
         }
         match login
           .retry_cookie_fetch(error.cookie_fetch_failure(login.has_session), &mut cancel)

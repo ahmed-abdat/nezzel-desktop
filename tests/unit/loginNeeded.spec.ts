@@ -106,6 +106,23 @@ describe('login picker profile metadata', () => {
     wrapper.unmount();
   });
 
+  it.each([
+    ['en', 'Sign in again in Chrome'],
+    ['ar', 'سجّل الدخول مجددًا في \u2068Chrome\u2069'],
+    ['fr', 'Reconnectez-vous dans Chrome'],
+  ] as const)('%s asks for a fresh browser sign-in when its session expired', (locale, expected) => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const wrapper = mount(LoginNeeded, {
+      props: { diagnosticCode: 'signInRequired', card: { kind: 'failed', failure: { groupId: 'expired-session', host: 'facebook.com', reason: 'exhausted', hint: 'browserSessionExpired', browser: 'chrome' } } },
+      global: { plugins: [i18n], stubs: { RouterLink: true } },
+    });
+    expect(wrapper.text()).toContain(expected);
+    expect(wrapper.text()).not.toContain('may not have access');
+    wrapper.unmount();
+    i18n.global.locale.value = previous;
+  });
+
   it('names the refused browser from metadata while its candidate id stays opaque', () => {
     const wrapper = mount(LoginNeeded, {
       props: { card: { kind: 'failed', failure: { groupId: 'opaque', host: 'instagram.com', reason: 'exhausted', tried: '147599e2-568e-469f-a8cd-fbf9a79606ca', browser: 'chrome' } } },

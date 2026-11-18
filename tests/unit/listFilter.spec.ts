@@ -18,6 +18,7 @@ describe('statusOf', () => {
   it.each([
     [MediaState.done, 'done'],
     [MediaState.error, 'failed'],
+    [MediaState.cancelled, 'cancelled'],
     [MediaState.downloading, 'active'],
     [MediaState.paused, 'active'],
     [MediaState.configure, 'active'],
@@ -29,6 +30,11 @@ describe('statusOf', () => {
 });
 
 describe('parseListView', () => {
+  it('keeps cancelled rows in All without counting them as active, completed, or failed', () => {
+    const cancelled = [row('cancelled', statusOf(MediaState.cancelled), 'video', 'Clip')];
+    expect(ids(filterRows(cancelled, { type: 'all', status: 'all' }, ''))).toEqual(['cancelled']);
+    expect(countView(cancelled, 'all').statuses).toEqual({ all: 1, active: 0, failed: 0, done: 0 });
+  });
   it.each([
     [{}, { type: 'all', status: 'all' }],
     [{ type: 'video', status: 'failed' }, { type: 'video', status: 'failed' }],

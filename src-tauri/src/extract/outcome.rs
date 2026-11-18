@@ -95,12 +95,19 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
     "fileEncoding" => (Outcome::Unknown, "fileEncoding"),
     "fileEmpty" => (Outcome::NoMedia, "fileEmpty"),
     "drmProtected" => (Outcome::Drm, "drmProtected"),
+    "storyExpired" => (Outcome::Removed, "storyExpired"),
+    "liveNow" => (Outcome::Unsupported, "liveNow"),
+    "likeeUnavailable" => (Outcome::Unsupported, "likeeUnavailable"),
+    "profileNotSupported" => (Outcome::Unsupported, "profileNotSupported"),
     "notFound404" => (Outcome::Removed, "notFound404"),
     "copyrightClaimed" => (Outcome::Removed, "copyrightClaimed"),
     "channelUnavailable" => (Outcome::Removed, "channelUnavailable"),
     "videoNotFoundOrPrivate" => (Outcome::Private, "videoNotFoundOrPrivate"),
     "playlistPrivateOrMissing" => (Outcome::Private, "playlistPrivateOrMissing"),
+    "legalRestriction451" => (Outcome::Geo, "legalRestriction451"),
+    "podcastFeed" => (Outcome::Unsupported, "podcastFeed"),
     "geoBlocked" => (Outcome::Geo, "geoBlocked"),
+    "notLive" => (Outcome::LiveNotStarted, "notLive"),
     "livestreamNotStarted" => (Outcome::LiveNotStarted, "livestreamNotStarted"),
     "notPremieredYet" => (Outcome::LiveNotStarted, "notPremieredYet"),
     "membersOnly" => (Outcome::Paid, "membersOnly"),
@@ -124,6 +131,7 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
     }
     // Plan rank 7: a generic block belongs with forbidden/WAF responses.
     "blockedGeneric" => (Outcome::Blocked, "blockedGeneric"),
+    "redditNetworkBlocked" => (Outcome::Blocked, "redditNetworkBlocked"),
     "photosOnly" => (Outcome::KindMismatch, "photosOnly"),
     "unableToExtractInitialData" => (Outcome::ExtractFailed, "unableToExtractInitialData"),
     "unableToExtractIdOrInfo" => (Outcome::ExtractFailed, "unableToExtractIdOrInfo"),
@@ -142,6 +150,8 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
     "imageEngineUnavailable" => (Outcome::ExtractFailed, "imageEngineUnavailable"),
     "imageSourceUnavailable" => (Outcome::NoMedia, "imageSourceUnavailable"),
     "noMediaFound" => (Outcome::NoMedia, "noMediaFound"),
+    "playlistEmpty" => (Outcome::NoMedia, "playlistEmpty"),
+    "telegramAppOnly" => (Outcome::Unsupported, "telegramAppOnly"),
     "urlNotSupported" => (Outcome::Unsupported, "urlNotSupported"),
     "urlUnsupported" => (Outcome::Unsupported, "urlUnsupported"),
     "unknownUrlType" => (Outcome::Unsupported, "unknownUrlType"),
@@ -174,19 +184,26 @@ pub const LOGIN_CODES: [&str; 4] = [
 /// Private, Geo, Drm, Paid, KindMismatch or NoMedia, except `imageSourceUnavailable`, whose message tells the
 /// user to try again.
 #[cfg_attr(not(test), allow(dead_code))]
-pub const PERMANENT_CODES: [&str; 15] = [
+pub const PERMANENT_CODES: [&str; 23] = [
   // Unsupported
+  "liveNow",
+  "telegramAppOnly",
+  "likeeUnavailable",
+  "profileNotSupported",
   "urlNotSupported",
   "urlUnsupported",
   "unknownUrlType",
   "fileNotFile",
   // Removed / Private
+  "storyExpired",
   "notFound404",
   "copyrightClaimed",
   "channelUnavailable",
   "videoNotFoundOrPrivate",
   "playlistPrivateOrMissing",
   // Geo, Drm, Paid
+  "legalRestriction451",
+  "podcastFeed",
   "geoBlocked",
   "drmProtected",
   "membersOnly",
@@ -194,6 +211,7 @@ pub const PERMANENT_CODES: [&str; 15] = [
   "photosOnly",
   "noMediaFound",
   "fileEmpty",
+  "playlistEmpty",
 ];
 
 /// An attempt contains only enum values, a validated code and elapsed milliseconds.

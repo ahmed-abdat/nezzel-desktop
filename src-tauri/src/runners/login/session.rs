@@ -171,7 +171,7 @@ impl LoginSession {
     self.fetch_managed = true;
     self.fetch_browser = self.browser.clone();
     self.fetch_gate_used = phase == Phase::Login;
-    self.fetch_resume_used = phase == Phase::Login;
+    self.fetch_resume_used = false;
     if phase == Phase::Anonymous {
       self.browser = Some(ANONYMOUS_BROWSER.into());
     }
@@ -284,7 +284,17 @@ impl LoginSession {
         id: entry.id.clone(),
         group_id: entry.group_id.clone(),
         host: self.host.clone(),
-        reason: LOGIN_FAILED_REASON.into(),
+        reason: if self.has_session
+          && self
+            .best_failure
+            .as_ref()
+            .is_some_and(|event| event.code == "signInRequired")
+        {
+          "browserSessionExpired"
+        } else {
+          LOGIN_FAILED_REASON
+        }
+        .into(),
         blocked_browser: None,
         status: LoginStatus::Exhausted,
         candidates: Vec::new(),
@@ -468,7 +478,19 @@ impl LoginSession {
       if self.fetch_managed {
         // Stages must finish anonymously before the coordinator records the login cause.
         // Otherwise the queued fetch has no history and begin_fetch clears its browser again.
-        if self.fetch_attempts.is_empty() || self.fetch_resume_used {
+        if self.fetch_attempts.is_empty()
+          || self.fetch_resume_used
+          || self.fetch_gate_used
+            && !self.best_failure.as_ref().is_some_and(|event| {
+              matches!(
+                event.code.as_str(),
+                "accountAccessDenied"
+                  | "signInRequired"
+                  | "membersOnly"
+                  | "signInRequiredForBotDetection"
+              )
+            })
+        {
           return RetryAction::Stop;
         }
         entry.prior_attempts = self.fetch_attempts.clone();
@@ -502,7 +524,15 @@ impl LoginSession {
       if super::global_consent(&auth) != Some(true) {
         return RetryAction::Stop;
       }
-      return self.automatic_retry(request, |request| super::automatic::schedule(app, request));
+      let expired = self.has_session
+        && self
+          .best_failure
+          .as_ref()
+          .is_some_and(|event| event.code == "signInRequired");
+      let failure = self.best_failure.clone();
+      return self.automatic_retry(request, |request| {
+        super::automatic::schedule(app, request, expired, failure)
+      });
     }
     let host = self.host.clone();
     let (action, candidates) = self.decide(reason, aria_denied, cancelled, |remembered| {
@@ -753,4 +783,31 @@ pub(crate) fn test_consented_session() -> LoginSession {
     "https://www.instagram.com/p/123/",
     Some("firefox".into()),
   )
+}
+
+impl LoginSession {
+  pub(crate) async fn threads_resolution(
+    &mut self,
+    app: &AppHandle,
+    url: &str,
+    cancel: tokio::sync::watch::Receiver<bool>,
+  ) -> Result<crate::resolve::Resolution, &'static str> {
+    use crate::runners::browser_cookies::{CookieAccess, CookieContext};
+    let access = CookieAccess::prepare_for_app(
+      app,
+      &self.auth,
+      self.browser.as_deref(),
+      url,
+      &CookieContext::for_app(app)?,
+      cancel,
+    )
+    .await?;
+    self.has_session = access.has_session;
+    if !access.has_session {
+      return Ok(crate::resolve::Resolution::Unsupported {
+        reason: crate::resolve::Reason::Login,
+      });
+    }
+    Ok(access.resolve_threads(url).await)
+  }
 }

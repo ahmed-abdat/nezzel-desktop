@@ -5,6 +5,7 @@ import { reactive } from 'vue';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { clearMocks } from '@tauri-apps/api/mocks';
 import { installTauriMock } from '../utils/tauriMock.ts';
+import { useListVisibilityStore } from '../../src/stores/listVisibility';
 import { useMediaStore } from '../../src/stores/media/media';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
@@ -77,6 +78,81 @@ function createPlaylistGroup(groupId: string, total: number): Group {
 }
 
 describe('media store', () => {
+  it.each([
+    [TrackType.both, TrackType.both, false],
+    [TrackType.audio, TrackType.audio, false],
+    [TrackType.both, TrackType.audio, true],
+    [TrackType.audio, TrackType.both, true],
+    [TrackType.video, TrackType.both, false],
+  ] as const)('dedupes by chosen kind: %s then %s (new row: %s)', async (existing, incoming, addsRow) => {
+    const info = vi.fn();
+    installTauriMock({ media_info: info });
+    const store = useMediaStore();
+    const options = useMediaOptionsStore();
+    const url = 'https://vimeo.com/123';
+    const first = await store.dispatchMediaInfoFetch(url);
+    options.setOptions(first, { trackType: existing });
+    options.globalOptions = { trackType: incoming };
+    const added = await store.addUrlBatch([url]);
+    expect(added).toHaveLength(addsRow ? 1 : 0);
+    expect(info).toHaveBeenCalledTimes(addsRow ? 2 : 1);
+    expect(options.getOptions(first)?.trackType).toBe(existing);
+    // A third paste reuses whichever pending row has this kind.
+    expect(await store.addUrlBatch([url])).toEqual([]);
+  });
+
+  it.each([MediaState.fetching, MediaState.configure, MediaState.playlistSelection, MediaState.downloading, MediaState.paused])('focuses an existing %s row without another read or download', async (state) => {
+    const info = vi.fn();
+    const download = vi.fn();
+    installTauriMock({ media_info: info, media_download: download });
+    const store = useMediaStore();
+    const id = await store.dispatchMediaInfoFetch('https://www.instagram.com/p/DEg2j6USJgo/?igsh=first');
+    useMediaStateStore().setGroupState(id, state);
+    const added = await store.addUrlBatchAndDownload(['https://instagram.com/p/DEg2j6USJgo?igsh=second&utm_source=share']);
+    expect(added).toEqual([]);
+    expect(useMediaGroupStore().orderedGroups).toHaveLength(1);
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(download).not.toHaveBeenCalled();
+    expect(store.duplicateFocus?.id).toBe(id);
+    expect(useMediaStateStore().getGroupState(id)).toBe(state);
+  });
+
+  it('uses the saved audio default when deduping a fresh paste', async () => {
+    installTauriMock({ media_info: vi.fn() });
+    const store = useMediaStore();
+    const prefs = useUiPrefs();
+    const previous = prefs.defaultChoice.value;
+    const url = 'https://vimeo.com/123';
+    const first = await store.dispatchMediaInfoFetch(url);
+    useMediaOptionsStore().setOptions(first, { trackType: TrackType.both });
+    try {
+      prefs.defaultChoice.value = 'audio';
+      expect(await store.addUrlBatch([url])).toHaveLength(1);
+      expect(await store.addUrlBatch([url])).toEqual([]);
+    } finally { prefs.defaultChoice.value = previous; }
+  });
+
+  it('coalesces simultaneous copies before metadata returns and leaves terminal rows downloadable again', async () => {
+    let finish!: () => void;
+    const info = vi.fn(() => new Promise<void>((resolve) => {
+      finish = resolve;
+    }));
+    installTauriMock({ media_info: info });
+    const store = useMediaStore();
+    const adding = store.addUrlBatch(['https://instagram.com/p/ABC?igsh=one', 'https://www.instagram.com/p/ABC/?igsh=two']);
+    expect(useMediaGroupStore().orderedGroups).toHaveLength(1);
+    finish();
+    const ids = await adding;
+    expect(ids).toHaveLength(1);
+    expect(info).toHaveBeenCalledTimes(1);
+    info.mockResolvedValue();
+    for (const state of [MediaState.done, MediaState.error, MediaState.cancelled]) {
+      useMediaStateStore().setGroupState(useMediaGroupStore().orderedGroups[0].id, state);
+      const added = await store.addUrlBatch(['https://instagram.com/p/ABC']);
+      expect(added).toHaveLength(1);
+    }
+  });
+
   it('normalizes links at the queue boundary for shortcuts and direct callers', async () => {
     const info = vi.fn().mockResolvedValue('ok');
     installTauriMock({ media_info: info });
@@ -101,7 +177,7 @@ describe('media store', () => {
     expect(group.title).toBe('Photo caption');
   });
 
-  it('cancels immediately through removal and Undo requeues the saved group with every option', async () => {
+  it('retains a cancelled row and Undo requeues it with every option, ignoring old events', async () => {
     const requests: { cmd: string; args: unknown }[] = [];
     installTauriMock({
       group_cancel: (cmd, args) => { requests.push({ cmd, args: structuredClone(args) }); },
@@ -129,6 +205,13 @@ describe('media store', () => {
     expect(useMediaProgressStore().findDownloadProgress(group.id)?.stage).toBe(ProgressStage.queued);
     const undo = store.cancelDownload(group.id)!;
     expect(groups.findGroupById(group.id)).toBeUndefined();
+    expect(groups.orderedGroups).toHaveLength(1);
+    const cancelled = groups.orderedGroups[0];
+    expect(useMediaStateStore().getGroupState(cancelled.id)).toBe(MediaState.cancelled);
+    useMediaProgressStore().processMediaCompletePayload({ id: 'leader', groupId: group.id });
+    store.processMediaDestinationPayload({ id: 'leader', groupId: group.id, destination: { path: '/late.mp4', confidence: 100 } });
+    expect(useMediaStateStore().getGroupState(cancelled.id)).toBe(MediaState.cancelled);
+    expect(useMediaDestinationStore().getDestinations(cancelled.id)).toEqual([]);
     expect(options.getOptions(group.id)).toBeUndefined();
     expect(requests).toEqual([{ cmd: 'group_cancel', args: { groupId: group.id, discardFiles: true } }]);
     // Mutating the old reference cannot change the saved cancellation snapshot.
@@ -137,6 +220,7 @@ describe('media store', () => {
     const restored = groups.orderedGroups[0];
     expect(restored).toMatchObject({ title: 'Playlist', url: group.url });
     expect(restored.id).not.toBe(group.id);
+    expect(restored.id).toBe(cancelled.id);
     expect(Object.values(restored.items)[0].id).not.toBe('leader');
     expect(requests.at(-1)).toMatchObject({ cmd: 'media_download', args: { groupId: restored.id, items: originalRequest.items.map(item => ({ ...(item as object), id: expect.any(String) })) } });
     expect(options.getOptions(restored.id)).toEqual({ trackType: TrackType.both, height: 720 });
@@ -146,6 +230,29 @@ describe('media store', () => {
     expect(useMediaStateStore().getGroupState(restored.id)).toBe(MediaState.downloading);
     await undo();
     expect(requests.filter(r => r.cmd === 'media_download')).toHaveLength(1);
+  });
+
+  it.each(['retry', 'remove', 'hide'] as const)('an old Undo cannot revive a cancelled row after %s', async (action) => {
+    const download = vi.fn();
+    const info = vi.fn();
+    installTauriMock({ media_download: download, media_info: info });
+    const groups = useMediaGroupStore();
+    const store = useMediaStore();
+    const group = createPlaylistGroup('cancel-again', 1);
+    delete group.items.leader.entries;
+    groups.createGroup(group);
+    useMediaStateStore().setGroupState(group.id, MediaState.downloading);
+    const undo = store.cancelDownload(group.id)!;
+    const retained = groups.orderedGroups[0];
+    if (action === 'retry') {
+      await store.retryGroup(retained.id);
+      expect(info).toHaveBeenCalledWith('media_info', expect.objectContaining({ groupId: retained.id }));
+      expect(useMediaStateStore().getGroupState(retained.id)).toBe(MediaState.fetching);
+    } else if (action === 'hide') useListVisibilityStore().hide([retained.id]);
+    else await store.deleteGroup(retained.id);
+    expect(await undo()).toBe(false);
+    expect(download).not.toHaveBeenCalled();
+    expect(groups.orderedGroups).toHaveLength(action === 'remove' ? 0 : 1);
   });
 
   it('Undo keeps three finished playlist items and submits only the seven unfinished items', async () => {
@@ -798,7 +905,7 @@ describe('media store', () => {
     expect(download).not.toHaveBeenCalled();
     for (const [position, entry] of [entries[0], entries[2]].entries()) {
       media.processMediaAddPayload({ groupId: group.id, total: 2, item: {
-        id: `checked-${position}`, url: entry.videoUrl, formats: [], audioCodecs: [], filesize: 0,
+        id: `checked-${position}`, url: entry.videoUrl, formats: [], audioCodecs: [], filesize: 0, playlistChild: true,
       } });
     }
     const children = useMediaGroupStore().orderedGroups;
@@ -806,7 +913,7 @@ describe('media store', () => {
     for (const child of children) expect(useMediaOptionsStore().getOptions(child.id)).toEqual(options);
     await queued;
     expect(download).toHaveBeenCalledTimes(2);
-    for (const [, args] of download.mock.calls) expect(args).toMatchObject({ items: [{ format: options }] });
+    for (const [, args] of download.mock.calls) expect(args).toMatchObject({ items: [{ format: options, playlistChild: true }] });
   });
 
   it('keeps the complete checklist and selection available after expansion is rejected', async () => {

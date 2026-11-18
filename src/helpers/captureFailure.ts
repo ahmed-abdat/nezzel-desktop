@@ -3,9 +3,16 @@
  * Reasons come from the Rust preview (`preview::FailReason`), rendered into the generated contract.
  */
 import { FAIL_REASONS, type FailReason } from '@/generated/contract';
+import type { AuthSettings } from '../tauri/types/config';
 
 export type { FailReason };
 export type FailAction = 'retry' | 'options' | 'report';
+
+/** The preview is anonymous; an enabled automatic login is used by the real info/download job. */
+export function canUseAutomaticLogin(reason: string | null | undefined, auth: Pick<AuthSettings, 'cookieBrowser' | 'alwaysUseBrowserLogins' | 'browserLoginConsent'> | undefined): boolean {
+  // An explicit refusal always wins, as in the Rust consent gate.
+  return reason === 'login' && auth?.cookieBrowser === 'automatic' && auth.alwaysUseBrowserLogins && auth.browserLoginConsent !== false;
+}
 
 export function failReason(reason: string | null | undefined): FailReason {
   return (FAIL_REASONS as readonly string[]).includes(reason ?? '') ? reason as FailReason : 'unknown';

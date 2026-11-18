@@ -103,6 +103,28 @@ pub(crate) async fn preview(url: &str, id: String) -> Result<serde_json::Value> 
 pub(crate) async fn info(app: &AppHandle, entry: &FetchEntry) -> StageResult {
   metadata_stage(app, entry, false).await
 }
+pub(crate) fn generic_file_candidate(source: &str, info: &serde_json::Value) -> bool {
+  info["extractor"]
+    .as_str()
+    .is_some_and(|name| name.eq_ignore_ascii_case("generic"))
+    && info.get("entries").is_none()
+    && probe::should_probe(source)
+    && (info["ext"] == "unknown_video"
+      || info["content_type"]
+        .as_str()
+        .or_else(|| info["mime_type"].as_str())
+        .is_some_and(|mime| {
+          matches!(
+            crate::media_types::base_mime(mime).as_str(),
+            "application/json"
+              | "text/plain"
+              | "text/csv"
+              | "application/octet-stream"
+              | "application/pdf"
+              | "application/zip"
+          )
+        }))
+}
 pub(crate) async fn after_unsupported(app: &AppHandle, entry: &FetchEntry) -> StageResult {
   metadata_stage(app, entry, true).await
 }
@@ -128,6 +150,7 @@ async fn metadata_stage(app: &AppHandle, entry: &FetchEntry, unsupported: bool) 
     Some(Err(Error::Cancelled)) => stage.finish(Outcome::Cancelled, false, start),
     Some(Err(error)) => {
       let code = error.code();
+      stage.terminal = code == "podcastFeed";
       stage.record_code(code, "", false, start);
       stage
     }
@@ -214,7 +237,7 @@ pub(crate) async fn probe_metadata(
 ) -> Option<Result<Probe>> {
   probe_metadata_impl(engine, url, cancel, false).await
 }
-async fn probe_metadata_impl(
+pub(super) async fn probe_metadata_impl(
   engine: &Engine,
   url: &str,
   cancel: tokio::sync::watch::Receiver<bool>,
@@ -231,13 +254,19 @@ async fn probe_metadata_impl(
       probe.confirm_unknown().ok()?;
       Some(Ok(probe))
     }
+    Ok(Err(error @ (Error::PodcastFeed | Error::LegalRestriction))) => Some(Err(error)),
+    Ok(Err(Error::Removed))
+      if reqwest::Url::parse(url).is_ok_and(|url| probe::file_extension(&url)) =>
+    {
+      Some(Err(Error::Removed))
+    }
     _ => None,
   }
 }
 /// Subfolder of the download folder that file-share downloads go to (the inspector shows the same path).
 pub(crate) const FILES_FOLDER: &str = "Files";
 
-fn root(app: &AppHandle, entry: &DownloadEntry) -> Result<PathBuf> {
+pub(crate) fn root(app: &AppHandle, entry: &DownloadEntry) -> Result<PathBuf> {
   if let Some(dir) = entry
     .overrides
     .as_ref()
@@ -263,19 +292,55 @@ pub(crate) async fn download(app: AppHandle, entry: DownloadEntry) -> Result<()>
   if !*cancel.borrow() {
     return Ok(());
   }
-  let result = attempt(&app, &entry, cancel.clone()).await;
-  if let Err(error) = &result {
-    if matches!(error, Error::Cancelled) || !*cancel.borrow() {
-      return Ok(());
+  let mut cancel = cancel;
+  let start = tokio::time::Instant::now();
+  let mut recovery = crate::runners::reliability::Recovery::default();
+  loop {
+    loop {
+      let delay = crate::runners::reliability::host_delay(&entry.url);
+      if delay.is_zero() {
+        break;
+      }
+      if !crate::runners::reliability::wait(&app, &entry, &mut cancel, delay, true).await {
+        return Ok(());
+      }
     }
-    diagnostic(&app, &entry.group_id, &entry.id, error);
+    let result = attempt(&app, &entry, cancel.clone(), &mut recovery).await;
+    if let Err(error) = &result {
+      if matches!(error, Error::Cancelled) || !*cancel.borrow() {
+        return Ok(());
+      }
+      if matches!(error, Error::Stalled) {
+        if recovery.restart_stall() {
+          continue;
+        }
+        crate::runners::reliability::fatal(&app, &entry, "downloadStalled");
+        return result;
+      }
+      if matches!(error, Error::Network) {
+        if let Some(delay) = recovery.network_delay(start.elapsed()) {
+          if !crate::runners::reliability::wait(&app, &entry, &mut cancel, delay, false).await {
+            return Ok(());
+          }
+          continue;
+        }
+      }
+      if matches!(error, Error::RateLimited) {
+        if let Some(delay) = recovery.busy_delay() {
+          crate::runners::reliability::cool_host(&entry.url, delay);
+          continue;
+        }
+      }
+      diagnostic(&app, &entry.group_id, &entry.id, error);
+    }
+    return result;
   }
-  result
 }
 async fn attempt(
   app: &AppHandle,
   entry: &DownloadEntry,
   cancel: tokio::sync::watch::Receiver<bool>,
+  recovery: &mut crate::runners::reliability::Recovery,
 ) -> Result<()> {
   let config = app.state::<SharedConfig>().load();
   let network = crate::runners::override_resolver::resolve_with_patch(
@@ -286,6 +351,12 @@ async fn attempt(
     return Err(Error::Proxy);
   }
   let dir = root(app, entry)?;
+  let estimate = entry
+    .template_context
+    .values
+    .get("filesize")
+    .and_then(|size| size.parse().ok());
+  crate::scheduling::disk_space::check(&dir, estimate).map_err(|_| Error::Space)?;
   // Keep installed/portable resume keys stable; only the developer host isolates state.
   #[cfg(feature = "link-matrix")]
   let state_directory = app
@@ -330,6 +401,7 @@ async fn attempt(
     });
     group.push(partial);
   }
+  let mut previous_bytes = None;
   let path = engine
     .download(
       &entry.url,
@@ -347,6 +419,10 @@ async fn attempt(
           speed,
         } = event
         {
+          if previous_bytes.is_some_and(|previous| bytes > previous) {
+            recovery.progressed();
+          }
+          previous_bytes = Some(bytes);
           crate::usage::speed_sample(app, &entry.group_id, &entry.id, Some(speed));
           crate::events::emit(
             app,

@@ -48,7 +48,12 @@ pub(super) fn probe_with_gallery(entry: &DownloadEntry) -> bool {
 }
 
 pub(super) fn retry_gallery_login(error: &GalleryError) -> bool {
-  !matches!(error, GalleryError::Unsupported | GalleryError::NetworkDown)
+  !matches!(
+    error,
+    GalleryError::Unsupported
+      | GalleryError::NetworkDown
+      | GalleryError::Refused("redditNetworkBlocked")
+  )
 }
 
 #[cfg(test)]
@@ -70,6 +75,7 @@ mod tests {
     for (error, retry) in [
       (GalleryError::Unsupported, false),
       (GalleryError::NetworkDown, false),
+      (GalleryError::Refused("redditNetworkBlocked"), false),
       (GalleryError::Login, true),
       (GalleryError::Refused("rateLimited429"), true),
     ] {

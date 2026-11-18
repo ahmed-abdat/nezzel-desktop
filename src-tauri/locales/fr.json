@@ -1,4 +1,16 @@
 {
+  "errors": {
+    "runner": {
+      "playlistEmpty": "Cette page n’a aucune vidéo à enregistrer. Ouvrez-la sur le site ou copiez le lien d’une vidéo.",
+      "vimeoSignInRequired": "Vimeo exige désormais une connexion à vimeo.com dans votre navigateur.",
+      "listingPartial": "Voici les éléments trouvés avant que le site ne cesse de répondre.",
+      "galleryItemsSkipped": "Les autres éléments ont été enregistrés. Certains n’ont pas pu être téléchargés.",
+      "podcastFeed": "Ceci est un flux de podcast. Ouvrez le lien d’un épisode pour enregistrer son audio.",
+      "legalRestriction451": "Ce contenu est indisponible dans votre pays pour des raisons légales.",
+      "liveNow": "C’est un direct. Nezzel pourra l’enregistrer une fois la diffusion terminée.",
+      "mediaUnavailable": "Cette vidéo est indisponible : elle a été supprimée, est privée ou le lien est incorrect."
+    }
+  },
   "tray": {
     "pasteLink": "Coller le lien",
     "activeDownloads": "Téléchargements actifs : {n}",
@@ -51,7 +63,7 @@
     }
   },
   "resolve": {
-    "photosOnly": "Cette publication contient des photos, pas de vidéo. Le téléchargement des photos sera bientôt disponible."
+    "photosOnly": "Cette publication contient des photos, pas de vidéo. Téléchargez plutôt les photos."
   },
   "files": {
     "errors": {

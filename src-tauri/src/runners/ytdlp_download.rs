@@ -1,7 +1,7 @@
 use crate::download_records::DownloadRecords;
 use crate::logging::LogStoreState;
 use crate::models::download::DownloadSection;
-use crate::models::{MediaDiagnosticPayload, MediaFatalPayload, ProgressEvent};
+use crate::models::{MediaDiagnosticPayload, MediaFatalPayload, ProgressEvent, TrackType};
 use crate::parsers::ytdlp_error::{
   redact_diagnostic, CookieFetchFailure, DiagnosticMatcher, YtdlpErrorParser,
 };
@@ -50,7 +50,7 @@ fn partial_name(group: &str, item: &str) -> String {
 }
 
 /// The registry owns resume data; process leases delay deletion until all writers have exited.
-/// Paused data lasts for this session; startup removes it because the UI queue is not persisted.
+/// Matching saved queue IDs may adopt verified partials after a restart.
 pub(crate) struct DownloadPartial {
   pub path: std::path::PathBuf,
   group: String,
@@ -69,9 +69,19 @@ impl DownloadPartial {
         use std::os::unix::fs::DirBuilderExt;
         builder.mode(0o700);
       }
-      // A startup sweep may still be deleting this deterministic path. Never adopt an old
-      // directory: in-session resumes already hold its lease in PartialDownloads.
-      builder.create(&path)?;
+      match builder.create(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+          let valid = fs::symlink_metadata(&path)?.file_type().is_dir()
+            && read_partial_owner(&path).is_some_and(|owner| {
+              owner.group == group && owner.item == item && owner.state != PartialState::Discarded
+            });
+          if !valid {
+            return Err(std::io::Error::other("Unverified partial directory"));
+          }
+        }
+        Err(error) => return Err(error),
+      }
       let partial = Self {
         path,
         group: group.to_owned(),
@@ -128,6 +138,36 @@ impl Drop for DownloadPartial {
   }
 }
 
+fn preserve_numbering(
+  path: &std::path::Path,
+  context: &mut crate::runners::template_context::TemplateContext,
+) -> Result<(), String> {
+  let path = path.join("numbering.json");
+  let keys = ["autonumber", "playlist_autonumber"];
+  if path.exists() {
+    let metadata = std::fs::symlink_metadata(&path).map_err(|_| "Invalid saved numbering")?;
+    if !metadata.is_file() || metadata.len() > 1024 {
+      return Err("Invalid saved numbering".into());
+    }
+    let stored: std::collections::HashMap<String, String> =
+      serde_json::from_slice(&std::fs::read(&path).map_err(|_| "Cannot read saved numbering")?)
+        .map_err(|_| "Invalid saved numbering")?;
+    for key in keys {
+      if let Some(value) = stored.get(key).filter(|value| value.parse::<u64>().is_ok()) {
+        context.values.insert(key.into(), value.clone());
+      }
+    }
+  } else {
+    let stored: std::collections::HashMap<_, _> = keys
+      .into_iter()
+      .filter_map(|key| context.values.get(key).map(|value| (key, value)))
+      .collect();
+    let bytes = serde_json::to_vec(&stored).map_err(|_| "Cannot save numbering")?;
+    std::fs::write(&path, bytes).map_err(|_| "Cannot save numbering")?;
+  }
+  Ok(())
+}
+
 fn read_partial_owner(path: &std::path::Path) -> Option<PartialOwner> {
   let path = path.join(PARTIAL_OWNER);
   let metadata = std::fs::symlink_metadata(&path).ok()?;
@@ -158,6 +198,18 @@ impl PartialDownloads {
       return Ok(None);
     }
     let key = (group.to_owned(), item.to_owned());
+    std::fs::create_dir_all(root).map_err(|_| "Could not prepare download folder")?;
+    let canonical_root = root
+      .canonicalize()
+      .map_err(|_| "Could not resolve download folder")?;
+    if entries
+      .get(&key)
+      .is_some_and(|partial| partial.path.parent() != Some(canonical_root.as_path()))
+    {
+      if let Some(previous) = entries.remove(&key) {
+        previous.discard();
+      }
+    }
     if let Some(partial) = entries.get(&key) {
       partial
         .set_state(PartialState::Running)
@@ -238,8 +290,11 @@ impl PartialDownloads {
   }
 }
 
-/// Classify before dispatchers start, without recursively deleting on the setup thread.
-fn stale_partials(roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+/// Only verified ownership records may authorize removal; saved identities remain resumable.
+fn stale_partials(
+  roots: &[std::path::PathBuf],
+  saved: &[(String, String)],
+) -> Vec<std::path::PathBuf> {
   let mut paths = std::collections::HashSet::new();
   for root in roots {
     let Ok(root) = root.canonicalize() else {
@@ -263,9 +318,14 @@ fn stale_partials(roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
       if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
         continue;
       }
-      let owned = read_partial_owner(&entry.path())
-        .is_some_and(|owner| name == partial_name(&owner.group, &owner.item));
-      // The startup registry is empty: Paused/Queued owners cannot return with their old IDs.
+      let owned = read_partial_owner(&entry.path()).is_some_and(|owner| {
+        (owner.state == PartialState::Discarded
+          || !saved
+            .iter()
+            .any(|(group, item)| group == &owner.group && item == &owner.item))
+          && name == partial_name(&owner.group, &owner.item)
+      });
+      // Only saved queue identities can adopt a previous session’s partials.
       if owned {
         paths.insert(entry.path());
       }
@@ -282,27 +342,79 @@ fn remove_stale_partials(paths: Vec<std::path::PathBuf>) {
   }
 }
 
-pub(crate) fn sweep_download_partials(app: &AppHandle) {
+pub(crate) fn sweep_download_partials(
+  app: &AppHandle,
+  mut saved: Vec<(String, String)>,
+  extra_roots: Vec<String>,
+) {
+  static STARTUP_SWEEP: std::sync::Once = std::sync::Once::new();
+  // Never sweep again after this session can have detached cancellation leases.
+  STARTUP_SWEEP.call_once(|| {
+    let runner = YtdlpRunner::new(app);
+    let mut roots = vec![
+      runner.output_root(&TrackType::Video, None),
+      runner.output_root(&TrackType::Audio, None),
+    ];
+    if let Some(root) = app
+      .state::<SharedConfig>()
+      .load()
+      .output
+      .download_dir
+      .as_ref()
+    {
+      roots.push(std::path::PathBuf::from(root));
+    }
+    roots.extend(extra_roots.into_iter().map(std::path::PathBuf::from));
+    // The same lock protects registration: a live writer is never an orphan, including
+    // downloads started by another window while the frontend restores its snapshot.
+    let live = PARTIAL_DOWNLOADS
+      .0
+      .lock()
+      .unwrap_or_else(|e| e.into_inner());
+    saved.extend(live.keys().cloned());
+    crate::runners::gallery_files::sweep_image_staging(&roots);
+    remove_stale_partials(stale_partials(&roots, &saved));
+  });
+}
+
+pub(crate) fn discard_group(app: &AppHandle, group: &str, additional_roots: &[String]) {
+  PARTIAL_DOWNLOADS.discard(group);
   let cfg = app.state::<crate::SharedConfig>().load();
   let prefs = app.state::<crate::SharedPreferences>().load();
-  // Only current configured roots are swept; old output folders are not indexed.
-  let roots: Vec<_> = [
+  let roots = [
     cfg.output.download_dir.as_deref(),
     prefs.paths.video_download_dir.as_deref(),
     prefs.paths.audio_download_dir.as_deref(),
-  ]
-  .into_iter()
-  .flatten()
-  .map(std::path::PathBuf::from)
-  .collect();
-  let paths = stale_partials(&roots);
-  if !paths.is_empty() {
-    tauri::async_runtime::spawn_blocking(move || remove_stale_partials(paths));
+  ];
+  for root in roots
+    .into_iter()
+    .flatten()
+    .chain(additional_roots.iter().map(String::as_str))
+  {
+    let Ok(entries) = std::fs::read_dir(root) else {
+      continue;
+    };
+    for entry in entries.flatten() {
+      if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+        continue;
+      }
+      let Some(owner) = read_partial_owner(&entry.path()) else {
+        continue;
+      };
+      if owner.group != group
+        || entry.file_name() != std::ffi::OsStr::new(&partial_name(group, &owner.item))
+      {
+        continue;
+      }
+      // Active writers retain their Arc lease and remove the discarded directory on exit.
+      if owner.state == PartialState::Discarded {
+        continue;
+      }
+      if let Ok(partial) = DownloadPartial::open(std::path::Path::new(root), group, &owner.item) {
+        partial.discard();
+      }
+    }
   }
-}
-
-pub(crate) fn discard_group(group: &str) {
-  PARTIAL_DOWNLOADS.discard(group);
 }
 pub(crate) fn pause_group(group: &str) {
   PARTIAL_DOWNLOADS.state(group, PartialState::Paused);
@@ -342,7 +454,12 @@ fn download_failure_diagnostics(
 ) -> Vec<crate::models::error::DiagnosticEvent> {
   let cause = events
     .iter()
-    .position(|event| event.code == "drmProtected")
+    .position(|event| {
+      matches!(
+        event.code.as_str(),
+        "drmProtected" | "signInRequired" | "legalRestriction451" | "rateLimited429"
+      )
+    })
     .or_else(|| {
       events
         .last()
@@ -365,6 +482,35 @@ fn download_failure_diagnostics(
   events
 }
 
+fn refetch_after_failure(
+  state: &mut super::retry_policy::RetryState,
+  url: &str,
+  diagnostics: &[crate::models::error::DiagnosticEvent],
+  aria: bool,
+  cookies: bool,
+) -> bool {
+  diagnostics.iter().any(|event| {
+    state.refetch(url, &event.code, &event.message, aria, cookies) == RetryAction::Refetch
+  })
+}
+
+fn impersonation_response(input: &ResolvedInput, line: &str) -> Option<&'static str> {
+  let lower = line.to_ascii_lowercase();
+  if input.impersonation_unavailable(line) {
+    Some("Impersonate target is not available")
+  } else if lower.contains("http error 403")
+    && reqwest::Url::parse(&input.url).ok().is_some_and(|url| {
+      url.host_str().and_then(crate::sites::site_of) == Some(crate::sites::SiteId::Rumble)
+    })
+  {
+    Some("HTTP Error 403")
+  } else if lower.contains("http error 401") {
+    Some("HTTP Error 401")
+  } else {
+    None
+  }
+}
+
 /// Preserve the original HTTP failure if this yt-dlp build cannot impersonate Chrome.
 fn retry_vimeo(
   input: &mut ResolvedInput,
@@ -376,7 +522,7 @@ fn retry_vimeo(
     if let Some(events) = original.as_ref() {
       diagnostics.clone_from(events);
     }
-  } else if input.retry_vimeo_401(stderr) {
+  } else if input.retry_vimeo_401(stderr) || input.retry_rumble_403(stderr) {
     *original = Some(diagnostics.clone());
     return true;
   }
@@ -420,6 +566,90 @@ fn selected_media_expired(entry: &DownloadEntry, input: &ResolvedInput, message:
   entry.resume_parent.is_some()
     && input.original != entry.url
     && crate::parsers::gallery::expired_media(message)
+}
+
+fn instagram_post(url: &str) -> bool {
+  reqwest::Url::parse(url).is_ok_and(|url| {
+    url.host_str().and_then(crate::sites::site_of) == Some(crate::sites::SiteId::Instagram)
+  })
+}
+
+/// yt-dlp's Instagram post extractor sees only a post's videos (none of a mixed carousel's photos,
+/// and often nothing signed out). gallery-dl reads the whole post, with the site's login if any.
+/// Gallery-delegated children (`resume_parent`) and partial selections never go back to it.
+fn instagram_needs_gallery(
+  entry: &DownloadEntry,
+  input: &ResolvedInput,
+  diagnostics: &[crate::models::error::DiagnosticEvent],
+) -> bool {
+  entry.resume_parent.is_none()
+    && instagram_post(&input.url)
+    && entry
+      .attachment_ids
+      .as_ref()
+      .is_none_or(|ids| ids.len() >= entry.attachments.len())
+    && diagnostics.iter().any(|event| {
+      matches!(event.level, crate::models::error::DiagnosticLevel::Error)
+        && event
+          .component
+          .as_deref()
+          .is_some_and(|c| c.eq_ignore_ascii_case("instagram"))
+        && event
+          .message
+          .to_ascii_lowercase()
+          .contains("no video formats found")
+    })
+}
+
+/// The gallery's video children reuse this item's id: they must open a fresh partial directory,
+/// not adopt the failed yt-dlp one, which the first child's completion would mark discarded
+/// while this attempt still holds it.
+fn release_partial_for_handoff(
+  partials: &PartialDownloads,
+  group: &str,
+  item: &str,
+  held: Option<std::sync::Arc<DownloadPartial>>,
+) {
+  partials.complete(group, item);
+  drop(held);
+}
+
+/// The login the gallery retry starts with. The row's remembered choice is keyed by the post's
+/// host, so a short link looks it up again under instagram.com. The anonymous marker from an
+/// anonymous fetch win is dropped so the site's own session and automatic login stay usable.
+fn handoff_browser(
+  entry: &DownloadEntry,
+  original_url: &str,
+  current: Option<String>,
+) -> Option<String> {
+  if instagram_post(original_url) {
+    current
+  } else {
+    super::login::row_browser(&entry.group_id, &entry.id, &entry.url)
+  }
+  .filter(|browser| browser != super::login::ANONYMOUS_BROWSER)
+}
+
+/// One retry of the whole post through gallery-dl; its own login flow and messages take over.
+async fn retry_instagram_with_gallery(
+  app: AppHandle,
+  mut entry: DownloadEntry,
+  login: &LoginSession,
+  input: &ResolvedInput,
+  held: Option<std::sync::Arc<DownloadPartial>>,
+) -> Result<(), YtdlpDownloadError> {
+  tracing::info!("Instagram post had no video formats; retrying through gallery-dl");
+  release_partial_for_handoff(&PARTIAL_DOWNLOADS, &entry.group_id, &entry.id, held);
+  // A short link (v.gd, is.gd) has been resolved: gallery-dl and the login lookup need the post.
+  let original_url = std::mem::replace(&mut entry.url, input.url.clone());
+  // yt-dlp's attachment list holds only the videos it saw; gallery-dl lists the whole post.
+  entry.fetch_engine = Some(crate::models::parsed::FetchEngine::Gallery);
+  entry.attachments.clear();
+  entry.attachment_ids = None;
+  entry.media_kind = None;
+  entry.login_browser = handoff_browser(&entry, &original_url, login.browser.clone());
+  entry.login_was_accepted = entry.login_browser.is_some();
+  Box::pin(crate::runners::gallery::run_media_download(app, entry)).await
 }
 
 pub(super) fn selected_video_args(entry: &DownloadEntry) -> Vec<String> {
@@ -474,96 +704,131 @@ fn snapchat_media_page(source: &str) -> bool {
     url
       .host_str()
       .is_some_and(|host| host == "snapchat.com" || host.ends_with(".snapchat.com"))
-      && url.path_segments().is_some_and(|segments| {
-        segments
-          .into_iter()
-          .any(|part| matches!(part, "spotlight" | "highlight"))
-      })
   })
 }
 
-fn normalize_snapchat_extensions(info: &mut serde_json::Value) {
-  fn snapchat_cdn_url(value: &serde_json::Value) -> bool {
-    value
-      .as_str()
-      .and_then(|raw| reqwest::Url::parse(raw).ok())
-      .is_some_and(|url| {
-        url
-          .host_str()
-          .is_some_and(|host| host == "sc-cdn.net" || host.ends_with(".sc-cdn.net"))
-      })
+async fn snapchat_snapshot<T: crate::resolve::http::Transport>(
+  source: &str,
+  bytes: &[u8],
+  transport: Option<&T>,
+) -> Option<serde_json::Value> {
+  if !snapchat_media_page(source) || bytes.len() > 8 * 1024 * 1024 {
+    return None;
+  }
+  let mut info: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+  if !info.is_object() {
+    return None;
   }
   fn known_extension(ext: &str) -> bool {
-    matches!(
-      ext.to_ascii_lowercase().as_str(),
-      "mp4"
-        | "mkv"
-        | "webm"
-        | "flv"
-        | "mov"
-        | "avi"
-        | "m4v"
-        | "ts"
-        | "m2ts"
-        | "3gp"
-        | "3g2"
-        | "ogv"
-        | "m3u8"
-        | "mpd"
-        | "mp3"
-        | "m4a"
-        | "aac"
-        | "ogg"
-        | "opus"
-        | "wav"
-        | "flac"
-        | "none"
-    ) || crate::parsers::gallery::image_extension(ext)
+    crate::media_types::ext_in(crate::media_types::MEDIA_EXTS, ext)
+      || crate::parsers::gallery::image_extension(ext)
+      || matches!(ext, "none" | "m3u8" | "mpd")
   }
-  if snapchat_cdn_url(&info["url"]) {
-    for key in ["ext", "video_ext"] {
-      if (key == "ext" || info.get(key).is_some())
-        && !info[key].as_str().is_some_and(known_extension)
+  fn urls(value: &serde_json::Value, found: &mut std::collections::BTreeSet<String>) {
+    if let Some(raw) = value["url"].as_str() {
+      if reqwest::Url::parse(raw).is_ok_and(|url| {
+        url
+          .host_str()
+          .is_some_and(|host| crate::sites::host_is(host, "sc-cdn.net"))
+      }) && !value["ext"].as_str().is_some_and(known_extension)
       {
-        info[key] = serde_json::json!("mp4");
+        found.insert(raw.into());
+      }
+    }
+    for key in [
+      "formats",
+      "requested_formats",
+      "requested_downloads",
+      "entries",
+      "thumbnails",
+    ] {
+      if let Some(items) = value[key].as_array() {
+        for item in items {
+          urls(item, found);
+        }
       }
     }
   }
-  for key in [
-    "formats",
-    "requested_formats",
-    "requested_downloads",
-    "entries",
-  ] {
-    if let Some(items) = info.get_mut(key).and_then(serde_json::Value::as_array_mut) {
-      for item in items {
-        normalize_snapchat_extensions(item);
+  let mut candidates = std::collections::BTreeSet::new();
+  urls(&info, &mut candidates);
+  let mut types = std::collections::HashMap::new();
+  if let Some(transport) = transport.filter(|_| candidates.len() <= 100) {
+    // A failed request or the overall sniff deadline must not discard usable metadata.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+      for raw in candidates {
+        let Ok(url) = reqwest::Url::parse(&raw) else {
+          continue;
+        };
+        let Ok(response) = transport.range(&url, 4096).await else {
+          continue;
+        };
+        if !matches!(response.status, 200 | 206) {
+          continue;
+        }
+        let mime =
+          crate::media_types::base_mime(response.content_type.as_deref().unwrap_or_default());
+        let ext = if response.body.get(4..8) == Some(b"ftyp") {
+          "mp4"
+        } else if response.body.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
+          "webm"
+        } else if response.body.starts_with(&[0xff, 0xd8, 0xff]) {
+          "jpg"
+        } else if response.body.starts_with(b"\x89PNG\r\n\x1a\n") {
+          "png"
+        } else {
+          match mime.as_str() {
+            "video/mp4" => "mp4",
+            "video/webm" => "webm",
+            "image/jpeg" => "jpg",
+            "image/png" => "png",
+            _ => continue,
+          }
+        };
+        types.insert(raw, ext);
+      }
+    })
+    .await;
+  }
+  fn apply(
+    value: &mut serde_json::Value,
+    types: &std::collections::HashMap<String, &str>,
+    thumbnail: bool,
+  ) {
+    if let Some(url) = value["url"].as_str().filter(|raw| {
+      reqwest::Url::parse(raw).is_ok_and(|url| {
+        url
+          .host_str()
+          .is_some_and(|host| crate::sites::host_is(host, "sc-cdn.net"))
+      })
+    }) {
+      let ext = types
+        .get(url)
+        .copied()
+        .unwrap_or(if thumbnail { "jpg" } else { "mp4" });
+      for key in ["ext", "video_ext"] {
+        if (key == "ext" || value.get(key).is_some())
+          && !value[key].as_str().is_some_and(known_extension)
+        {
+          value[key] = serde_json::json!(ext);
+        }
+      }
+    }
+    for key in [
+      "formats",
+      "requested_formats",
+      "requested_downloads",
+      "entries",
+      "thumbnails",
+    ] {
+      if let Some(items) = value.get_mut(key).and_then(serde_json::Value::as_array_mut) {
+        for item in items {
+          apply(item, types, key == "thumbnails");
+        }
       }
     }
   }
-  if let Some(thumbnails) = info
-    .get_mut("thumbnails")
-    .and_then(serde_json::Value::as_array_mut)
-  {
-    for thumbnail in thumbnails {
-      if snapchat_cdn_url(&thumbnail["url"])
-        && !thumbnail["ext"].as_str().is_some_and(known_extension)
-      {
-        let ext = thumbnail["url"]
-          .as_str()
-          .and_then(|url| reqwest::Url::parse(url).ok())
-          .and_then(|url| {
-            url
-              .path()
-              .rsplit_once('.')
-              .map(|(_, ext)| ext.to_ascii_lowercase())
-          })
-          .filter(|ext| crate::parsers::gallery::image_extension(ext))
-          .unwrap_or_else(|| "jpg".into());
-        thumbnail["ext"] = serde_json::json!(ext);
-      }
-    }
-  }
+  apply(&mut info, &types, false);
+  Some(info)
 }
 
 pub async fn run_ytdlp_download(
@@ -629,10 +894,35 @@ async fn run_download_attempts(
   if is_cancelled_now(&cancel_rx) {
     return Ok(());
   }
+  let playlist_child = entry.is_playlist_child();
+  let _slot =
+    match super::reliability::playlist_slot(&entry.url, playlist_child, &mut cancel_rx).await {
+      Ok(slot) => slot,
+      Err(()) => return Ok(()),
+    };
+  let mut refetch = super::retry_policy::RetryState::default();
+  let recovery_started = tokio::time::Instant::now();
+  let mut recovery = super::reliability::Recovery::default();
   let mut input = match entry.take_fetch_input() {
     Some(input) => input,
     None => {
-      let resolution = resolve::resolve(&entry.url).await;
+      let resolution = loop {
+        let resolution = resolve::resolve(&entry.url).await;
+        if matches!(
+          resolution,
+          Resolution::Failed {
+            failure: resolve::Failure::Network | resolve::Failure::Timeout
+          }
+        ) {
+          if let Some(delay) = recovery.network_delay(recovery_started.elapsed()) {
+            if !super::reliability::wait(&app, &entry, &mut cancel_rx, delay, false).await {
+              return Ok(());
+            }
+            continue;
+          }
+        }
+        break resolution;
+      };
       if is_cancelled_now(&cancel_rx) {
         return Ok(());
       }
@@ -708,6 +998,24 @@ async fn run_download_attempts(
     if is_cancelled_now(&cancel_rx) {
       return Ok(());
     }
+    loop {
+      let delay = super::reliability::host_delay(&entry.url);
+      if delay.is_zero() {
+        break;
+      }
+      if !super::reliability::wait(&app, &entry, &mut cancel_rx, delay, true).await {
+        return Ok(());
+      }
+    }
+    crate::events::emit(
+      &app,
+      crate::events::MEDIA_PROGRESS_STAGE,
+      crate::models::MediaProgressStage {
+        id: entry.id.clone(),
+        group_id: entry.group_id.clone(),
+        stage: crate::models::ProgressStage::Initializing,
+      },
+    );
     login.announce(&app, &entry.id, &entry.group_id);
     // Browser-consent resumes retain both the resolved target and its original page/referer.
     entry.resolved = Some(Box::new(input.clone()));
@@ -783,6 +1091,7 @@ async fn run_download_attempts(
         .with_format_args(&entry.format, entry.overrides.as_ref())
         .with_input_args(entry.overrides.as_ref())
         .with_args(selected_video_args(&entry))
+        .with_args(super::reliability::playlist_args(playlist_child))
         .with_auth_args(
           entry.overrides.as_ref(),
           login.browser.as_deref(),
@@ -809,6 +1118,24 @@ async fn run_download_attempts(
             redact_diagnostic(&stderr).lines(),
           );
           if output.code != 0 {
+            if super::reliability::rate_limited(&stderr) {
+              if let Some(delay) = recovery.busy_delay() {
+                super::reliability::cool_host(&entry.url, delay);
+                continue 'attempt;
+              }
+              super::reliability::fatal(&app, &entry, "rateLimited429");
+              return Err(YtdlpDownloadError::NonZeroExit(output.code));
+            }
+            if super::reliability::transient(&stderr) {
+              if let Some(delay) = recovery.network_delay(recovery_started.elapsed()) {
+                if !super::reliability::wait(&app, &entry, &mut cancel_rx, delay, false).await {
+                  return Ok(());
+                }
+                continue 'attempt;
+              }
+              super::reliability::fatal(&app, &entry, "networkTimeout");
+              return Err(YtdlpDownloadError::NonZeroExit(output.code));
+            }
             let reason = stderr
               .lines()
               .find_map(|line| error_parser.login_reason_with_cookies(line, login.has_session));
@@ -856,6 +1183,9 @@ async fn run_download_attempts(
             if input.retry_original(&stderr) {
               continue 'attempt;
             }
+            if instagram_needs_gallery(&entry, &input, &diagnostics) {
+              return retry_instagram_with_gallery(app, entry, &login, &input, None).await;
+            }
             let reason = if login.has_session {
               (failure == CookieFetchFailure::Refused).then(|| "signInRequired".to_owned())
             } else {
@@ -875,6 +1205,26 @@ async fn run_download_attempts(
                 return Err(YtdlpDownloadError::LoginPending)
               }
               _ => {}
+            }
+            if refetch_after_failure(
+              &mut refetch,
+              &entry.url,
+              &diagnostics,
+              aria.is_some(),
+              login.uses_cookies(),
+            ) {
+              if !super::reliability::wait(
+                &app,
+                &entry,
+                &mut cancel_rx,
+                super::reliability::refetch_delay(&entry.url),
+                true,
+              )
+              .await
+              {
+                return Ok(());
+              }
+              continue 'attempt;
             }
             PARTIAL_DOWNLOADS.terminal_codes(
               &entry.group_id,
@@ -913,6 +1263,15 @@ async fn run_download_attempts(
     }
     let runner = YtdlpRunner::new(&app)
       .with_progress_args()
+      .with_args([
+        "--continue",
+        "--retry-sleep",
+        "http:exp=1:20",
+        "--retry-sleep",
+        "fragment:exp=1:20",
+        "--extractor-retries",
+        "2",
+      ])
       .with_network_args(entry.overrides.as_ref())
       .with_auth_args(
         entry.overrides.as_ref(),
@@ -920,6 +1279,7 @@ async fn run_download_attempts(
         &entry.url,
       )
       .with_cookie_access(Some(&cookies))
+      .with_args(super::reliability::playlist_args(playlist_child))
       .with_subtitle_args(entry.overrides.as_ref(), entry.subtitle_inventory.as_ref())
       .with_sponsorblock_args(entry.overrides.as_ref())
       .with_format_args(&entry.format, entry.overrides.as_ref())
@@ -966,6 +1326,7 @@ async fn run_download_attempts(
     let mut output_args = runner
       .output_args(&entry.format, entry.overrides.as_ref())
       .map_err(YtdlpDownloadError::InvalidArguments)?;
+    keep_image_container(&entry.url, entry.media_kind, &mut output_args);
     let output_root = runner.output_root(&entry.format.track_type, entry.overrides.as_ref());
     if let Some(records) = app.try_state::<DownloadRecords>() {
       records.allow_root(&entry.group_id, output_root.clone());
@@ -976,6 +1337,16 @@ async fn run_download_attempts(
     else {
       return Ok(());
     };
+    preserve_numbering(&temporary.path, &mut entry.template_context)
+      .map_err(YtdlpDownloadError::RunnerError)?;
+    let _disk_guard = crate::scheduling::disk_space::plugin(&output_root)
+      .map_err(YtdlpDownloadError::RunnerError)?;
+    let runner = runner.with_args([
+      "--plugin-dirs".into(),
+      _disk_guard.path.to_string_lossy().into_owned(),
+      "--use-postprocessor".into(),
+      "NezzelDisk:when=before_dl".into(),
+    ]);
     let _thumbnail_stage = stage_thumbnails(&mut output_args)?;
     let runner = runner.with_args(selected_video_args(&entry));
     let (runner, publication_anchor) = runner
@@ -1011,15 +1382,25 @@ async fn run_download_attempts(
         return Ok(());
       };
       // Failed extraction/snapshot validation returns to the ordinary runner's diagnostics and retries.
-      let snapshot = if output.code == 0 && output.stdout.len() <= 8 * 1024 * 1024 {
-        serde_json::from_slice::<serde_json::Value>(&output.stdout)
-          .ok()
-          .filter(serde_json::Value::is_object)
+      let settings = app.state::<crate::SharedConfig>().load();
+      let network = super::override_resolver::resolve_with_patch(
+        &settings.network,
+        entry
+          .overrides
+          .as_ref()
+          .and_then(|overrides| overrides.network.as_ref()),
+      );
+      let snapshot = if output.code == 0 {
+        snapchat_snapshot(
+          &entry.url,
+          &output.stdout,
+          (network.enable_proxy != Some(true)).then_some(&crate::resolve::http::PublicHttp),
+        )
+        .await
       } else {
         None
       };
-      if let Some(mut info) = snapshot {
-        normalize_snapchat_extensions(&mut info);
+      if let Some(info) = snapshot {
         let stage = crate::runners::gallery_files::Staging::new()
           .map_err(|e| YtdlpDownloadError::RunnerError(format!("{e:?}")))?;
         let path = stage
@@ -1049,6 +1430,8 @@ async fn run_download_attempts(
     let mut vimeo_response = "";
     let mut diagnostics = Vec::new();
     let mut last_error = None;
+    let mut network_failure = false;
+    let mut busy_failure = false;
     let partial_download_duration_secs = entry
       .overrides
       .as_ref()
@@ -1064,6 +1447,10 @@ async fn run_download_attempts(
       partial_download_duration_secs,
     );
 
+    let mut watchdog = super::reliability::StallWatch::new(recovery_started.elapsed());
+    if let Some(bytes) = super::reliability::partial_bytes(&temporary.path) {
+      watchdog.observe_file_bytes(bytes, recovery_started.elapsed());
+    }
     let (mut rx, child) = match runner.spawn(&entry.group_id).await {
       Ok(result) => result,
       Err(err) => {
@@ -1076,8 +1463,36 @@ async fn run_download_attempts(
         return Err(YtdlpDownloadError::SpawnFailed(err));
       }
     };
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
     loop {
       tokio::select! {
+        biased;
+        _ = tick.tick() => {
+          if is_cancelled_now(&cancel_rx) { let _ = child.kill_tree(); return Ok(()); }
+          // External downloaders may not print RAW progress. Their temporary files are
+          // authoritative byte movement; metadata/log activity never feeds the watchdog.
+          if let Some(bytes) = super::reliability::partial_bytes(&temporary.path) {
+            if watchdog.observe_file_bytes(bytes, recovery_started.elapsed()) { recovery.progressed(); network_failure = false; busy_failure = false; }
+          }
+          if watchdog.extraction_expired(recovery_started.elapsed()) || watchdog.stalled(recovery_started.elapsed()) {
+            let _ = child.kill_tree();
+            // Wait for the writer to exit before reusing its .part files.
+            let reaped = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+              while let Some(event) = rx.recv().await {
+                if matches!(event, YtdlpCommandEvent::Terminated(_)) { return true; }
+              }
+              false
+            }).await.unwrap_or(false);
+            if is_cancelled_now(&cancel_rx) { return Ok(()); }
+            if watchdog.extraction_expired(recovery_started.elapsed()) {
+              super::reliability::fatal(&app, &entry, "networkTimeout");
+              return Err(YtdlpDownloadError::RunnerError("networkTimeout".into()));
+            }
+            if reaped && recovery.restart_stall() { continue 'attempt; }
+            super::reliability::fatal(&app, &entry, "downloadStalled");
+            return Err(YtdlpDownloadError::RunnerError("downloadStalled".into()));
+          }
+        }
         event = rx.recv() => {
           let Some(event) = event else {
             break;
@@ -1097,7 +1512,10 @@ async fn run_download_attempts(
               pending_files.record(&line_str);
               cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
               store_log_line(&line_str, &entry, log_state, &app);
-              parse_progress_line(&line_str, &mut progress_parser, &app);
+              if watchdog.observe(&line_str, recovery_started.elapsed()) { recovery.progressed(); network_failure = false; busy_failure = false; }
+              network_failure |= super::reliability::transient(&line_str);
+              busy_failure |= super::reliability::rate_limited(&line_str);
+              if let Some(stage) = parse_progress_line(&line_str, &mut progress_parser, &app) { watchdog.stage(&stage); }
               if let Some(event) = error_parser.parse_fetch_line(&line_str, login.has_session) {
                 if matches!(event.level, crate::models::error::DiagnosticLevel::Error) {
                   last_error = Some(event.raw.clone());
@@ -1106,19 +1524,23 @@ async fn run_download_attempts(
               }
             }
             YtdlpCommandEvent::Stderr(line) => {
+              #[cfg(feature = "link-matrix")]
+              crate::link_matrix::observe_gallery_stderr(&line);
               let line_str = String::from_utf8_lossy(&line);
               unsupported |= resolve::unsupported_url(&line_str);
               // Classify without retaining page contents or potentially sensitive URLs.
               let lower = line_str.to_ascii_lowercase();
-              if lower.contains("http error 401") { vimeo_response = "HTTP Error 401"; }
-              if input.impersonation_unavailable(&line_str) { vimeo_response = "Impersonate target is not available"; }
+              if let Some(response) = impersonation_response(&input, &line_str) { vimeo_response = response; }
               expired |= lower.contains("http error 403") || lower.contains("http error 404");
               login_reason = login_reason.or_else(|| error_parser.login_reason(&line_str));
               transport_denied |= aria.is_some() && aria_denied(&line_str);
               media_expired |= selected_media_expired(&entry, &input, &line_str);
               cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
               store_log_line(&line_str, &entry, log_state, &app);
-              parse_progress_line(&line_str, &mut progress_parser, &app);
+              if watchdog.observe(&line_str, recovery_started.elapsed()) { recovery.progressed(); network_failure = false; busy_failure = false; }
+              network_failure |= super::reliability::transient(&line_str);
+              busy_failure |= super::reliability::rate_limited(&line_str);
+              if let Some(stage) = parse_progress_line(&line_str, &mut progress_parser, &app) { watchdog.stage(&stage); }
               if let Some(event) = error_parser.parse_fetch_line(&line_str, login.has_session) {
                 tracing::warn!(diagnostic_code = %event.code, error = %redact_diagnostic(&line_str).lines().next().unwrap_or_default(), "yt-dlp download diagnostic");
                 if matches!(event.level, crate::models::error::DiagnosticLevel::Error) {
@@ -1134,6 +1556,10 @@ async fn run_download_attempts(
                   match make_quicktime_compatible(&app, &entry, &paths.path.join("paths.jsonl"), &mut cancel_rx).await {
                     Ok(true) => {}
                     Ok(false) => return Ok(()),
+                    Err(code) if code == "diskFull" || code == "diskSpaceUnavailable" => {
+                      super::reliability::fatal(&app, &entry, &code);
+                      return Err(YtdlpDownloadError::RunnerError(code));
+                    }
                     Err(_) => {
                       tracing::warn!("QuickTime compatibility conversion failed; original download kept");
                     }
@@ -1193,6 +1619,30 @@ async fn run_download_attempts(
               }
 
               if is_cancelled_now(&cancel_rx) { return Ok(()); }
+              if diagnostics.iter().any(|event| event.raw.contains("diskFull")) || last_error.as_ref().is_some_and(|e| e.contains("diskFull")) {
+                super::reliability::fatal(&app, &entry, "diskFull");
+                return Err(YtdlpDownloadError::RunnerError("diskFull".into()));
+              }
+              if diagnostics.iter().any(|event| event.raw.contains("diskSpaceUnavailable")) {
+                super::reliability::fatal(&app, &entry, "diskSpaceUnavailable");
+                return Err(YtdlpDownloadError::RunnerError("diskSpaceUnavailable".into()));
+              }
+              if busy_failure {
+                if let Some(delay) = recovery.busy_delay() {
+                  super::reliability::cool_host(&entry.url, delay);
+                  continue 'attempt;
+                }
+                super::reliability::fatal(&app, &entry, "rateLimited429");
+                return Err(YtdlpDownloadError::NonZeroExit(term.code.unwrap_or(1)));
+              }
+              if network_failure {
+                if let Some(delay) = recovery.network_delay(recovery_started.elapsed()) {
+                  if !super::reliability::wait(&app, &entry, &mut cancel_rx, delay, false).await { return Ok(()); }
+                  continue 'attempt;
+                }
+                super::reliability::fatal(&app, &entry, "networkTimeout");
+                return Err(YtdlpDownloadError::NonZeroExit(term.code.unwrap_or(1)));
+              }
               if media_expired { return Err(YtdlpDownloadError::ExpiredMedia); }
               let share_error = diagnostics.iter().map(|event| event.raw.as_str()).collect::<Vec<_>>().join("\n");
               if super::facebook_retry::retry(&app, &entry.group_id, &mut input, login.has_session, login_reason.as_deref(), &share_error).await { continue 'attempt; }
@@ -1209,11 +1659,16 @@ async fn run_download_attempts(
                 (cookie_failure == CookieFetchFailure::Refused).then(|| "signInRequired".to_owned())
               } else { login_reason };
               if expired && input.retry_original("HTTP Error 403") { continue 'attempt; }
+              if instagram_needs_gallery(&entry, &input, &diagnostics) { return retry_instagram_with_gallery(app, entry, &login, &input, Some(temporary)).await; }
               login.record_failure(&diagnostics, false);
               match login.failed(&app, LoginRequest::Download(entry.login_request_entry()), login_reason.as_deref(), transport_denied, is_cancelled_now(&cancel_rx)) {
                 RetryAction::Native | RetryAction::Browser | RetryAction::Anonymous => continue 'attempt,
                 RetryAction::AskLogin | RetryAction::Pending => return Err(YtdlpDownloadError::LoginPending),
-                RetryAction::Stop => {}
+                RetryAction::Stop | RetryAction::Refetch => {}
+              }
+              if refetch_after_failure(&mut refetch, &entry.url, &diagnostics, aria.is_some(), login.uses_cookies()) {
+                if !super::reliability::wait(&app, &entry, &mut cancel_rx, super::reliability::refetch_delay(&entry.url), true).await { return Ok(()); }
+                continue 'attempt;
               }
               if unsupported && !generic_tried {
                 generic_tried = true;
@@ -1290,6 +1745,7 @@ async fn make_quicktime_compatible(
     if is_cancelled_now(cancel) {
       return Ok(false);
     }
+    crate::scheduling::disk_space::check(path, std::fs::metadata(path).ok().map(|m| m.len()))?;
     let ffmpeg = manager
       .tool_path("ffmpeg")
       .map_err(|_| "QuickTime encoder requires repair")?;
@@ -1361,7 +1817,12 @@ fn store_log_line(
   store.append_line(app, &entry.group_id, &redact_diagnostic(line));
 }
 
-fn parse_progress_line(line: &str, progress_parser: &mut YtdlpProgressParser, app: &AppHandle) {
+fn parse_progress_line(
+  line: &str,
+  progress_parser: &mut YtdlpProgressParser,
+  app: &AppHandle,
+) -> Option<crate::models::ProgressStage> {
+  let mut stage = None;
   let progress_events = progress_parser.parse_line(line);
 
   for progress_event in progress_events {
@@ -1373,10 +1834,12 @@ fn parse_progress_line(line: &str, progress_parser: &mut YtdlpProgressParser, ap
         crate::events::emit(app, crate::events::MEDIA_PROGRESS, progress);
       }
       ProgressEvent::StageChange(progress) => {
+        stage = Some(progress.stage.clone());
         crate::events::emit(app, crate::events::MEDIA_PROGRESS_STAGE, progress);
       }
     }
   }
+  stage
 }
 
 fn download_section_duration_secs(section: &DownloadSection) -> Option<f64> {
@@ -1404,6 +1867,46 @@ fn parse_clock_secs(value: &str) -> Option<f64> {
   }
 
   Some(total)
+}
+
+/// yt-dlp's generic and Wikimedia extractors report a direct still as a "video" with ext jpg;
+/// a video container option would remux it into an .mp4 instead of keeping the image file.
+/// The extracted kind decides first (a video or audio result keeps its merge/remux whatever its
+/// URL ends in); the suffix only identifies a still among results with no media streams.
+fn keep_image_container(
+  url: &str,
+  kind: Option<crate::models::parsed::MediaKind>,
+  args: &mut Vec<String>,
+) {
+  use crate::models::parsed::MediaKind;
+  if !matches!(kind, None | Some(MediaKind::Image)) {
+    return;
+  }
+  let is_image = reqwest::Url::parse(url).is_ok_and(|url| {
+    let path =
+      String::from_utf8_lossy(&crate::files::names::percent_bytes(url.path())).into_owned();
+    path
+      .rsplit('/')
+      .next()
+      .and_then(|name| name.rsplit_once('.'))
+      .is_some_and(|(_, ext)| crate::parsers::gallery::image_extension(ext))
+  });
+  if !is_image {
+    return;
+  }
+  let mut kept = Vec::with_capacity(args.len());
+  let mut pending = std::mem::take(args).into_iter();
+  while let Some(arg) = pending.next() {
+    if matches!(
+      arg.as_str(),
+      "--merge-output-format" | "--remux-video" | "--recode-video" | "--postprocessor-args"
+    ) {
+      pending.next();
+    } else {
+      kept.push(arg);
+    }
+  }
+  *args = kept;
 }
 
 #[cfg(test)]
@@ -1494,8 +1997,49 @@ mod tests {
     assert!(!other_path.exists());
   }
 
+  #[test]
+  fn restored_partials_keep_bytes_and_numbering_but_never_adopt_a_symlink() {
+    let output = super::super::gallery_files::Staging::new().unwrap();
+    let (_running, cancel) = watch::channel(true);
+    let original = PartialDownloads::default();
+    let partial = original
+      .get("saved", "row", &cancel, &output.path)
+      .unwrap()
+      .unwrap();
+    std::fs::write(partial.path.join("clip.part"), b"downloaded bytes").unwrap();
+    let mut context = crate::runners::template_context::TemplateContext {
+      values: Default::default(),
+    };
+    context.values.insert("autonumber".into(), "17".into());
+    preserve_numbering(&partial.path, &mut context).unwrap();
+    drop(partial);
+    drop(original);
+    let restored = PartialDownloads::default();
+    let partial = restored
+      .get("saved", "row", &cancel, &output.path)
+      .unwrap()
+      .unwrap();
+    context.values.insert("autonumber".into(), "1".into());
+    preserve_numbering(&partial.path, &mut context).unwrap();
+    assert_eq!(context.values["autonumber"], "17");
+    assert_eq!(
+      std::fs::read(partial.path.join("clip.part")).unwrap(),
+      b"downloaded bytes"
+    );
+    #[cfg(unix)]
+    {
+      let link = output.path.join(partial_name("unsafe", "row"));
+      std::os::unix::fs::symlink(&partial.path, &link).unwrap();
+      assert!(restored
+        .get("unsafe", "row", &cancel, &output.path)
+        .is_err());
+    }
+    restored.discard("saved");
+    drop(partial);
+  }
+
   #[tokio::test]
-  async fn startup_sweep_deletes_all_owned_states_off_thread_and_preserves_unverified_paths() {
+  async fn startup_sweep_deletes_orphans_and_preserves_saved_and_unverified_paths() {
     use std::fs;
     let fixture = super::super::gallery_files::Staging::new().unwrap();
     let root = fixture.path.join("configured");
@@ -1517,7 +2061,9 @@ mod tests {
           .unwrap();
         fs::write(partial.path.join("video.part"), b"old session").unwrap();
         partials.item_state("group", item, state);
-        stale.push(partial.path.clone());
+        if matches!(state, PartialState::Discarded | PartialState::Running) {
+          stale.push(partial.path.clone());
+        }
       }
     }
     let owner = PartialOwner {
@@ -1566,7 +2112,13 @@ mod tests {
       std::os::unix::fs::symlink(&external, root.join(partial_name("other", "item"))).unwrap();
     }
     // Duplicate/aliased roots must not schedule a second deletion of a later reused path.
-    let paths = stale_partials(&[root.clone(), root.join("."), root.clone()]);
+    let paths = stale_partials(
+      &[root.clone(), root.join("."), root.clone()],
+      &[
+        ("group".into(), "paused".into()),
+        ("group".into(), "queued".into()),
+      ],
+    );
     assert_eq!(paths.len(), stale.len());
     for path in &stale {
       assert!(paths.contains(path));
@@ -1575,9 +2127,10 @@ mod tests {
         "classification must not delete data"
       );
     }
-    // A new registry must not adopt an old path while background deletion is pending.
+    // Discarded directories cannot be adopted while their deletion is pending.
     let restarted = PartialDownloads::default();
-    assert!(restarted.get("group", "paused", &cancel, &root).is_err());
+    assert!(restarted.get("group", "discarded", &cancel, &root).is_err());
+    assert!(restarted.get("group", "paused", &cancel, &root).is_ok());
     tokio::task::spawn_blocking(move || remove_stale_partials(paths))
       .await
       .unwrap();
@@ -1599,7 +2152,7 @@ mod tests {
       .get("group", "paused", &cancel, &root)
       .unwrap()
       .unwrap();
-    assert!(!fresh.path.join("video.part").exists());
+    assert!(fresh.path.join("video.part").exists());
     restarted.complete("group", "paused");
   }
 
@@ -1681,6 +2234,45 @@ mod tests {
   }
 
   #[test]
+  fn direct_still_images_are_not_remuxed_into_mp4() {
+    use crate::models::parsed::MediaKind;
+    let original: Vec<String> = [
+      "--output-na-placeholder",
+      "",
+      "--merge-output-format",
+      "mp4",
+      "--remux-video",
+      "mp4",
+      "--postprocessor-args",
+      "ffmpeg:-movflags +faststart",
+      "--add-metadata",
+    ]
+    .map(String::from)
+    .into();
+    for url in [
+      "https://commons.wikimedia.org/wiki/Special:FilePath/Fronalpstock_big.jpg",
+      "https://commons.wikimedia.org/wiki/File:Fronalpstock_big.jpg",
+    ] {
+      let mut args = original.clone();
+      keep_image_container(url, None, &mut args);
+      assert_eq!(
+        args,
+        ["--output-na-placeholder", "", "--add-metadata"],
+        "{url}"
+      );
+    }
+    for (url, kind) in [
+      ("https://example.com/clip.mp4", None),
+      ("https://example.com/clip.gif", Some(MediaKind::Video)),
+      ("https://example.com/slug.jpg", Some(MediaKind::Video)),
+    ] {
+      let mut args = original.clone();
+      keep_image_container(url, kind, &mut args);
+      assert_eq!(args, original, "{url}");
+    }
+  }
+
+  #[test]
   fn transfer_refusal_precedes_the_generic_ffmpeg_exit_in_the_row() {
     let parser = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap());
     // Streaming downloads parse each line independently before publishing the batch.
@@ -1700,6 +2292,19 @@ mod tests {
         code
       );
     }
+    let vimeo = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap())
+      .with_source_url("https://vimeo.com/76979871");
+    let events = [
+      "[hls @ 0x123] Unable to open key file skd://drm",
+      "ERROR: ffmpeg exited with code 8",
+    ]
+    .iter()
+    .filter_map(|line| vimeo.parse_fetch_line(line, false))
+    .collect();
+    assert_eq!(
+      download_failure_diagnostics(events).last().unwrap().code,
+      "signInRequired"
+    );
     let events = [
       "[https @ 0x123] HTTP error 403 Forbidden",
       "ERROR: No space left on device",
@@ -1711,6 +2316,85 @@ mod tests {
     assert_eq!(
       download_failure_diagnostics(events).last().unwrap().code,
       "diskFull"
+    );
+  }
+
+  #[test]
+  fn playlist_pacing_uses_fetch_identity_not_template_metadata() {
+    for (playlist_child, context, expected) in [
+      (
+        false,
+        serde_json::json!({"playlist_id":"incidental"}),
+        false,
+      ),
+      (true, serde_json::json!({}), true),
+    ] {
+      let item = serde_json::from_value(serde_json::json!({
+        "id":"video", "url":"https://youtube.com/watch?v=1", "format":{"trackType":"both"},
+        "playlistChild":playlist_child, "templateContext":{"values":context}
+      }))
+      .unwrap();
+      let entry = DownloadEntry::from((item, "pacing".into()));
+      assert_eq!(
+        !super::super::reliability::playlist_args(entry.is_playlist_child()).is_empty(),
+        expected
+      );
+    }
+  }
+
+  #[test]
+  fn configured_aria_blocks_youtube_refetch_in_both_failure_paths() {
+    let parser = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap());
+    let diagnostics = parser.parse_lines(vec!["ERROR: HTTP Error 403: Forbidden"], false);
+    assert!(!refetch_after_failure(
+      &mut Default::default(),
+      "https://youtube.com/watch?v=1",
+      &diagnostics,
+      true,
+      false
+    ));
+    let mut state = Default::default();
+    assert!(refetch_after_failure(
+      &mut state,
+      "https://youtube.com/watch?v=1",
+      &diagnostics,
+      false,
+      false
+    ));
+    assert!(!refetch_after_failure(
+      &mut state,
+      "https://youtube.com/watch?v=1",
+      &diagnostics,
+      false,
+      false
+    ));
+  }
+
+  #[test]
+  fn rumble_forbidden_tracking_does_not_replace_vimeo_unauthorized() {
+    for url in ["https://vimeo.com/123", "https://rumble.com/embed/123"] {
+      let mut input = ResolvedInput::new(url);
+      let parser = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap());
+      let lines = [
+        "ERROR: HTTP Error 401: Unauthorized",
+        "ERROR: HTTP Error 403: Forbidden",
+      ];
+      let response = lines
+        .iter()
+        .filter_map(|line| impersonation_response(&input, line))
+        .next_back()
+        .unwrap();
+      let mut diagnostics = parser.parse_lines(lines.to_vec(), false);
+      assert!(
+        retry_vimeo(&mut input, response, &mut diagnostics, &mut None),
+        "{url}: {response}"
+      );
+      assert!(input.args().contains(&"chrome"));
+    }
+    let input = ResolvedInput::new("https://rumble.com.evil.test/video");
+    assert_eq!(
+      impersonation_response(&input, "ERROR: HTTP Error 403"),
+      None
     );
   }
 
@@ -1738,6 +2422,115 @@ mod tests {
       &mut diagnostics,
       &mut saved
     ));
+  }
+
+  #[test]
+  fn instagram_post_without_video_formats_goes_to_gallery_once() {
+    let parser = YtdlpErrorParser::new("i", "g", DiagnosticMatcher::shared().unwrap());
+    let item = serde_json::from_value(serde_json::json!({"id":"post","url":"https://v.gd/LfQhkN","format":{"trackType":"both"},"templateContext":{"values":{}}})).unwrap();
+    let entry = DownloadEntry::from((item, "ig".into()));
+    let mut child = entry.clone();
+    child.resume_parent = Some(Box::new(entry.clone()));
+    // yt-dlp's fetch lists the post's one video as a selected attachment (the owner's row).
+    let mut whole = entry.clone();
+    whole.attachments = serde_json::from_value(serde_json::json!([{"id":"v1","url":"https://www.instagram.com/p/DfxRiPZIXJo/","kind":"video"}])).unwrap();
+    whole.attachment_ids = Some(vec!["v1".into()]);
+    let mut chosen = whole.clone();
+    chosen.attachments.push(chosen.attachments[0].clone());
+    let post = ResolvedInput::new("https://www.instagram.com/p/DfxRiPZIXJo/");
+    for (entry, line, expected) in [
+      (
+        &whole,
+        "ERROR: [Instagram] DfxRiPZIXJo: No video formats found!; please report this issue",
+        true,
+      ),
+      (
+        &entry,
+        "ERROR: [Instagram] DfxRiPZIXJo: No video formats found!",
+        true,
+      ),
+      (
+        &child,
+        "ERROR: [Instagram] DfxRiPZIXJo: No video formats found!",
+        false,
+      ),
+      (
+        &chosen,
+        "ERROR: [Instagram] DfxRiPZIXJo: No video formats found!",
+        false,
+      ),
+      (
+        &entry,
+        "ERROR: [youtube] abc: No video formats found!",
+        false,
+      ),
+      (
+        &entry,
+        "WARNING: [Instagram] DfxRiPZIXJo: No video formats found!",
+        false,
+      ),
+      (
+        &entry,
+        "ERROR: [Instagram] DfxRiPZIXJo: Restricted Video",
+        false,
+      ),
+    ] {
+      let diagnostics = parser.parse_lines(vec![line], false);
+      assert_eq!(
+        instagram_needs_gallery(entry, &post, &diagnostics),
+        expected,
+        "{line}"
+      );
+    }
+    // The short link must have resolved to the post before gallery-dl gets it.
+    let line = "ERROR: [Instagram] DfxRiPZIXJo: No video formats found!";
+    let diagnostics = parser.parse_lines(vec![line], false);
+    let unresolved = ResolvedInput::new("https://v.gd/LfQhkN");
+    assert!(!instagram_needs_gallery(&entry, &unresolved, &diagnostics));
+    // An anonymous fetch win leaves the "none" marker: the retry must not inherit it.
+    let anonymous = Some(crate::runners::login::ANONYMOUS_BROWSER.to_owned());
+    let mut direct = entry.clone();
+    direct.url = "https://www.instagram.com/p/DfxRiPZIXJo/".into();
+    assert_eq!(
+      handoff_browser(&direct, &direct.url, anonymous.clone()),
+      None
+    );
+    assert_eq!(
+      handoff_browser(&direct, &direct.url, Some("chrome:Default".into())),
+      Some("chrome:Default".into())
+    );
+    // A short link's session belonged to v.gd; only an instagram.com row choice may carry over.
+    assert_eq!(
+      handoff_browser(
+        &direct,
+        "https://v.gd/LfQhkN",
+        Some("chrome:Default".into())
+      ),
+      None
+    );
+  }
+
+  #[test]
+  fn instagram_gallery_handoff_frees_the_item_partial_for_each_video_child() {
+    let output = super::super::gallery_files::Staging::new().unwrap();
+    let (_running, cancel) = watch::channel(true);
+    // Without the release: child 1 adopts the held partial, completes, and child 2 is refused.
+    let partials = PartialDownloads::default();
+    let held = partials.get("g", "post", &cancel, &output.path).unwrap();
+    let child = partials.get("g", "post", &cancel, &output.path).unwrap();
+    partials.complete("g", "post");
+    drop(child);
+    assert!(partials.get("g", "post", &cancel, &output.path).is_err());
+    drop(held);
+    // With the release every video child opens and completes its own partial.
+    let partials = PartialDownloads::default();
+    let held = partials.get("g", "next", &cancel, &output.path).unwrap();
+    release_partial_for_handoff(&partials, "g", "next", held);
+    for _ in 0..2 {
+      let child = partials.get("g", "next", &cancel, &output.path).unwrap();
+      partials.complete("g", "next");
+      drop(child);
+    }
   }
 
   #[test]
@@ -1771,47 +2564,102 @@ mod tests {
     ));
   }
 
-  #[test]
-  fn snapchat_opaque_cdn_suffixes_use_mp4_video_and_jpg_thumbnail_metadata() {
-    let mut info: serde_json::Value =
-      serde_json::from_slice(include_bytes!("../parsers/fixtures/ytdlp-snapchat.json")).unwrap();
-    normalize_snapchat_extensions(&mut info);
-    assert_eq!(
-      (
-        info["ext"].as_str(),
-        info["formats"][0]["ext"].as_str(),
-        info["thumbnails"][0]["ext"].as_str()
-      ),
-      (Some("mp4"), Some("mp4"), Some("jpg"))
-    );
-    let ext = "opaqueSuffix";
-    let mut info = serde_json::json!({"ext":ext,"video_ext":ext,"url":"https://cf-st.sc-cdn.net/d/resource.other?signature=fixture","requested_downloads":[{"ext":ext,"url":"https://sc-cdn.net/media"}],"entries":[{"requested_formats":[{"ext":ext,"url":"https://cf-st.sc-cdn.net/media"}]}],"thumbnails":[{"ext":ext,"url":"https://cf-st.sc-cdn.net/resource.other"}]});
-    normalize_snapchat_extensions(&mut info);
-    assert_eq!(
-      (
-        info["ext"].as_str(),
-        info["video_ext"].as_str(),
-        info["requested_downloads"][0]["ext"].as_str(),
-        info["entries"][0]["requested_formats"][0]["ext"].as_str(),
-        info["thumbnails"][0]["ext"].as_str()
-      ),
-      (
-        Some("mp4"),
-        Some("mp4"),
-        Some("mp4"),
-        Some("mp4"),
-        Some("jpg")
-      ),
-      "{ext}"
-    );
+  #[tokio::test]
+  async fn snapchat_recorded_snapshot_derives_format_for_profile_and_story_children() {
+    struct Media;
+    impl crate::resolve::http::Transport for Media {
+      async fn get(
+        &self,
+        url: &reqwest::Url,
+        _: usize,
+      ) -> Result<crate::resolve::http::Response, crate::resolve::http::FetchError> {
+        let image = url.path().contains(".256.");
+        Ok(crate::resolve::http::Response {
+          status: 206,
+          location: None,
+          content_length: None,
+          content_type: Some(if image { "image/jpeg" } else { "video/mp4" }.into()),
+          body: if image {
+            vec![0xff, 0xd8, 0xff]
+          } else {
+            b"\x00\x00\x00\x18ftypmp42".to_vec()
+          },
+        })
+      }
+    }
+    for source in [
+      "https://www.snapchat.com/@nasa",
+      "https://www.snapchat.com/add/nasa",
+      "https://story.snapchat.com/s/story",
+      "https://www.snapchat.com/@nasa/spotlight/id",
+    ] {
+      let info = snapchat_snapshot(
+        source,
+        include_bytes!("../parsers/fixtures/ytdlp-snapchat.json"),
+        Some(&Media),
+      )
+      .await
+      .unwrap();
+      assert_eq!(
+        (
+          info["ext"].as_str(),
+          info["formats"][0]["ext"].as_str(),
+          info["thumbnails"][0]["ext"].as_str()
+        ),
+        (Some("mp4"), Some("mp4"), Some("jpg")),
+        "{source}"
+      );
+    }
+    assert!(snapchat_snapshot(
+      "https://snapchat.com.example.org/video",
+      include_bytes!("../parsers/fixtures/ytdlp-snapchat.json"),
+      Some(&Media)
+    )
+    .await
+    .is_none());
   }
 
-  #[test]
-  fn snapchat_extension_normalization_preserves_other_providers_and_safe_formats() {
-    let mut info = serde_json::json!({"ext":"webm","url":"https://cf-st.sc-cdn.net/video.IRZXSOY","formats":[{"ext":"IRZXSOY","url":"https://sc-cdn.net.evil.test/video.IRZXSOY"}],"thumbnails":[{"ext":"png","url":"https://example.com/thumb.png"},{"ext":"png","url":"https://cf-st.sc-cdn.net/thumb.png"}]});
-    let expected = info.clone();
-    normalize_snapchat_extensions(&mut info);
-    assert_eq!(info, expected);
+  #[tokio::test(start_paused = true)]
+  async fn snapchat_recorded_snapshot_defaults_when_sniff_is_unavailable() {
+    struct Sniff(u8);
+    impl crate::resolve::http::Transport for Sniff {
+      async fn get(
+        &self,
+        url: &reqwest::Url,
+        _: usize,
+      ) -> Result<crate::resolve::http::Response, crate::resolve::http::FetchError> {
+        if self.0 == 2 {
+          return std::future::pending().await;
+        }
+        if self.0 == 1 && !url.path().contains(".256.") {
+          return Ok(crate::resolve::http::Response {
+            status: 206,
+            location: None,
+            content_length: None,
+            content_type: Some("video/webm".into()),
+            body: vec![0x1a, 0x45, 0xdf, 0xa3],
+          });
+        }
+        Err(crate::resolve::http::FetchError::Network)
+      }
+    }
+    for (transport, video_ext) in [
+      (None, "mp4"),
+      (Some(&Sniff(0)), "mp4"),
+      (Some(&Sniff(1)), "webm"),
+      (Some(&Sniff(2)), "mp4"),
+    ] {
+      let info = snapchat_snapshot(
+        "https://www.snapchat.com/@nasa",
+        include_bytes!("../parsers/fixtures/ytdlp-snapchat.json"),
+        transport,
+      )
+      .await
+      .expect("keep a usable snapshot without a sniff");
+      assert_eq!(info["ext"], video_ext);
+      assert_eq!(info["formats"][0]["ext"], video_ext);
+      assert_eq!(info["thumbnails"][0]["ext"], "jpg");
+    }
   }
 
   #[test]

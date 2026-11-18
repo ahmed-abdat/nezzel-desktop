@@ -40,6 +40,28 @@ pub(crate) trait Transport {
   }
   fn get(&self, url: &Url, cap: usize)
     -> impl Future<Output = Result<Response, FetchError>> + Send;
+  /// Anonymous Threads API request; no cookies or automatic redirects.
+  fn threads_api(
+    &self,
+    _url: &Url,
+    _cap: usize,
+    _lsd: &str,
+    _form: Option<&str>,
+  ) -> impl Future<Output = Result<Response, FetchError>> + Send {
+    async { Err(FetchError::Status) }
+  }
+  fn authenticated(
+    &self,
+    _url: &Url,
+    _cap: usize,
+    _api: Option<(&str, Option<&str>)>,
+    _cookie: reqwest::header::HeaderValue,
+  ) -> impl Future<Output = Result<Response, FetchError>> + Send {
+    async { Err(FetchError::Status) }
+  }
+  fn has_session(&self) -> bool {
+    false
+  }
   fn head(&self, _url: &Url) -> impl Future<Output = Result<Response, FetchError>> + Send {
     async { Err(FetchError::Status) }
   }
@@ -57,13 +79,45 @@ pub(crate) trait Transport {
 pub(crate) struct PublicHttp;
 impl Transport for PublicHttp {
   async fn get(&self, url: &Url, cap: usize) -> Result<Response, FetchError> {
-    self.request(url, cap, RequestKind::Page).await
+    self.request(url, cap, RequestKind::Page, None, None).await
+  }
+  async fn threads_api(
+    &self,
+    url: &Url,
+    cap: usize,
+    lsd: &str,
+    form: Option<&str>,
+  ) -> Result<Response, FetchError> {
+    if url.host_str() != Some("www.threads.com")
+      || !matches!(url.path(), "/api/graphql" | "/ajax/bootloader-endpoint/")
+    {
+      return Err(FetchError::InvalidUrl);
+    }
+    self
+      .request(url, cap, RequestKind::Page, Some((lsd, form)), None)
+      .await
+  }
+  async fn authenticated(
+    &self,
+    url: &Url,
+    cap: usize,
+    api: Option<(&str, Option<&str>)>,
+    cookie: reqwest::header::HeaderValue,
+  ) -> Result<Response, FetchError> {
+    if url.host_str() != Some("www.threads.com")
+      || (api.is_some() && !matches!(url.path(), "/api/graphql" | "/ajax/bootloader-endpoint/"))
+    {
+      return Err(FetchError::InvalidUrl);
+    }
+    self
+      .request(url, cap, RequestKind::Page, api, Some(cookie))
+      .await
   }
   async fn head(&self, url: &Url) -> Result<Response, FetchError> {
-    self.request(url, 0, RequestKind::Head).await
+    self.request(url, 0, RequestKind::Head, None, None).await
   }
   async fn range(&self, url: &Url, cap: usize) -> Result<Response, FetchError> {
-    self.request(url, cap, RequestKind::Range).await
+    self.request(url, cap, RequestKind::Range, None, None).await
   }
 }
 
@@ -74,16 +128,17 @@ enum RequestKind {
   Range,
 }
 impl PublicHttp {
-  async fn request(
-    &self,
+  fn build_request(
+    client: &reqwest::Client,
     url: &Url,
     cap: usize,
     kind: RequestKind,
-  ) -> Result<Response, FetchError> {
-    https_url(url.as_str())?;
-    let addresses = addresses(url).await?;
-    let client = pinned_client(url, &addresses)?;
-    let method = if kind == RequestKind::Head {
+    api: Option<(&str, Option<&str>)>,
+    cookie: Option<reqwest::header::HeaderValue>,
+  ) -> reqwest::RequestBuilder {
+    let method = if api.is_some_and(|(_, form)| form.is_some()) {
+      reqwest::Method::POST
+    } else if kind == RequestKind::Head {
       reqwest::Method::HEAD
     } else {
       reqwest::Method::GET
@@ -92,22 +147,57 @@ impl PublicHttp {
     if kind == RequestKind::Range {
       request = request.header("Range", format!("bytes=0-{}", cap.saturating_sub(1)));
     }
-    let mut response = request
+    request = request
       .header("User-Agent", net::CHROME_UA)
-      .header(
-        "Accept",
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      )
       .header("Accept-Encoding", "identity")
-      .header("Accept-Language", "en-US,en;q=0.9")
-      .header("Sec-Fetch-Mode", "navigate")
-      .header("Sec-Fetch-Site", "none")
-      .header("Sec-Fetch-Dest", "document")
-      .header("Sec-Fetch-User", "?1")
-      .header("Upgrade-Insecure-Requests", "1")
-      .send()
-      .await
-      .map_err(|_| FetchError::Network)?;
+      .header("Accept-Language", "en-US,en;q=0.9");
+    if api.is_none() {
+      request = request
+        .header(
+          "Accept",
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
+        .header("Sec-Fetch-Mode", "navigate")
+        .header("Sec-Fetch-Site", "none")
+        .header("Sec-Fetch-Dest", "document")
+        .header("Sec-Fetch-User", "?1")
+        .header("Upgrade-Insecure-Requests", "1");
+    }
+    if let Some((lsd, form)) = api {
+      request = request
+        .header("Accept", "*/*")
+        .header("Sec-Fetch-Mode", "cors")
+        .header("Sec-Fetch-Site", "same-origin")
+        .header("Sec-Fetch-Dest", "empty")
+        .header("X-FB-LSD", lsd)
+        .header("Referer", "https://www.threads.com/");
+      if let Some(form) = form {
+        request = request
+          .header("Content-Type", "application/x-www-form-urlencoded")
+          .header("Origin", "https://www.threads.com")
+          .header("X-IG-App-ID", "238260118697367")
+          .header("X-FB-Friendly-Name", "BarcelonaPostPageTargetQuery")
+          .body(form.to_owned());
+      }
+    }
+    if let Some(cookie) = cookie {
+      request = request.header(reqwest::header::COOKIE, cookie);
+    }
+    request
+  }
+  async fn request(
+    &self,
+    url: &Url,
+    cap: usize,
+    kind: RequestKind,
+    api: Option<(&str, Option<&str>)>,
+    cookie: Option<reqwest::header::HeaderValue>,
+  ) -> Result<Response, FetchError> {
+    https_url(url.as_str())?;
+    let addresses = addresses(url).await?;
+    let client = pinned_client(url, &addresses)?;
+    let request = Self::build_request(&client, url, cap, kind, api, cookie);
+    let mut response = request.send().await.map_err(|_| FetchError::Network)?;
     let status = response.status().as_u16();
     let location = response
       .headers()
@@ -421,8 +511,75 @@ pub(crate) fn https_url(input: &str) -> Result<Url, FetchError> {
   Ok(url)
 }
 
+/// A provider rechecks live consent for every request and never supplies cross-host cookies.
+pub(crate) trait CookieProvider: Sync {
+  fn header(&self, url: &Url) -> Result<Option<reqwest::header::HeaderValue>, FetchError>;
+}
+pub(crate) struct SessionHttp<'a, T, P> {
+  pub transport: &'a T,
+  pub cookies: &'a P,
+}
+impl<T: Transport + Sync, P: CookieProvider> Transport for SessionHttp<'_, T, P> {
+  fn has_session(&self) -> bool {
+    true
+  }
+  async fn get(&self, url: &Url, cap: usize) -> Result<Response, FetchError> {
+    match self.cookies.header(url)? {
+      Some(cookie) => self.transport.authenticated(url, cap, None, cookie).await,
+      None => self.transport.get(url, cap).await,
+    }
+  }
+  async fn threads_api(
+    &self,
+    url: &Url,
+    cap: usize,
+    lsd: &str,
+    form: Option<&str>,
+  ) -> Result<Response, FetchError> {
+    match self.cookies.header(url)? {
+      Some(cookie) => {
+        self
+          .transport
+          .authenticated(url, cap, Some((lsd, form)), cookie)
+          .await
+      }
+      None => Err(FetchError::Status),
+    }
+  }
+  async fn admit_media(&self, url: &Url) -> Result<(), FetchError> {
+    self.transport.admit_media(url).await
+  }
+}
+
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn threads_api_headers_have_one_value_and_no_navigation_flags() {
+    let client = reqwest::Client::new();
+    let url = reqwest::Url::parse("https://www.threads.com/api/graphql").unwrap();
+    let request = super::PublicHttp::build_request(
+      &client,
+      &url,
+      1024,
+      super::RequestKind::Page,
+      Some(("fixture", Some("a=b"))),
+      None,
+    )
+    .build()
+    .unwrap();
+    for (key, value) in [
+      ("accept", "*/*"),
+      ("sec-fetch-mode", "cors"),
+      ("sec-fetch-site", "same-origin"),
+      ("sec-fetch-dest", "empty"),
+    ] {
+      assert_eq!(request.headers().get_all(key).iter().count(), 1, "{key}");
+      assert_eq!(request.headers()[key], value);
+    }
+    assert!(!request.headers().contains_key("sec-fetch-user"));
+    assert!(!request.headers().contains_key("upgrade-insecure-requests"));
+  }
+
   use super::*;
 
   // Loopback, private v4/v6, link-local and v4-mapped v6 are refused before any connect.

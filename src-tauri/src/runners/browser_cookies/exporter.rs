@@ -17,6 +17,15 @@ pub(super) async fn export(
   budget: Duration,
   cancel: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<usize, &'static str> {
+  let staged = if browser.kind.store() == crate::runners::browsers::CookieStore::Chromium {
+    let browser = browser.clone();
+    let host = host.to_owned();
+    let directory = jar.directory.clone();
+    Some(stage_profile(move || super::chromium::export_profile(&browser, &host, &directory)).await?)
+  } else {
+    None
+  };
+  let source = staged.as_ref().map_or(browser, |(browser, _)| browser);
   let full = jar.directory.join("full.txt");
   private_file(&full)
     .and_then(|mut file| file.write_all(COOKIE_HEADER.as_bytes()))
@@ -29,7 +38,7 @@ pub(super) async fn export(
       "--ignore-config",
       "--no-cache-dir",
       "--cookies-from-browser",
-      browser.spec().as_str(),
+      source.spec().as_str(),
       "--cookies",
     ])
     .arg(&full)
@@ -48,6 +57,7 @@ pub(super) async fn export(
     Err(Interrupted::Cancelled) => return Err("cancelled"),
     Err(Interrupted::Timeout) => return Err(FETCH_TIMEOUT),
   };
+  drop(staged);
   if !status.success() {
     return Err(classify_error(
       browser.kind,
@@ -64,6 +74,14 @@ pub(super) async fn export(
   }
   std::fs::remove_file(info).map_err(|_| COOKIE_READ_ERROR)?;
   Ok(rows)
+}
+
+async fn stage_profile(
+  snapshot: impl FnOnce() -> Result<(BrowserSource, CookieJar), &'static str> + Send + 'static,
+) -> Result<(BrowserSource, CookieJar), &'static str> {
+  tauri::async_runtime::spawn_blocking(snapshot)
+    .await
+    .map_err(|_| COOKIE_READ_ERROR)?
 }
 
 // The exporter may start Keychain helpers: `ToolProcess` cancels the entire process tree, as for
@@ -105,4 +123,24 @@ pub(super) fn classify_error(browser: BrowserKind, stderr: &str) -> &'static str
   )
   .map(crate::parsers::ytdlp_error::CookieReadError::code)
   .unwrap_or(COOKIE_READ_ERROR)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[tokio::test(flavor = "current_thread")]
+  async fn profile_snapshot_runs_off_the_async_executor() {
+    let executor = std::thread::current().id();
+    let directory = std::env::temp_dir().join(format!("nezzel-profile-{}", uuid::Uuid::new_v4()));
+    let staged = stage_profile(move || {
+      assert_ne!(std::thread::current().id(), executor);
+      Ok((
+        BrowserSource::parse("chrome").unwrap(),
+        CookieJar { directory },
+      ))
+    })
+    .await;
+    assert!(staged.is_ok());
+  }
 }

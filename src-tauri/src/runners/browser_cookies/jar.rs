@@ -58,6 +58,7 @@ pub(crate) fn sweep_cookie_exports(app: &tauri::AppHandle) {
     let _ = sweep_directory(&context.directory);
   }
   let _ = sweep_named_directories(&std::env::temp_dir(), "nezzel-images-");
+  crate::runners::gallery_files::sweep_image_staging(&[std::env::temp_dir()]);
 }
 pub(super) fn sweep_directory(root: &Path) -> std::io::Result<()> {
   if !root.exists() {

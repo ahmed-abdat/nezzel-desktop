@@ -13,7 +13,7 @@
       <div class="flex gap-3 border-b border-hairline p-4">
         <figure class="aspect-video w-24 shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-black/5 dark:ring-white/5" :class="isReading && !group.thumbnail && 'animate-pulse'">
           <file-type-icon v-if="fileKind" :category="fileKind" class="size-full p-4 text-muted-foreground" />
-          <img v-else-if="thumbUrl" :src="thumbUrl" alt="" class="size-full object-cover" @error="thumbFailed = true">
+          <img v-else-if="thumbUrl" :src="thumbUrl" alt="" class="size-full object-cover" referrerpolicy="no-referrer" @error="thumbFailed = true">
           <div v-else-if="!isReading" class="grid size-full place-items-center text-muted-foreground"><film class="size-5" aria-hidden="true" /></div>
         </figure>
         <div class="min-w-0">

@@ -211,6 +211,7 @@ export type MediaAddWithFormatPayload = MediaAddPayload & {
 
 export interface MediaItem {
   id: string;
+  playlistChild?: boolean;
   fetchEngine?: 'gallery' | 'ytdlp' | 'files' | 'reader';
   resolvedUrl?: string;
   mediaKind?: SourceMediaKind;

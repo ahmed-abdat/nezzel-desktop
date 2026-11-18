@@ -9,7 +9,7 @@ export type TypeFilter = 'all' | KindFilter;
 export type StatusFilter = 'all' | 'active' | 'failed' | 'done';
 export interface ListView { type: TypeFilter; status: StatusFilter }
 
-export type RowStatus = 'active' | 'done' | 'failed';
+export type RowStatus = 'active' | 'done' | 'failed' | 'cancelled';
 
 const TYPES: readonly TypeFilter[] = ['all', 'video', 'audio', 'photos', 'files'];
 const STATUSES: readonly StatusFilter[] = ['all', 'active', 'failed', 'done'];
@@ -39,6 +39,7 @@ export function viewQuery(view: ListView): Record<string, string> {
 export function statusOf(state: MediaState | undefined): RowStatus {
   const phase = state === undefined ? undefined : phaseOf(state);
   if (phase === 'done') return 'done';
+  if (phase === 'cancelled') return 'cancelled';
   return phase === 'error' ? 'failed' : 'active';
 }
 
@@ -117,5 +118,5 @@ export function finishedIds<T extends { id: string; status: RowStatus; cleared?:
 
 /** A choice or a live consent prompt needs the user, even while the engine waits. */
 export function needsAttention(state: MediaState, loginNeeded: boolean): boolean {
-  return loginNeeded || ['ready', 'playlist'].includes(phaseOf(state));
+  return loginNeeded || ['ready', 'playlist', 'cancelled'].includes(phaseOf(state));
 }

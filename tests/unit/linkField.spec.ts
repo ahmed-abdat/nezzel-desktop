@@ -15,7 +15,6 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
 const dispatchMediaInfoFetch = vi.fn();
 const addUrlBatch = vi.fn();
-const hasRecentCapture = vi.fn(() => false);
 const addUrlBatchAndDownload = vi.fn();
 const downloadPreparedGroup = vi.fn();
 const captureShortcut = reactive({ active: 'CommandOrControl+Alt+K' as string | null, failed: false });
@@ -41,7 +40,6 @@ vi.mock('../../src/stores/media/media', () => ({
   useMediaStore: () => ({
     dispatchMediaInfoFetch,
     addUrlBatch,
-    hasRecentCapture,
     addUrlBatchAndDownload,
     downloadPreparedGroup,
   }),
@@ -107,7 +105,6 @@ describe('LinkField', () => {
     invoke.mockReset().mockRejectedValue(new Error('no backend'));
     dispatchMediaInfoFetch.mockReset();
     addUrlBatch.mockReset();
-    hasRecentCapture.mockReset().mockReturnValue(false);
     addUrlBatch.mockResolvedValue([]);
     addUrlBatchAndDownload.mockReset();
     downloadPreparedGroup.mockReset().mockResolvedValue('downloaded');
@@ -281,15 +278,15 @@ describe('LinkField', () => {
       .toBe('https://example.com/from-clipboard');
   });
 
-  it('does not submit a recently captured clipboard placeholder but allows an explicit draft', async () => {
+  it('routes both clipboard placeholders and explicit drafts through pending-row dedupe', async () => {
     clipboardContent.value = 'https://example.com/from-clipboard';
-    hasRecentCapture.mockReturnValue(true);
     const { wrapper } = await mountField();
     await wrapper.get('form').trigger('submit');
-    expect(addUrlBatch).not.toHaveBeenCalled();
+    expect(addUrlBatch).toHaveBeenCalledWith([clipboardContent.value]);
     await wrapper.get('#queue-url-input').setValue(clipboardContent.value);
     await wrapper.get('form').trigger('submit');
     expect(addUrlBatch).toHaveBeenCalledWith([clipboardContent.value]);
+    expect(addUrlBatch).toHaveBeenCalledTimes(2);
   });
 
   it('pastes native clipboard text without submitting or adding it twice', async () => {

@@ -1,9 +1,11 @@
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { defineComponent } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { describe, expect, it, vi } from 'vitest';
 import AppLayout from '../../src/layouts/AppLayout.vue';
 import { i18n } from '../../src/i18n';
+import { useMediaStore } from '../../src/stores/media/media';
+import { useDownloadSheetStore } from '../../src/stores/downloadSheet';
 
 const pasteField = vi.fn();
 const Toolbar = defineComponent({
@@ -14,6 +16,22 @@ const Toolbar = defineComponent({
 });
 
 describe('app-wide paste shortcut', () => {
+  it('returns to the list and closes an inspector when a pending link is copied again', async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/', name: 'home', component: { template: '<div />' } },
+      { path: '/settings', name: 'settings', component: { template: '<div />' } },
+    ] });
+    await router.push('/settings');
+    const wrapper = mount(AppLayout, { global: { plugins: [router, i18n], stubs: { AppToolbar: Toolbar, AppSidebar: true, AppStatusBar: true, TheUpdater: true, DownloadInspector: true } } });
+    try {
+      useDownloadSheetStore().show('existing');
+      useMediaStore().duplicateFocus = { id: 'existing' };
+      await flushPromises();
+      expect(router.currentRoute.value.name).toBe('home');
+      expect(useDownloadSheetStore().open).toBe(false);
+    } finally { wrapper.unmount(); }
+  });
+
   it('reads the clipboard explicitly outside editors and leaves native paste inside editors', async () => {
     const router = createRouter({
       history: createMemoryHistory(),

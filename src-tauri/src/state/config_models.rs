@@ -266,6 +266,7 @@ pub struct PerformanceSettings {
   #[serde(deserialize_with = "deserialize_fragments")]
   pub concurrent_fragments: u8,
   pub aria2_enabled: bool,
+  pub keep_awake: bool,
 }
 
 impl Default for PerformanceSettings {
@@ -278,6 +279,7 @@ impl Default for PerformanceSettings {
       auto_load_size: true,
       concurrent_fragments: 4,
       aria2_enabled: false,
+      keep_awake: true,
     }
   }
 }

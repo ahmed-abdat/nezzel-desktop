@@ -22,6 +22,7 @@ pub struct LibraryRecord {
   pub kind: String,
   pub size: u64,
   pub completed_at: u64,
+  #[serde(serialize_with = "crate::models::parsed::https_thumbnail")]
   pub thumbnail: Option<String>,
   #[serde(default)]
   pub authority: Vec<FileAuthority>,

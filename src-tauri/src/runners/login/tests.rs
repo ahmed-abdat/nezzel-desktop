@@ -211,6 +211,46 @@ async fn automatic_instagram_resume_runs_the_stage_with_cookies_once() {
 }
 
 #[test]
+fn authenticated_refusal_can_queue_the_next_browser_once() {
+  use crate::extract::{
+    chain::StageResult,
+    outcome::{Confidence, StageId},
+  };
+  use crate::parsers::ytdlp_error::{DiagnosticMatcher, YtdlpErrorParser};
+  let group = uuid::Uuid::new_v4().to_string();
+  let LoginRequest::Fetch(entry) = pending(&group).request else {
+    unreachable!()
+  };
+  let mut session =
+    LoginSession::from_auth(AuthSettings::default(), &entry.url, Some("firefox".into()));
+  let mut stage = StageResult::<()>::new(StageId::Ytdlp, Confidence::Medium);
+  stage.record_code("signInRequired", "", false, Instant::now());
+  session.set_fetch_history(stage.attempts, None);
+  session.begin_fetch(Phase::Login);
+  session.has_session = true;
+  let parser = YtdlpErrorParser::new(
+    "item",
+    &group,
+    DiagnosticMatcher::from_json(include_str!("../../diagnostic_rules.json")).unwrap(),
+  );
+  session.record_failure(
+    &parser.parse_lines(
+      vec!["ERROR: [facebook] This video is only available for registered users"],
+      true,
+    ),
+    false,
+  );
+  assert_eq!(
+    session.automatic_retry(LoginRequest::Fetch(entry.clone()), |_| RetryAction::Pending),
+    RetryAction::Pending
+  );
+  assert_eq!(
+    session.automatic_retry(LoginRequest::Fetch(entry), |_| panic!("duplicate resume")),
+    RetryAction::Stop
+  );
+}
+
+#[test]
 fn short_links_use_the_parent_site_session_and_consent() {
   use crate::runners::browser_cookies::{known_login_host, proof_cookies, site_key};
   for (host, canonical, names, supported) in [

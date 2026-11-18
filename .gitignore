@@ -70,3 +70,4 @@ scripts/public-export.sh
 .public-exclude
 *.pyc
 .eslintcache
+DECISIONS.md

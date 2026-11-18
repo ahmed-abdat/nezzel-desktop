@@ -115,8 +115,10 @@ fn read_diagnostics(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, Gall
     if length == 0 {
       return Ok(kept);
     }
-    let retain = length.min(limit.saturating_sub(kept.len()));
-    kept.extend_from_slice(&buffer[..retain]);
+    kept.extend_from_slice(&buffer[..length]);
+    if kept.len() > limit {
+      kept.drain(..kept.len() - limit);
+    }
   }
 }
 
@@ -133,12 +135,29 @@ pub async fn execute(
 pub(crate) async fn execute_with_started(
   path: &Path,
   args: &[String],
-  mut cancel: watch::Receiver<bool>,
+  cancel: watch::Receiver<bool>,
   deadline: Duration,
   started: impl FnOnce() + Send,
 ) -> Result<GalleryOutput, GalleryError> {
+  execute_monitored(path, args, cancel, deadline, None, started, || {}).await
+}
+
+pub(crate) async fn execute_monitored(
+  path: &Path,
+  args: &[String],
+  mut cancel: watch::Receiver<bool>,
+  deadline: Duration,
+  staging: Option<&Path>,
+  started: impl FnOnce() + Send,
+  mut progressed: impl FnMut() + Send,
+) -> Result<GalleryOutput, GalleryError> {
   if !*cancel.borrow() {
     return Err(GalleryError::Cancelled);
+  }
+  let start = tokio::time::Instant::now();
+  let mut watchdog = crate::runners::reliability::StallWatch::new(Duration::ZERO);
+  if let Some(bytes) = staging.and_then(crate::runners::reliability::partial_bytes) {
+    watchdog.observe_file_bytes(bytes, Duration::ZERO);
   }
   let mut command = Command::new(path);
   command
@@ -166,11 +185,35 @@ pub(crate) async fn execute_with_started(
       async { err_task.await.map_err(|_| GalleryError::Invalid)? },
     )
   };
-  let deadline = tokio::time::Instant::now() + deadline;
-  let (code, stdout, stderr) = match wait_until(run, deadline, &mut cancel).await {
+  let deadline = tokio::time::Instant::now()
+    + if staging.is_some() {
+      deadline.max(Duration::from_secs(300))
+    } else {
+      deadline
+    };
+  let guarded = wait_until(run, deadline, &mut cancel);
+  tokio::pin!(guarded);
+  let mut tick = tokio::time::interval(Duration::from_secs(1));
+  let result = loop {
+    tokio::select! {
+      result = &mut guarded => break result,
+      _ = tick.tick(), if staging.is_some() => {
+        if let Some(bytes) = staging.and_then(crate::runners::reliability::partial_bytes) { if watchdog.observe_file_bytes(bytes, start.elapsed()) { progressed(); } }
+        if watchdog.extraction_expired(start.elapsed()) { return Err(GalleryError::Refused("imageSourceUnavailable")); }
+        if watchdog.stalled(start.elapsed()) { return Err(GalleryError::Refused("downloadStalled")); }
+      }
+    }
+  };
+  let (code, stdout, stderr) = match result {
     Ok(output) => output?,
     Err(Interrupted::Cancelled) => return Err(GalleryError::Cancelled),
-    Err(Interrupted::Timeout) => return Err(GalleryError::Refused("imageSourceUnavailable")),
+    Err(Interrupted::Timeout) => {
+      return Err(GalleryError::Refused(if staging.is_none() {
+        "fetchTimeout"
+      } else {
+        "imageSourceUnavailable"
+      }))
+    }
   };
   #[cfg(feature = "link-matrix")]
   crate::link_matrix::observe_gallery_stderr(&stderr);
@@ -181,9 +224,250 @@ pub(crate) async fn execute_with_started(
   })
 }
 
+/// gallery-dl's output.jsonl mode flushes each record while enumeration is running.
+pub(crate) async fn execute_listing(
+  path: &Path,
+  args: &[String],
+  mut cancel: watch::Receiver<bool>,
+  budget: Duration,
+  started: impl FnOnce() + Send,
+) -> Result<(GalleryOutput, bool), GalleryError> {
+  use std::io::BufRead;
+  if !*cancel.borrow() {
+    return Err(GalleryError::Cancelled);
+  }
+  let mut command = Command::new(path);
+  command
+    .args(args)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+  let Spawned {
+    mut process,
+    stdout,
+    stderr,
+  } = ToolProcess::spawn(&mut command, ()).map_err(|_| GalleryError::Unavailable)?;
+  started();
+  let stdout = stdout.ok_or(GalleryError::Invalid)?;
+  let stderr = stderr.ok_or(GalleryError::Invalid)?;
+  let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+  let reader = tokio::task::spawn_blocking(move || {
+    let mut reader = std::io::BufReader::new(stdout.take(8 * 1024 * 1024 + 1));
+    loop {
+      let mut line = Vec::new();
+      match reader.read_until(b'\n', &mut line) {
+        Ok(0) => break,
+        Ok(_) => {
+          if tx.blocking_send(Ok(line)).is_err() {
+            break;
+          }
+        }
+        Err(_) => {
+          let _ = tx.blocking_send(Err(GalleryError::Invalid));
+          break;
+        }
+      }
+    }
+  });
+  let errors = tokio::task::spawn_blocking(move || read_diagnostics(stderr, 128 * 1024));
+  let deadline = tokio::time::Instant::now() + budget;
+  let mut records = Vec::new();
+  let mut count = 0;
+  let mut size = 0;
+  let mut truncated = false;
+  let mut budget_exhausted = false;
+  // A failed enumeration ends in one pretty-printed array (`[`, `  [`, ...), not JSONL lines.
+  let mut error_array: Option<Vec<u8>> = None;
+  let mut code = 0;
+  loop {
+    let line = match wait_until(rx.recv(), deadline, &mut cancel).await {
+      Ok(Some(line)) => line?,
+      Ok(None) => {
+        code = match wait_until(process.wait(), deadline, &mut cancel).await {
+          Ok(status) => status
+            .map_err(|_| GalleryError::Invalid)?
+            .code()
+            .unwrap_or(1),
+          Err(Interrupted::Cancelled) => return Err(GalleryError::Cancelled),
+          Err(Interrupted::Timeout) => {
+            truncated = true;
+            budget_exhausted = true;
+            0
+          }
+        };
+        break;
+      }
+      Err(Interrupted::Cancelled) => return Err(GalleryError::Cancelled),
+      Err(Interrupted::Timeout) => {
+        truncated = true;
+        budget_exhausted = true;
+        break;
+      }
+    };
+    size += line.len();
+    if size > 8 * 1024 * 1024 {
+      return Err(GalleryError::Invalid);
+    }
+    if line.iter().all(u8::is_ascii_whitespace) {
+      continue;
+    }
+    if let Some(array) = &mut error_array {
+      array.extend_from_slice(&line);
+      continue;
+    }
+    let record: serde_json::Value = match serde_json::from_slice(&line) {
+      Ok(record) => record,
+      Err(_) if records.is_empty() => {
+        error_array = Some(line);
+        continue;
+      }
+      Err(_) => return Err(GalleryError::Invalid),
+    };
+    if record[0] == 3
+      || (record[0] == 6
+        && record[1]
+          .as_str()
+          .is_some_and(|url| url.starts_with("ytdl:")))
+    {
+      count += 1;
+    }
+    records.push(record);
+    if count >= 100 {
+      truncated = true;
+      break;
+    }
+  }
+  // Close the receiver before joining: the bounded reader may be waiting to send.
+  drop(rx);
+  drop(process); // kills descendants and reaps the process at the cap or budget
+  reader.await.map_err(|_| GalleryError::Invalid)?;
+  let mut stderr = errors.await.map_err(|_| GalleryError::Invalid)??;
+  if budget_exhausted {
+    // code=0 admits the verified partial entries; it is not a child exit status.
+    stderr
+      .extend_from_slice(b"\n[nezzel] listing budget ran out; process stopped before completion\n");
+    if stderr.len() > 128 * 1024 {
+      stderr.drain(..stderr.len() - 128 * 1024);
+    }
+  }
+  if let Some(array) = error_array {
+    records = serde_json::from_slice(&array).map_err(|_| GalleryError::Invalid)?;
+  }
+  #[cfg(feature = "link-matrix")]
+  crate::link_matrix::observe_gallery_stderr(&stderr);
+  if truncated && count == 0 {
+    return Err(GalleryError::Refused("fetchTimeout"));
+  }
+  Ok((
+    GalleryOutput {
+      code,
+      stdout: serde_json::to_vec(&records).map_err(|_| GalleryError::Invalid)?,
+      stderr,
+    },
+    truncated,
+  ))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// Recorded gallery-dl 1.31 output for a deleted Facebook album listing (jsonl mode):
+  /// the failure arrives as one pretty-printed array, not as JSONL lines.
+  #[tokio::test]
+  #[cfg(unix)]
+  async fn recorded_facebook_album_404_is_not_found_not_unknown() {
+    let staging = crate::runners::gallery_files::Staging::new().unwrap();
+    let recorded = staging.path.join("recorded.json");
+    std::fs::write(
+      &recorded,
+      include_bytes!("../parsers/fixtures/gallery-recorded-facebook-album-404.json"),
+    )
+    .unwrap();
+    let (_tx, cancel) = watch::channel(true);
+    let (output, truncated) = execute_listing(
+      Path::new("/bin/cat"),
+      &[recorded.to_string_lossy().into_owned()],
+      cancel,
+      Duration::from_secs(30),
+      || {},
+    )
+    .await
+    .unwrap();
+    assert!(!truncated);
+    assert_eq!(
+      crate::parsers::gallery::parse_output(
+        output.code,
+        &output.stdout,
+        &output.stderr,
+        "https://www.facebook.com/media/set/?set=a.10150146071831729",
+      )
+      .unwrap_err(),
+      GalleryError::Refused("notFound404")
+    );
+  }
+
+  #[tokio::test(start_paused = true)]
+  #[cfg(unix)]
+  async fn recorded_partial_listing_keeps_budget_exhaustion_evidence() {
+    let staging = crate::runners::gallery_files::Staging::new().unwrap();
+    let fixture: serde_json::Value = serde_json::from_slice(include_bytes!(
+      "../parsers/fixtures/gallery-recorded-bluesky-listing.json"
+    ))
+    .unwrap();
+    let records = staging.path.join("records");
+    // Fill beyond both the pipe and the eight-record channel before signalling ready:
+    // seeing the marker proves the collector consumed the first asset.
+    let directory = serde_json::json!([2, {"description": "x".repeat(128 * 1024)}]);
+    let mut lines = format!("{}\n", fixture[0]);
+    for _ in 0..16 {
+      lines.push_str(&format!("{directory}\n"));
+    }
+    std::fs::write(&records, lines).unwrap();
+    let marker = staging.path.join("ready");
+    let child_marker = marker.clone();
+    let (_tx, cancel) = watch::channel(true);
+    let running = tokio::spawn(async move {
+      execute_listing(
+        Path::new("/bin/sh"),
+        &[
+          "-c".into(),
+          "cat \"$1\"; echo ready > \"$2\"; exec 1>&-; exec /usr/bin/tail -f /dev/null".into(),
+          "gallery".into(),
+          records.to_string_lossy().into_owned(),
+          child_marker.to_string_lossy().into_owned(),
+        ],
+        cancel,
+        Duration::from_secs(30),
+        || {},
+      )
+      .await
+    });
+    while !marker.exists() {
+      assert!(
+        !running.is_finished(),
+        "process ended before emitting its fixture"
+      );
+      tokio::task::yield_now().await;
+    }
+    tokio::time::advance(Duration::from_secs(30)).await;
+    let (output, truncated) = running.await.unwrap().unwrap();
+    assert!(truncated);
+    let post = crate::parsers::gallery::parse_output(
+      output.code,
+      &output.stdout,
+      &output.stderr,
+      "https://bsky.app/profile/nytimes.com/media",
+    )
+    .unwrap();
+    assert_eq!(post.assets.len(), 1);
+    assert!(
+      String::from_utf8_lossy(&output.stderr).contains("budget ran out"),
+      "partial success must explain why enumeration stopped: {:?}",
+      output.stderr
+    );
+  }
+
   #[test]
   fn only_checksum_verified_bundled_sidecars_are_accepted() {
     let root = std::env::temp_dir().join(format!("gallery-resolve-{}", uuid::Uuid::new_v4()));

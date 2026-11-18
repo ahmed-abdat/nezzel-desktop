@@ -1380,3 +1380,35 @@ async fn yandex_resume_renews_signed_endpoint_and_keeps_name_and_bytes() {
   assert_eq!(std::fs::read(path).unwrap(), *data);
   assert_eq!(resolutions.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn podcast_and_legal_responses_are_not_saved_as_files() {
+  use reqwest::ResponseBuilderExt;
+  for (status, mime, code) in [
+    (200, "text/xml", "podcastFeed"),
+    (200, "application/rss+xml", "podcastFeed"),
+    (451, "text/html", "legalRestriction451"),
+  ] {
+    let engine = Engine::scripted(Arc::new(move |url, _| {
+      Ok(
+        http::Response::builder()
+          .status(status)
+          .url(reqwest::Url::parse(url).unwrap())
+          .header("content-type", mime)
+          .body(reqwest::Body::from("<rss version=\"2.0\"><channel/></rss>"))
+          .unwrap()
+          .into(),
+      )
+    }));
+    let (_tx, cancel) = watch::channel(true);
+    let result = super::runner::probe_metadata_impl(
+      &engine,
+      "https://feeds.npr.org/510318/podcast.xml",
+      cancel,
+      false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.err().unwrap().code(), code);
+  }
+}

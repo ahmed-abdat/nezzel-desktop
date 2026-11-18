@@ -1402,7 +1402,12 @@ async fn threads_carousels_refuse_partial_attachment_sets() {
     let transport = FakeTransport(std::sync::Mutex::new(
       [(url, reply(200, None, body.as_bytes()))].into(),
     ));
-    assert!(matches!(read_site(url, &transport).await, Verdict::Unknown));
+    assert!(matches!(
+      read_site(url, &transport).await,
+      Verdict::Verified(Resolution::Unsupported {
+        reason: Reason::Unavailable
+      })
+    ));
   }
 }
 
@@ -1472,7 +1477,15 @@ async fn threads_text_posts_report_no_media_only_with_bound_empty_media() {
         "{case}"
       );
     } else {
-      assert!(matches!(verdict, Verdict::Unknown), "{case}");
+      assert!(
+        matches!(
+          verdict,
+          Verdict::Verified(Resolution::Unsupported {
+            reason: Reason::Unavailable
+          })
+        ),
+        "{case}"
+      );
     }
   }
 }
@@ -1482,7 +1495,7 @@ async fn threads_refuses_redirects_oversized_bodies_and_unbound_previews() {
   let url = "https://www.threads.com/@nasa/post/DXVbTUPl-Qy";
   for response in [
     reply(302, Some("https://www.threads.com/login"), b""),
-    reply(200, None, &vec![b'x'; 3 * 512 * 1024 + 1]),
+    reply(200, None, &vec![b'x'; 4 * 1024 * 1024 + 1]),
     reply(
       200,
       None,
@@ -1490,13 +1503,25 @@ async fn threads_refuses_redirects_oversized_bodies_and_unbound_previews() {
     ),
   ] {
     let transport = FakeTransport(std::sync::Mutex::new([(url, response)].into()));
-    assert!(matches!(read_site(url, &transport).await, Verdict::Unknown));
+    assert!(matches!(
+      read_site(url, &transport).await,
+      Verdict::Unknown
+        | Verdict::Verified(Resolution::Unsupported {
+          reason: Reason::Unavailable
+        })
+    ));
     assert!(transport.0.lock().unwrap().is_empty());
   }
   let share = "https://www.threads.com/share/FJ_5OYZ6-";
   let canonical = "https://www.threads.com/@nasa/post/SynthVid0001";
   for (source, location, target, supported) in [
     (share, canonical, Some(canonical), true),
+    (
+      "https://www.threads.com/t/SynthVid0001",
+      canonical,
+      Some(canonical),
+      true,
+    ),
     (
       "https://www.threads.net/share/FJ_5OYZ6-",
       "https://www.threads.net/@nasa/post/SynthVid0001?tracking=1",
@@ -1541,7 +1566,16 @@ async fn threads_refuses_redirects_oversized_bodies_and_unbound_previews() {
     if supported {
       assert_threads_video_metadata(result.resolution(source), canonical);
     } else {
-      assert!(matches!(result, Verdict::Unknown), "{source} -> {location}");
+      assert!(
+        matches!(
+          result,
+          Verdict::Unknown
+            | Verdict::Verified(Resolution::Unsupported {
+              reason: Reason::Unavailable
+            })
+        ),
+        "{source} -> {location}"
+      );
     }
     assert!(transport.0.lock().unwrap().is_empty());
   }
@@ -1953,7 +1987,12 @@ async fn threads_reads_only_the_explicit_bound_quote_attachment() {
         "https://scontent.cdninstagram.com/v/quote.mp4"
       );
     } else {
-      assert!(matches!(result, Verdict::Unknown));
+      assert!(matches!(
+        result,
+        Verdict::Verified(Resolution::Unsupported {
+          reason: Reason::Unavailable
+        })
+      ));
     }
   }
 }
@@ -2026,5 +2065,87 @@ async fn facebook_share_unavailable_retries_once_with_backoff() {
     );
     assert_eq!(input.url, "https://cdn.example/selected.mp4");
     assert!(!input.retry_facebook_share(stderr).await);
+  }
+}
+
+#[test]
+fn instagram_profile_shape_excludes_posts_stories_and_lookalike_hosts() {
+  for (url, profile) in [
+    ("https://www.instagram.com/porsche/", true),
+    ("https://instagram.com/user.name_1?hl=en", true),
+    ("https://instagram.com/p/abc/", false),
+    ("https://instagram.com/reel/abc/", false),
+    ("https://instagram.com/stories/user/123/", false),
+    ("https://instagram.com/explore/", false),
+    ("https://instagram.com/accounts/", false),
+    ("https://instagram.com/", false),
+    ("https://instagram.com.evil.test/user/", false),
+  ] {
+    assert_eq!(instagram_profile(url), profile, "{url}");
+  }
+}
+
+#[test]
+fn facebook_share_photo_redirect_keeps_only_a_canonical_facebook_post() {
+  let source = "https://www.facebook.com/share/p/1CZNGZQHZA/";
+  for kind in ["v", "r"] {
+    assert!(facebook_photo_redirect(&format!("https://www.facebook.com/share/{kind}/abc/"), &serde_json::json!({"formats":[], "webpage_url":"https://www.facebook.com/page/posts/pfbidABC"})).is_none());
+  }
+  for (target, formats, expected) in [
+    (
+      "https://www.facebook.com/alqaryhsoumeye/posts/pfbid02ehGst3abc",
+      serde_json::json!([]),
+      true,
+    ),
+    (
+      "https://www.facebook.com/alqaryhsoumeye/posts/pfbid02ehGst3abc",
+      serde_json::json!([{"url":"https://video.fbcdn.net/a.mp4"}]),
+      false,
+    ),
+    (
+      "https://www.facebook.com.evil.test/page/posts/pfbidABC",
+      serde_json::json!([]),
+      false,
+    ),
+    (
+      "https://www.facebook.com/accounts/login",
+      serde_json::json!([]),
+      false,
+    ),
+    (
+      "https://www.facebook.com/share/p/other/",
+      serde_json::json!([]),
+      false,
+    ),
+  ] {
+    let info = serde_json::json!({"webpage_url": target, "formats": formats});
+    assert_eq!(
+      facebook_photo_redirect(source, &info).as_deref(),
+      expected.then_some(target)
+    );
+  }
+}
+
+#[test]
+fn rumble_403_impersonates_once_without_changing_other_hosts() {
+  for (url, error, expected) in [
+    ("https://rumble.com/embed/v5pv5f", "HTTP Error 403", true),
+    ("https://www.rumble.com/video", "HTTP Error 403", true),
+    (
+      "https://rumble.com.evil.test/video",
+      "HTTP Error 403",
+      false,
+    ),
+    ("https://youtube.com/video", "HTTP Error 403", false),
+    ("https://rumble.com/video", "HTTP Error 404", false),
+  ] {
+    let mut input = ResolvedInput::new(url);
+    assert_eq!(input.retry_rumble_403(error), expected);
+    assert_eq!(input.args().contains(&"chrome"), expected);
+    assert!(!input.retry_rumble_403(error));
+    assert_eq!(
+      input.impersonation_unavailable("Impersonate target chrome is not available"),
+      expected
+    );
   }
 }

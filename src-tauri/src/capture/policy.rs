@@ -80,6 +80,9 @@ pub fn supported_url(text: &str) -> Option<(String, String)> {
   } else {
     text
   };
+  let original = reqwest::Url::parse(text).ok()?;
+  let target = crate::links::normalize::pure(text).ok()?;
+  let text = target.as_str();
   let (scheme, rest) = text.split_once("://")?;
   let scheme = scheme.to_ascii_lowercase();
   if scheme != "https" && scheme != "http" {
@@ -93,17 +96,9 @@ pub fn supported_url(text: &str) -> Option<(String, String)> {
     .filter(|_| scheme == "https")
     .or_else(|| authority.strip_suffix(":80").filter(|_| scheme == "http"))
     .unwrap_or(&authority);
-  // Proxy embed domains are aliases only at their exact public post hosts.
-  let host = match host {
-    "fxtwitter.com" | "www.fxtwitter.com" | "vxtwitter.com" | "www.vxtwitter.com" => "x.com",
-    h if crate::sites::host_is(h, "fxtwitter.com") || crate::sites::host_is(h, "vxtwitter.com") => {
-      return None
-    }
-    h => h,
-  };
   let share = crate::files::hosts::is_share(text);
   let site = site_of(host).filter(|site| SITES.contains(site));
-  if site.is_none() && !share {
+  if site.is_none() && !share && !crate::links::normalize::needs_redirect(&target) {
     return None;
   }
   if !host
@@ -134,17 +129,30 @@ pub fn supported_url(text: &str) -> Option<(String, String)> {
   {
     return None;
   }
-  // lnkd.in also shortens arbitrary external links; only LinkedIn's own post links (/p/).
+  // Generic lnkd.in redirects can leave LinkedIn; capture only its post short links.
   if crate::sites::host_is(host, "lnkd.in") && !path.starts_with("/p/") {
     return None;
   }
-  Some((format!("{scheme}://{host}{suffix}"), host.into()))
+  // Public proxy aliases are exact hosts; subdomains remain manual-only.
+  if crate::sites::SITES
+    .iter()
+    .flat_map(|s| s.short_links)
+    .any(|alias| {
+      matches!(*alias, "fxtwitter.com" | "vxtwitter.com") && crate::sites::host_is(host, alias)
+    })
+  {
+    return None;
+  }
+  Some((original.to_string(), host.into()))
 }
 
 /// True for a site's home/feed page (no specific post). These get no metadata fetch.
 /// Expects a URL already normalized by `supported_url`.
 pub fn is_feed_page(url: &str) -> bool {
-  let Some((_, rest)) = url.split_once("://") else {
+  let Ok(normalized) = crate::links::normalize::pure(url) else {
+    return false;
+  };
+  let Some((_, rest)) = normalized.as_str().split_once("://") else {
     return false;
   };
   let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
@@ -198,7 +206,10 @@ fn fingerprint(text: &str) -> u64 {
 impl CapturePolicy {
   pub fn own_write(&mut self, text: &str, now: Duration) {
     if let Some((url, _)) = supported_url(text) {
-      self.own.insert(fingerprint(&url), now);
+      self.own.insert(
+        fingerprint(&crate::links::normalize::canonical_key(&url).unwrap_or_else(|_| url.clone())),
+        now,
+      );
     }
   }
 
@@ -215,7 +226,10 @@ impl CapturePolicy {
   pub fn acknowledge(&mut self, text: &str, now: Duration) {
     if let Some((url, _)) = supported_url(text) {
       self.last = Some(fingerprint(text));
-      self.seen.insert(fingerprint(&url), now);
+      self.seen.insert(
+        fingerprint(&crate::links::normalize::canonical_key(&url).unwrap_or_else(|_| url.clone())),
+        now,
+      );
     }
   }
 
@@ -240,7 +254,8 @@ impl CapturePolicy {
     let Some((url, site)) = supported_url(text) else {
       return Decision::Unsupported;
     };
-    let key = fingerprint(&url);
+    let key =
+      fingerprint(&crate::links::normalize::canonical_key(&url).unwrap_or_else(|_| url.clone()));
     if self.own.contains_key(&key) {
       return Decision::Own;
     }
@@ -289,6 +304,46 @@ impl Decision {
 mod tests {
   use super::*;
   const URL: &str = "https://www.youtube.com/watch?v=abc";
+
+  #[test]
+  fn wrappers_and_shorteners_are_captured_with_original_urls_and_canonical_identity() {
+    let wrapped =
+      "https://l.facebook.com/l.php?u=https%3A%2F%2Fyoutube.com%2Fwatch%3Fv%3Dabc%26si%3Dx";
+    assert_eq!(
+      supported_url(wrapped),
+      Some((wrapped.into(), "youtube.com".into()))
+    );
+    let mut policy = CapturePolicy::default();
+    policy.acknowledge(wrapped, Duration::ZERO);
+    assert_eq!(
+      policy.decide("https://youtu.be/abc?si=other", Duration::ZERO),
+      Decision::Seen
+    );
+    for host in crate::links::normalize::SHORTENERS
+      .iter()
+      .filter(|host| **host != "lnkd.in")
+    {
+      assert!(
+        supported_url(&format!("https://{host}/abc")).is_some(),
+        "{host}"
+      );
+    }
+    for host in [
+      "https://bit.ly.evil.test/a",
+      "https://d.fxtwitter.com/u/status/1",
+    ] {
+      assert!(supported_url(host).is_none(), "{host}");
+    }
+    assert!(is_feed_page(
+      "https://google.com/url?q=https%3A%2F%2Fyoutube.com"
+    ));
+  }
+
+  #[test]
+  fn linkedin_capture_accepts_only_post_short_links() {
+    assert!(supported_url("https://lnkd.in/p/abc").is_some());
+    assert!(supported_url("https://lnkd.in/abc").is_none());
+  }
 
   #[test]
   fn startup_text_is_not_a_copy_but_later_changed_text_is() {
@@ -366,7 +421,8 @@ mod tests {
       if detected != *site {
         failures.push(format!("{shape}: site {detected}, expected {site}"));
       }
-      let stages = stages_for(&url);
+      let routed = crate::links::normalize::pure(&url).unwrap();
+      let stages = stages_for(routed.as_str());
       let want = match *engine {
         "files" => StageId::Files,
         "gallery" => StageId::Gallery,
@@ -387,7 +443,7 @@ mod tests {
       if is_feed_page(&url) {
         failures.push(format!("{shape}: post flagged as feed"));
       }
-      let actual = readers(&url)
+      let actual = readers(routed.as_str())
         .first()
         .map_or_else(|| "-".to_owned(), |r| format!("{r:?}"));
       if actual != *reader {
@@ -401,7 +457,7 @@ mod tests {
   fn accepts_supported_hosts_only_and_normalizes_for_dedupe() {
     assert_eq!(
       supported_url(" HTTPS://WWW.YouTube.com/watch?v=abc#t=2 "),
-      Some((URL.into(), "www.youtube.com".into()))
+      Some((format!("{URL}#t=2"), "www.youtube.com".into()))
     );
     assert!(supported_url("https://m.youtube.com/watch?v=abc").is_some());
     // Links the share buttons of post sites copy.
@@ -440,7 +496,6 @@ mod tests {
       "https://t.me/+AbCdEf123",
       "https://t.me/joinchat/AbCdEf",
       "https://t.me/c/123456/7",
-      "https://lnkd.in/dXyZ123",
       "https://drive.google.com/drive/folders/abc",
       "https://docs.google.com/forms/d/abc/viewform",
       "https://dropbox.com/home",

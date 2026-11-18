@@ -8,29 +8,45 @@ use crate::SharedConfig;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
+type PreviewItem = (serde_json::Value, Option<preview::PreviewDetails>);
+
 pub(super) async fn preview(app: AppHandle, window: CaptureWindow, value: Offer) {
   let started = std::time::Instant::now();
-  let (item, details, reason) = match preview_item(&app, &value).await {
-    Ok((item, details)) => (Some(item), details, None),
-    Err(reason) => (None, None, Some(reason)),
-  };
+  let result = preview_item(&app, &value).await;
   tracing::info!(
     window = window.label(),
     ms = started.elapsed().as_millis() as u64,
-    ok = item.is_some(),
-    reason = reason.map(FailReason::as_str).unwrap_or(""),
+    ok = result.as_ref().is_ok_and(|item| item.is_some()),
+    reason = result
+      .as_ref()
+      .err()
+      .map(|reason| reason.as_str())
+      .unwrap_or(""),
     "Capture preview read"
   );
   let state = app.state::<CaptureState>();
-  let recorded = state
-    .offers
-    .lock()
-    .unwrap()
-    .record_read(window, value.id, item, details, reason);
+  let recorded = record_preview(&mut state.offers.lock().unwrap(), window, value.id, result);
   if recorded {
     wake_window(&app, window);
   }
   state.changed.notify_waiters();
+}
+
+fn record_preview(
+  offers: &mut super::state::Offers,
+  window: CaptureWindow,
+  id: u64,
+  result: Result<Option<PreviewItem>, FailReason>,
+) -> bool {
+  match result {
+    Ok(Some((item, details))) => offers.record_read(window, id, Some(item), details, None),
+    Ok(None) => {
+      let held = offers.holds(window, id);
+      offers.dismiss(window, id);
+      held
+    }
+    Err(reason) => offers.record_read(window, id, None, None, Some(reason)),
+  }
 }
 
 /// The link's media item (plus the card facts when they come from a richer source than the item),
@@ -65,9 +81,20 @@ enum Engine {
   Gallery,
 }
 
-/// Which engines a preview tries, in order. Routing only, from the extract registry: a preview is anonymous and
-/// silent (no login session, no group cancellation, no attempt reports or terminal events).
+/// Capture admission, then engines in registry order. Previews are anonymous and silent:
+/// no login session, group cancellation, attempt reports or terminal events.
 fn preview_plan(url: &str, proxy: bool) -> Vec<Engine> {
+  // A resolved short link is still clipboard input: re-apply capture's site/path policy.
+  let Some((_, host)) = super::policy::supported_url(url) else {
+    return Vec::new();
+  };
+  // A proxy (or a non-redirecting shortener) can leave the destination unknown. Only
+  // site-owned shorteners may be handed to a background engine unresolved.
+  if crate::sites::site_of(&host).is_none()
+    && reqwest::Url::parse(url).is_ok_and(|url| crate::links::normalize::needs_redirect(&url))
+  {
+    return Vec::new();
+  }
   if crate::files::hosts::is_share(url) {
     // File-share failures stay with Files; never yt-dlp for their preview.
     return vec![Engine::Files];
@@ -93,22 +120,31 @@ fn preview_plan(url: &str, proxy: bool) -> Vec<Engine> {
   plan
 }
 
-async fn preview_item(
-  app: &AppHandle,
-  value: &Offer,
-) -> Result<(serde_json::Value, Option<preview::PreviewDetails>), FailReason> {
+async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewItem>, FailReason> {
   let network = app.state::<SharedConfig>().load().network.clone();
   let proxy = network.enable_proxy == Some(true);
   // Check before any engine: a configured but empty proxy must never go direct.
   if proxy && network.proxy.as_deref().is_none_or(|p| p.trim().is_empty()) {
     return Err(FailReason::Network);
   }
+  let mut normalized = value.clone();
+  normalized.url = crate::links::normalize::resolve(&value.url, proxy)
+    .await
+    .map_err(|_| FailReason::Network)?
+    .into();
+  let value = &normalized;
+  let plan = preview_plan(&value.url, proxy);
+  if plan.is_empty() {
+    return Ok(None);
+  }
   let row = format!("capture-{}", value.id);
   // What yt-dlp reads: the copied link, or the one a reader found for it.
   let mut target = crate::resolve::ResolvedInput::new(&value.url);
   // The first failure is the one the card explains; later engines are only fallbacks.
   let mut failed: Option<FailReason> = None;
-  for engine in preview_plan(&value.url, proxy) {
+  // The reader's post title; the media file name it hands yt-dlp is not one.
+  let mut post_title: Option<String> = None;
+  for engine in plan {
     match engine {
       Engine::Files => {
         if proxy {
@@ -121,12 +157,12 @@ async fn preview_item(
         .await
         .map_err(|_| FailReason::Slow)?
         .map_err(|_| FailReason::Unknown)
-        .map(|item| (with_engine(item, FetchEngine::Files), None));
+        .map(|item| Some((with_engine(item, FetchEngine::Files), None)));
       }
       Engine::Gallery => {
         match crate::runners::gallery::preview_media(app, &target.url, row.clone(), &network).await
         {
-          Ok(Some(item)) => return Ok((with_engine(item, FetchEngine::Gallery), None)),
+          Ok(Some(item)) => return Ok(Some((with_engine(item, FetchEngine::Gallery), None))),
           // A login wall leaves the media type unknown. The foreground fetch must resolve it with
           // consented cookies instead of caching a yt-dlp preview.
           Err(crate::parsers::gallery::GalleryError::Login) if failed.is_none() => {
@@ -136,14 +172,23 @@ async fn preview_item(
         }
       }
       Engine::Reader => match crate::resolve::resolve(&value.url).await {
-        crate::resolve::Resolution::Passthrough(url)
-        | crate::resolve::Resolution::PostMedia { url, .. } => target.rewrite(url),
+        crate::resolve::Resolution::Passthrough(url) => target.rewrite(url),
+        crate::resolve::Resolution::PostMedia { url, title, .. } => {
+          post_title = title;
+          target.rewrite(url);
+        }
         crate::resolve::Resolution::Attachments { metadata } => {
           return reader_item(&metadata, &row)
-            .map(|item| (item, None))
+            .map(|item| Some((item, None)))
             .ok_or(FailReason::Unknown);
         }
         crate::resolve::Resolution::Failed { .. } => return Err(FailReason::Network),
+        crate::resolve::Resolution::Unsupported {
+          reason: crate::resolve::Reason::Login,
+        } => return Err(FailReason::Login),
+        crate::resolve::Resolution::Unsupported {
+          reason: crate::resolve::Reason::Unavailable,
+        } => return Err(FailReason::Unknown),
         crate::resolve::Resolution::Unsupported { .. } => {
           failed.get_or_insert(FailReason::Unsupported);
         }
@@ -151,7 +196,10 @@ async fn preview_item(
       // A reader that found no video (photos only) leaves yt-dlp nothing to read.
       Engine::Ytdlp if failed.is_some() || crate::resolve::facebook_photo_target(&target.url) => {}
       Engine::Ytdlp => match preview_ytdlp(app, value, &target, &network).await {
-        Ok((item, details)) => return Ok((with_engine(item, FetchEngine::Ytdlp), details)),
+        Ok((item, details)) => {
+          let (item, details) = with_post_title(item, details, post_title);
+          return Ok(Some((with_engine(item, FetchEngine::Ytdlp), details)));
+        }
         Err(reason) => {
           failed.get_or_insert(reason);
         }
@@ -167,6 +215,24 @@ fn reader_item(metadata: &str, row: &str) -> Option<serde_json::Value> {
   media.id = row.to_string();
   media.fetch_engine = Some(FetchEngine::Reader);
   serde_json::to_value(media).ok()
+}
+
+/// A post title the reader found replaces the one yt-dlp took from the media file name, in the
+/// cached item and in the card details (which the offer title prefers).
+fn with_post_title(
+  mut item: serde_json::Value,
+  mut details: Option<preview::PreviewDetails>,
+  title: Option<String>,
+) -> (serde_json::Value, Option<preview::PreviewDetails>) {
+  if let (Some(title), Some(fields)) = (title, item.as_object_mut()) {
+    if !fields.contains_key("entries") {
+      fields.insert("title".into(), title.clone().into());
+      if let Some(details) = details.as_mut() {
+        details.title = Some(title);
+      }
+    }
+  }
+  (item, details)
 }
 
 /// Capture previews skip the fetch chain, so they record their engine here; the download
@@ -268,28 +334,41 @@ async fn probe_with_fallback<
   match fast.await {
     Ok(value) => Ok(value),
     Err(error) => {
-      // Restoring manifests cannot repair login, availability, transport or access refusals.
-      if error.0 != FailReason::Unknown {
-        return Err(error);
-      }
       let Ok(matcher) = DiagnosticMatcher::shared() else {
         return Err(error);
       };
       let parser = YtdlpErrorParser::new("capture", "capture", matcher);
-      let retry = error
+      let diagnostics: Vec<_> = error
         .1
         .lines()
         .filter_map(|line| parser.parse_fetch_line(line, false))
-        .any(|event| {
-          matches!(
-            event.code.as_str(),
-            "requestedFormatUnavailable"
-              | "unableToExtractIdOrInfo"
-              | "unableToExtractInitialData"
-              | "nsigExtractionFailed"
-          ) || stage_hint::no_formats(&event.message)
-            || stage_hint::requested_format_unavailable(&event.message)
-        });
+        .collect();
+      // Missing formats are terminal for photo fallback, but an abbreviated capture probe
+      // can still find video by restoring manifests. Explicit site refusals remain terminal.
+      let missing_formats_only = error.0 == FailReason::Unavailable
+        && diagnostics
+          .iter()
+          .filter(|event| matches!(event.level, crate::models::error::DiagnosticLevel::Error))
+          .all(|event| {
+            let message = event.message.to_ascii_lowercase();
+            event.code == "mediaUnavailable"
+              && ["no video formats", "no formats", "no available formats"]
+                .iter()
+                .any(|prefix| message.starts_with(prefix))
+          });
+      if error.0 != FailReason::Unknown && !missing_formats_only {
+        return Err(error);
+      }
+      let retry = diagnostics.iter().any(|event| {
+        matches!(
+          event.code.as_str(),
+          "requestedFormatUnavailable"
+            | "unableToExtractIdOrInfo"
+            | "unableToExtractInitialData"
+            | "nsigExtractionFailed"
+        ) || stage_hint::no_formats(&event.message)
+          || stage_hint::requested_format_unavailable(&event.message)
+      });
       if retry {
         full().await
       } else {
@@ -409,6 +488,35 @@ mod login_privacy_tests {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::capture::state::Offers;
+
+  #[test]
+  fn reader_post_title_reaches_the_offer_card_not_the_media_file_name() {
+    let dump = serde_json::json!({
+      "id": "x", "title": "DASHPlaylist", "extractor": "generic",
+      "webpage_url": "https://v.redd.it/abcdefgh1234/DASHPlaylist.mpd",
+      "formats": [{"format_id": "1", "ext": "mp4", "acodec": "none", "vcodec": "avc1", "height": 720}]
+    });
+    let (item, details) = ytdlp_preview(
+      "https://v.redd.it/abcdefgh1234/DASHPlaylist.mpd",
+      &dump.to_string(),
+      1,
+    )
+    .unwrap();
+    let (item, details) = with_post_title(item, details, Some("NASA clip".into()));
+    let mut offers = Offers::default();
+    offers.replace(
+      CaptureWindow::Bar,
+      Offer {
+        id: 1,
+        ..Offer::default()
+      },
+    );
+    assert!(offers.record_read(CaptureWindow::Bar, 1, Some(item), details, None));
+    let offer = offers.current(CaptureWindow::Bar).unwrap();
+    assert_eq!(offer.title, "NASA clip");
+    assert_eq!(offer.details.title.as_deref(), Some("NASA clip"));
+  }
 
   #[tokio::test(start_paused = true)]
   async fn cold_youtube_read_survives_windows_first_run_latency() {
@@ -619,6 +727,53 @@ mod tests {
     )
     .unwrap();
     assert_eq!(details.unwrap().title.as_deref(), cached["title"].as_str());
+  }
+
+  #[test]
+  fn dropped_preview_retires_only_its_offer_without_a_failed_card() {
+    use super::super::state::{ItemState, Offers};
+    let window = CaptureWindow::Card;
+    let mut offers = Offers::default();
+    offers.replace(
+      window,
+      Offer {
+        id: 1,
+        url: "https://bit.ly/a".into(),
+        ..Offer::default()
+      },
+    );
+    assert!(record_preview(&mut offers, window, 1, Ok(None)));
+    assert_eq!(offers.item(1), ItemState::Gone);
+    offers.replace(
+      window,
+      Offer {
+        id: 2,
+        ..Offer::default()
+      },
+    );
+    assert!(!record_preview(&mut offers, window, 1, Ok(None)));
+    assert_eq!(offers.current(window).unwrap().id, 2);
+  }
+
+  #[test]
+  fn unsupported_shortener_destinations_have_no_background_engine() {
+    for target in [
+      "https://example.com/video.mp4",
+      "https://t.me/+secret",
+      "https://t.me/joinchat/secret",
+      "https://t.me/c/123/4",
+      "https://drive.google.com/drive/folders/abc",
+      "https://docs.google.com/forms/d/abc/viewform",
+      "https://dropbox.com/home",
+    ] {
+      assert!(preview_plan(target, false).is_empty(), "{target}");
+    }
+    for proxy in [false, true] {
+      for unresolved in ["https://bit.ly/a", "https://t.co/a"] {
+        assert!(preview_plan(unresolved, proxy).is_empty(), "{unresolved}");
+      }
+    }
+    assert!(!preview_plan("https://youtu.be/abc", true).is_empty());
   }
 
   /// Routing comes from the extract registry: files alone, gallery before or after yt-dlp, site readers first.

@@ -239,6 +239,14 @@ fn every_matcher_has_offline_positive_and_negative_cases() {
       ],
     },
     Case {
+      name: "facebook-album",
+      yes: &["https://www.facebook.com/media/set/?set=a.10150146071831729"],
+      no: &[
+        "https://www.facebook.com/nasa",
+        "https://example.com/media/set/",
+      ],
+    },
+    Case {
       name: "imgur-album",
       yes: &[
         "https://imgur.com/a/123",
@@ -364,6 +372,30 @@ fn invalid_urls_claim_nothing_and_youtube_exclusivity_is_host_bound() {
     assert!(!exclusive(url), "{url}");
     assert_eq!(claim(StageId::Gallery, url), Confidence::Low);
   }
+}
+
+#[test]
+fn facebook_albums_are_claimed_by_gallery_so_its_404_is_the_verdict() {
+  // Recorded: yt-dlp says "Unsupported URL" and gallery-dl "'404 Not Found' for ...photo/?fbid=&set=".
+  let url = "https://www.facebook.com/media/set/?set=a.10150146071831729";
+  assert_eq!(claim(StageId::Gallery, url), Confidence::Medium);
+  use crate::extract::outcome::{classify, Attempt, AuthUsed, NetworkScope};
+  let failed = |stage, code| {
+    Attempt::failed(
+      stage,
+      AuthUsed::Anonymous,
+      claim(stage, url),
+      classify(code, "", NetworkScope::StageLocal),
+      0,
+    )
+  };
+  assert_eq!(
+    crate::extract::precedence::final_code(&[
+      failed(StageId::Ytdlp, "urlNotSupported"),
+      failed(StageId::Gallery, "notFound404"),
+    ]),
+    Some("notFound404")
+  );
 }
 
 #[test]

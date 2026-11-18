@@ -42,8 +42,18 @@ fn classify_stage(stage: StageId, code: &str, message: &str, scope: NetworkScope
     return diagnostic;
   }
   if stage_hint::no_formats(message) {
-    // No video representation is inconclusive for photo-capable engines, regardless of the host.
-    classify("photosOnly", "", scope)
+    let component = message
+      .split_once('[')
+      .and_then(|(_, rest)| rest.split_once(']'))
+      .map(|(name, _)| name);
+    if code == "mediaUnavailable" || component.is_some_and(stage_hint::video_only_component) {
+      Diagnostic {
+        outcome: Outcome::Removed,
+        ..classify("mediaUnavailable", "", scope)
+      }
+    } else {
+      classify("photosOnly", "", scope)
+    }
   } else if diagnostic.outcome == Outcome::Unknown
     && stage_hint::requested_format_unavailable(message)
   {
@@ -307,6 +317,39 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
     mut login,
     mut resolved_url,
   } = state;
+  let refusal = if crate::resolve::unsupported_profile(original) {
+    Some("profileNotSupported")
+  } else if reqwest::Url::parse(original).is_ok_and(|url| {
+    url.host_str().is_some_and(|host| {
+      crate::sites::host_is(host, "netflix.com") || crate::sites::host_is(host, "anghami.com")
+    })
+  }) {
+    Some("drmProtected")
+  } else if reqwest::Url::parse(original).is_ok_and(|url| {
+    let host = url.host_str().unwrap_or_default();
+    (host == "drive.google.com" && url.path().starts_with("/drive/folders/"))
+      || host == "1drv.ms"
+      || crate::sites::host_is(host, "onedrive.live.com")
+  }) {
+    Some("urlNotSupported")
+  } else {
+    None
+  };
+  if let Some(code) = refusal {
+    attempts.push(Attempt::failed(
+      StageId::Ytdlp,
+      AuthUsed::Anonymous,
+      Confidence::High,
+      classify(code, "", NetworkScope::PageHost),
+      0,
+    ));
+    return ChainResult {
+      media: None,
+      attempts,
+      error: None,
+      login,
+    };
+  }
   let row_budget = if phase == Phase::Anonymous {
     Duration::from_secs(90).max(ytdlp_budget)
   } else {
@@ -318,6 +361,7 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
   let mut media = None;
   let mut error = None;
   let mut login_started = phase == Phase::Login;
+  let mut provisional_missing = Vec::new();
   let mut degraded = false;
   loop {
     let phase_start = attempts.len();
@@ -336,7 +380,12 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
         break;
       }
       if phase == Phase::Login {
-        if !login_capable(stage, &attempts) {
+        let redirected_facebook_post = stage == StageId::Gallery
+          && crate::resolve::facebook_share(original)
+          && resolved_url
+            .as_deref()
+            .is_some_and(crate::resolve::facebook_post_target);
+        if !login_capable(stage, &attempts) && !redirected_facebook_post {
           continue;
         }
       } else {
@@ -391,7 +440,7 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
         &mut cancel,
       )
       .await;
-      let result = match result {
+      let mut result = match result {
         Ok(result) => result,
         Err(Interrupted::Cancelled) => StageResult::new(stage, Confidence::Medium).finish(
           Outcome::Cancelled,
@@ -404,6 +453,22 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
           result
         }
       };
+      // Facebook share links can look missing until a browser session resolves the redirect.
+      if crate::resolve::facebook_share(original) {
+        for (index, attempt) in result.attempts.iter_mut().enumerate() {
+          if attempt.auth == AuthUsed::Anonymous
+            && matches!(attempt.stage, StageId::Ytdlp | StageId::Gallery)
+            && attempt
+              .code
+              .is_some_and(|code| code.as_str() == "notFound404")
+          {
+            provisional_missing.push((attempts.len() + index, *attempt));
+            let diagnostic = classify("signInRequired", "", NetworkScope::StageLocal);
+            attempt.code = Some(diagnostic.code);
+            attempt.outcome = diagnostic.outcome;
+          }
+        }
+      }
       login = result.login.or(login);
       media = result.media;
       error = result.error.or(error);
@@ -553,6 +618,15 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
     login_started = true;
     row_deadline = Deadline::now() + Duration::from_secs(90);
   }
+  if !login_started
+    && !attempts
+      .iter()
+      .any(|attempt| attempt.outcome == Outcome::LoginPending)
+  {
+    for (index, original) in provisional_missing {
+      attempts[index] = original;
+    }
+  }
   ChainResult {
     media,
     attempts,
@@ -624,6 +698,8 @@ pub async fn run(
   app: &AppHandle,
   entry: &FetchEntry,
 ) -> Result<Option<ParsedMedia>, YtdlpInfoFetchError> {
+  let normalized_entry = crate::links::normalize::fetch_entry(app, entry).await?;
+  let entry = &normalized_entry;
   let ytdlp_budget = crate::runners::ytdlp_runner::YtdlpRunner::new(app)
     .with_input_args(entry.overrides.as_ref())
     .with_args(["-J", "--flat-playlist", "--", &entry.url])
@@ -682,7 +758,10 @@ pub async fn run(
           ChainStep::Stage(StageId::Gallery) => {
             let mut gallery_entry = entry.clone();
             if let Some(url) = resolved_url.as_deref().filter(|url| {
-              crate::resolve::facebook_photo_target(url) || crate::resolve::tiktok_photo_target(url)
+              crate::resolve::facebook_photo_target(url)
+                || crate::resolve::tiktok_photo_target(url)
+                || (crate::resolve::facebook_share(&entry.url)
+                  && crate::resolve::facebook_post_target(url))
             }) {
               gallery_entry.url = url.to_owned();
             }
@@ -745,6 +824,9 @@ pub async fn run(
   }
   if let Some(media) = report.media.as_mut() {
     record_fetch_engine(media, &report.attempts);
+    if let ParsedMedia::Single(item) = media {
+      item.playlist_child = entry.is_playlist_child();
+    }
   }
   if let Some(login) = report.login.as_mut() {
     if report.media.is_some() {
@@ -779,11 +861,22 @@ pub async fn run(
         app
           .state::<crate::i18n::I18nManager>()
           .t(&format!("files.errors.{code}"))
+      } else if matches!(
+        code,
+        "mediaUnavailable" | "videoNotFoundOrPrivate" | "notFound404"
+      ) && entry.is_playlist_child()
+      {
+        app
+          .state::<crate::i18n::I18nManager>()
+          .t("errors.runner.mediaUnavailable")
       } else {
         format!("Couldn't get media from this link ({code})")
       }
     },
-    |diagnostic, fatal| emit_terminal(app, diagnostic, fatal),
+    |mut diagnostic, mut fatal| {
+      crate::scheduling::fetch_pipeline::child_terminal(entry, &mut diagnostic, &mut fatal);
+      emit_terminal(app, diagnostic, fatal);
+    },
   ) {
     return Err(report.error.unwrap_or(YtdlpInfoFetchError::NonZeroExit(1)));
   }
@@ -807,7 +900,201 @@ mod tests {
   use super::*;
   use std::collections::VecDeque;
 
+  #[tokio::test]
+  async fn facebook_share_anonymous_refusal_retries_with_login_then_saves_all_photos() {
+    for gallery_code in ["notFound404", "urlNotSupported"] {
+      let original = "https://www.facebook.com/share/p/1CZNGZQHZA/";
+      let canonical = "https://www.facebook.com/page/posts/pfbidABC";
+      let mut signed_in = false;
+      let mut gallery_with_cookies = false;
+      let report = coordinate(original, |step, login, resolved| {
+        let result = match step {
+          ChainStep::Login { stage, reason } => {
+            assert_eq!(reason, "signInRequired");
+            signed_in = true;
+            let mut result = StageResult::new(stage, Confidence::Medium);
+            result.login = Some(crate::runners::login::test_consented_session());
+            result
+          }
+          ChainStep::Stage(StageId::Ytdlp) if signed_in => {
+            assert_eq!(login.as_ref().unwrap().browser.as_deref(), Some("firefox"));
+            let mut result = StageResult::new(StageId::Ytdlp, Confidence::Medium);
+            result.record_code(
+              "unknown",
+              "ERROR: [facebook] pfbidABC: No video formats found",
+              true,
+              Instant::now(),
+            );
+            result.resolved_url = Some(canonical.into());
+            result.login = login;
+            result
+          }
+          ChainStep::Stage(StageId::Gallery) if signed_in => {
+            assert_eq!(login.as_ref().unwrap().browser.as_deref(), Some("firefox"));
+            assert_eq!(resolved.as_deref(), Some(canonical));
+            gallery_with_cookies = true;
+            let mut result = StageResult::new(StageId::Gallery, Confidence::Medium);
+            let records: Vec<_> = (1..=4)
+              .map(|n| {
+                serde_json::json!([
+                  3, format!("https://scontent.example.fbcdn.net/{n}.jpg"),
+                  {"extension":"jpg", "category":"facebook", "num":n}
+                ])
+              })
+              .collect();
+            let post = crate::parsers::gallery::parse_output(
+              0,
+              &serde_json::to_vec(&records).unwrap(),
+              b"",
+              canonical,
+            )
+            .unwrap();
+            result.media = Some(post.into_media("row".into()));
+            result.finish(Outcome::Verified, true, Instant::now())
+          }
+          ChainStep::Stage(stage @ (StageId::Ytdlp | StageId::Gallery)) => {
+            let mut result = StageResult::new(stage, Confidence::Medium);
+            result.record_code(
+              if stage == StageId::Gallery {
+                gallery_code
+              } else {
+                "notFound404"
+              },
+              "",
+              false,
+              Instant::now(),
+            );
+            result
+          }
+          ChainStep::Stage(stage) => {
+            StageResult::new(stage, Confidence::Low).finish(Outcome::NoMatch, false, Instant::now())
+          }
+        };
+        std::future::ready(result)
+      })
+      .await;
+      assert!(gallery_with_cookies);
+      let media = report.media.unwrap();
+      assert_eq!(
+        media
+          .attachments
+          .iter()
+          .map(|a| a.url.as_str())
+          .collect::<Vec<_>>(),
+        [
+          "https://scontent.example.fbcdn.net/1.jpg",
+          "https://scontent.example.fbcdn.net/2.jpg",
+          "https://scontent.example.fbcdn.net/3.jpg",
+          "https://scontent.example.fbcdn.net/4.jpg"
+        ]
+      );
+      assert_eq!(final_code(&report.attempts), None);
+    }
+  }
+  #[tokio::test]
+  async fn facebook_share_404_stays_missing_when_login_does_not_run() {
+    let report = coordinate::<(), _>("https://www.facebook.com/share/p/abc/", |step, _, _| {
+      let result = match step {
+        ChainStep::Login { stage, .. } => StageResult::new(stage, Confidence::Medium),
+        ChainStep::Stage(stage) => {
+          let mut result = StageResult::new(stage, Confidence::Medium);
+          result.record_code(
+            if stage == StageId::Ytdlp {
+              "notFound404"
+            } else {
+              "urlNotSupported"
+            },
+            "",
+            false,
+            Instant::now(),
+          );
+          result
+        }
+      };
+      std::future::ready(result)
+    })
+    .await;
+    assert_eq!(final_code(&report.attempts), Some("notFound404"));
+  }
+  #[tokio::test]
+  async fn instagram_profile_is_rejected_before_any_engine_runs() {
+    for (url, code) in [
+      (
+        "https://www.instagram.com/porsche/?hl=en",
+        "profileNotSupported",
+      ),
+      (
+        "https://www.instagram.com/nasa/reels/",
+        "profileNotSupported",
+      ),
+      (
+        "https://www.instagram.com/nasa/tagged/",
+        "profileNotSupported",
+      ),
+      (
+        "https://www.instagram.com/explore/tags/space/",
+        "profileNotSupported",
+      ),
+      ("https://www.threads.com/@nasa", "profileNotSupported"),
+      (
+        "https://www.threads.net/@nasa/replies",
+        "profileNotSupported",
+      ),
+      ("https://www.netflix.com/watch/123", "drmProtected"),
+      ("https://play.anghami.com/song/123", "drmProtected"),
+      (
+        "https://www.facebook.com/NASA/videos",
+        "profileNotSupported",
+      ),
+      ("https://www.facebook.com/NASA/reels", "profileNotSupported"),
+      ("https://t.me/nasa", "profileNotSupported"),
+      (
+        "https://drive.google.com/drive/folders/folder",
+        "urlNotSupported",
+      ),
+      ("https://1drv.ms/u/example", "urlNotSupported"),
+    ] {
+      let report = coordinate::<(), _>(url, |_, _, _| {
+        panic!("{url} must not fetch or ask for login");
+        #[allow(unreachable_code)]
+        std::future::ready(StageResult::new(StageId::Ytdlp, Confidence::High))
+      })
+      .await;
+      assert_eq!(final_code(&report.attempts), Some(code));
+    }
+  }
+
   // Wrong URL priorities can silently save one video instead of a complete album.
+  #[test]
+  fn video_only_empty_formats_never_handoff_to_gallery() {
+    for component in [
+      "BiliBili",
+      "youtube",
+      "dailymotion",
+      "RumbleEmbed",
+      "vimeo",
+      "twitch",
+    ] {
+      let diagnostic = classify_stage(
+        StageId::Ytdlp,
+        "unknown",
+        &format!("ERROR: [{component}] id: No video formats found!"),
+        NetworkScope::StageLocal,
+      );
+      assert_eq!(diagnostic.code.as_str(), "mediaUnavailable", "{component}");
+      assert_eq!(diagnostic.outcome, Outcome::Removed);
+      let mut stage = StageResult::<()>::new(StageId::Ytdlp, Confidence::Medium);
+      // Production diagnostics have already stripped the extractor name.
+      stage.record_code(
+        "mediaUnavailable",
+        "No video formats found!",
+        false,
+        Instant::now(),
+      );
+      assert!(stops(&stage.attempts, false));
+    }
+  }
+
   #[test]
   fn x_photo_only_ytdlp_error_is_a_gallery_handoff() {
     let diagnostic = classify_stage(

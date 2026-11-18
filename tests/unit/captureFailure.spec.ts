@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { FAIL_REASONS } from '../../src/generated/contract';
-import { failActions, failReason } from '../../src/helpers/captureFailure';
+import { failActions, failReason, canUseAutomaticLogin } from '../../src/helpers/captureFailure';
 import en from '../../src/locales/en.json';
 import ar from '../../src/locales/ar.json';
 import fr from '../../src/locales/fr.json';
 
 describe('a failed read offers only actions that can work', () => {
+  it.each([
+    ['login', 'automatic', true, true],
+    ['login', 'automatic', false, false],
+    ['login', 'none', true, false],
+    ['login', 'chrome', true, false],
+    ['network', 'automatic', true, false],
+  ] as const)('automatic login policy: %s / %s / %s', (reason, cookieBrowser, alwaysUseBrowserLogins, expected) => {
+    expect(canUseAutomaticLogin(reason, { cookieBrowser, alwaysUseBrowserLogins, browserLoginConsent: true })).toBe(expected);
+  });
+  it('an explicit consent refusal keeps the prompt', () => {
+    expect(canUseAutomaticLogin('login', { cookieBrowser: 'automatic', alwaysUseBrowserLogins: true, browserLoginConsent: false })).toBe(false);
+  });
   it.each([
     ['login', 'options', ['retry']], // a login wall is not a bug: no Report
     ['unavailable', 'retry', ['report']],

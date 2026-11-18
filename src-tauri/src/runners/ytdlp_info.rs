@@ -144,6 +144,12 @@ async fn run_attempts(
   if !*cancel.borrow() {
     return Some(Outcome::Cancelled);
   }
+  let child = entry.is_playlist_child();
+  let _slot = match super::reliability::playlist_slot(&entry.url, child, &mut cancel).await {
+    Ok(slot) => slot,
+    Err(()) => return Some(Outcome::Cancelled),
+  };
+  let mut refetch = super::retry_policy::RetryState::default();
   let mut input = ResolvedInput::new(&entry.url);
   let resolution = match resolution {
     Some(resolution) => resolution,
@@ -164,6 +170,29 @@ async fn run_attempts(
   if !*cancel.borrow() {
     return Some(Outcome::Cancelled);
   }
+  // Preserve public successes; only the login verdict invokes the consent-gated export.
+  let resolution = if login.uses_cookies()
+    && matches!(
+      resolution,
+      Resolution::Unsupported {
+        reason: Reason::Login
+      }
+    )
+    && crate::resolve::readers(&entry.url).contains(&crate::routing::ReaderId::Threads)
+  {
+    match login
+      .threads_resolution(app, &entry.url, cancel.clone())
+      .await
+    {
+      Ok(result) => result,
+      Err(code) => {
+        stage.record_code(code, "", false, start);
+        return None;
+      }
+    }
+  } else {
+    resolution
+  };
   if reader_handoff(&entry.url, &resolution, stage, login.has_session, start) {
     return None;
   }
@@ -191,6 +220,9 @@ async fn run_attempts(
       media.id.clone_from(&entry.id);
       media.fetch_engine = Some(crate::models::parsed::FetchEngine::Reader);
       stage.media = Some(ParsedMedia::Single(media));
+      if login.has_session {
+        login.succeeded(app, &entry.group_id);
+      }
       return Some(Outcome::Verified);
     }
     Resolution::Failed { failure } => {
@@ -231,10 +263,18 @@ async fn run_attempts(
         &entry.url,
       )
       .with_network_args(entry.overrides.as_ref())
-      .with_args(["-J", "--flat-playlist"])
+      .with_args([
+        "-j",
+        "--flat-playlist",
+        "--playlist-end",
+        "100",
+        "--lazy-playlist",
+      ])
+      .with_args(super::reliability::playlist_args(child))
+      .with_args(resolve::facebook_photo_share(&entry.url).then_some("--ignore-no-formats-error"))
       .with_resolved_input(&input);
     login.has_session = false;
-    let timeout = runner.info_timeout();
+    let timeout = runner.fetch_info_timeout(&input.url);
     let output = match runner.output_with_timeout(&entry.group_id, timeout).await {
       Ok(Some(output)) => output,
       Ok(None) => return Some(Outcome::Cancelled),
@@ -271,6 +311,19 @@ async fn run_attempts(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let redacted_stderr = redact_diagnostic(&stderr);
+    if serde_json::from_slice::<serde_json::Value>(&output.stdout)
+      .ok()
+      .is_some_and(|value| value["_nezzel_listing_partial"] == true)
+    {
+      if let Some(mut event) = parser.parse_line("WARNING: NEZZEL_LISTING_PARTIAL") {
+        event.code = "listingPartial".into();
+        crate::events::emit(
+          app,
+          crate::events::MEDIA_DIAGNOSTIC,
+          crate::models::MediaDiagnosticPayload::from_diagnostic_event(event),
+        );
+      }
+    }
     app.state::<LogStoreState>().write().append_lines(
       app,
       &entry.group_id,
@@ -280,6 +333,17 @@ async fn run_attempts(
       // The initial 401 is already recorded. An unsupported curl_cffi target adds no evidence.
       if input.impersonation_unavailable(&stderr) {
         return None;
+      }
+      if let Some(wrapper) = resolve::reddit_media_redirect(&entry.url, &stderr) {
+        if let Resolution::Attachments { metadata } = resolve::resolve(&wrapper).await {
+          if let Ok(mut media) = serde_json::from_str::<crate::models::ParsedSingleVideo>(&metadata)
+          {
+            media.id.clone_from(&entry.id);
+            media.fetch_engine = Some(crate::models::parsed::FetchEngine::Reader);
+            stage.media = Some(ParsedMedia::Single(media));
+            return Some(Outcome::Verified);
+          }
+        }
       }
       let reason = stderr
         .lines()
@@ -322,7 +386,32 @@ async fn run_attempts(
         CookieRetry::Retry => continue,
         CookieRetry::GiveUp => {}
       }
-      if input.retry_vimeo_401(&stderr) || input.retry_original(&stderr) {
+      if input.retry_vimeo_401(&stderr)
+        || input.retry_rumble_403(&stderr)
+        || input.retry_original(&stderr)
+      {
+        continue;
+      }
+      if diagnostics.iter().any(|event| {
+        refetch.refetch(
+          &entry.url,
+          &event.code,
+          &event.message,
+          false,
+          login.uses_cookies(),
+        ) == RetryAction::Refetch
+      }) {
+        let delay = super::reliability::refetch_delay(&entry.url);
+        if wait_until(
+          tokio::time::sleep(delay),
+          tokio::time::Instant::now() + delay + Duration::from_secs(1),
+          &mut cancel,
+        )
+        .await
+        .is_err()
+        {
+          return Some(Outcome::Cancelled);
+        }
         continue;
       }
       let reason = if login.has_session {
@@ -365,6 +454,11 @@ async fn run_attempts(
       }
       return None;
     }
+    if serde_json::from_str::<serde_json::Value>(&stdout).is_ok_and(|info| {
+      facebook_empty_formats(&entry.url, &info, stage, login.has_session, attempt_start)
+    }) {
+      return None;
+    }
     if serde_json::from_str::<serde_json::Value>(&stdout)
       .is_ok_and(|info| crate::parsers::gallery::tiktok_photo_candidate(&entry.url, &info))
     {
@@ -382,6 +476,17 @@ async fn run_attempts(
       stage.media = gallery.media;
       stage.attempts.extend(gallery.attempts);
       // This is a photo post: an absent gallery result must never publish its soundtrack.
+      return None;
+    }
+    if serde_json::from_str::<serde_json::Value>(&stdout)
+      .is_ok_and(|info| crate::files::runner::generic_file_candidate(&input.url, &info))
+    {
+      // Generic's unknown_video is a direct response, not something ffmpeg can download.
+      let mut target = entry.clone();
+      target.url.clone_from(&input.url);
+      let files = crate::files::runner::after_unsupported(app, &target).await;
+      stage.media = files.media;
+      stage.attempts.extend(files.attempts);
       return None;
     }
     return match parse_ytdlp_info_for_url(&stdout, entry.id.clone(), Some(&entry.url)) {
@@ -423,13 +528,27 @@ async fn run_attempts(
         Some(Outcome::Verified)
       }
       Err(error) => {
+        let code = match error.as_str() {
+          "playlistEmpty" => "playlistEmpty",
+          "profileNotSupported" => "profileNotSupported",
+          "signInRequired" => "signInRequired",
+          _ => "unableToExtractIdOrInfo",
+        };
         stage.error = Some(YtdlpInfoFetchError::ParseFailed(error.to_string()));
-        stage.record_code(
-          "unableToExtractIdOrInfo",
-          "",
-          login.has_session,
-          attempt_start,
-        );
+        stage.record_code(code, "", login.has_session, attempt_start);
+        if code == "signInRequired" && !login.fetch_managed() {
+          match login.failed(
+            app,
+            LoginRequest::Fetch(entry.clone()),
+            Some(code),
+            false,
+            !*cancel.borrow(),
+          ) {
+            RetryAction::Browser | RetryAction::Anonymous => continue,
+            RetryAction::AskLogin | RetryAction::Pending => return Some(Outcome::LoginPending),
+            _ => {}
+          }
+        }
         None
       }
     };
@@ -456,12 +575,14 @@ fn reader_handoff(
       stage.error = Some(YtdlpInfoFetchError::ReaderFailed(*failure));
       stage.record_code(failure.code(), "", false, start);
       if let Some(attempt) = stage.attempts.last_mut() {
-        attempt.stage = StageId::Reader(crate::routing::ReaderId::Threads);
+        if let Some(reader) = resolve::readers(original).first() {
+          attempt.stage = StageId::Reader(*reader);
+        }
       }
       true
     }
     Resolution::Unsupported { reason } => {
-      stage.terminal = !matches!(reason, Reason::PhotosOnly);
+      stage.terminal = !matches!(reason, Reason::PhotosOnly | Reason::Login);
       stage.error = Some(YtdlpInfoFetchError::Unsupported(*reason));
       stage.record_code(reason.code(), "", has_session, start);
       if matches!(reason, Reason::NoMedia) {
@@ -564,10 +685,53 @@ pub(super) fn emit_unsupported(app: &AppHandle, group_id: &str, id: &str, reason
   );
 }
 
+fn facebook_empty_formats(
+  source: &str,
+  info: &serde_json::Value,
+  stage: &mut StageResult,
+  has_session: bool,
+  start: Instant,
+) -> bool {
+  if !resolve::facebook_share(source)
+    || !info
+      .get("formats")
+      .and_then(|formats| formats.as_array())
+      .is_some_and(Vec::is_empty)
+  {
+    return false;
+  }
+  stage.resolved_url = resolve::facebook_photo_redirect(source, info);
+  // Match the ordinary "No video formats found" path; never publish an empty row.
+  stage.record_code("photosOnly", "", has_session, start);
+  true
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
   use crate::parsers::gallery::GalleryError;
+
+  #[test]
+  fn facebook_empty_video_targets_do_not_publish_downloadless_rows() {
+    for path in ["page/posts/pfbidABC", "reel/123", "page/videos/123"] {
+      let target = format!("https://www.facebook.com/{path}");
+      let info = serde_json::json!({"webpage_url":target, "formats":[]});
+      let mut stage = StageResult::new(StageId::Ytdlp, Confidence::Medium);
+      assert!(facebook_empty_formats(
+        "https://www.facebook.com/share/p/abc/",
+        &info,
+        &mut stage,
+        true,
+        Instant::now()
+      ));
+      assert!(stage.media.is_none());
+      assert_eq!(stage.attempts[0].code.unwrap().as_str(), "photosOnly");
+      assert_eq!(
+        stage.resolved_url.as_deref(),
+        path.contains("/posts/").then_some(target.as_str())
+      );
+    }
+  }
 
   #[test]
   fn reader_verdicts_handoff_photos_and_stop_verified_empty_posts() {
@@ -605,6 +769,22 @@ mod tests {
           reason: Reason::Removed,
         },
         "notFound404",
+        true,
+        None,
+      ),
+      (
+        Resolution::Unsupported {
+          reason: Reason::Login,
+        },
+        "signInRequired",
+        false,
+        None,
+      ),
+      (
+        Resolution::Unsupported {
+          reason: Reason::Unavailable,
+        },
+        "mediaUnavailable",
         true,
         None,
       ),

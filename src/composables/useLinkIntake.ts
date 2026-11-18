@@ -79,7 +79,6 @@ export function useLinkIntake() {
     const hasDraft = url.value.trim().length > 0;
     const text = hasDraft ? url.value : clipboardContent.value;
     if (!text) return;
-    if (!hasDraft && mediaStore.hasRecentCapture(text)) return;
     const parsed = parseUrlInputText(text);
     if (parsed.urls.length === 0) {
       toastStore.showToast(t('feedback.invalidLink'), { style: 'warning' });

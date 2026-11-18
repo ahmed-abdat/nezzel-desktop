@@ -560,6 +560,26 @@ fn shared_urls_preserve_access_keys_and_export_formats() {
       "https://docs.google.com/presentation/d/abc/export/pdf",
     ),
     (
+      "https://docs.google.com/spreadsheets/d/abc/export?format=xlsx",
+      Export::Pdf,
+      "https://docs.google.com/spreadsheets/d/abc/export?format=xlsx",
+    ),
+    (
+      "https://docs.google.com/document/d/abc/export?format=docx",
+      Export::Pdf,
+      "https://docs.google.com/document/d/abc/export?format=docx",
+    ),
+    (
+      "https://docs.google.com/presentation/d/abc/export/pptx",
+      Export::Pdf,
+      "https://docs.google.com/presentation/d/abc/export/pptx",
+    ),
+    (
+      "https://docs.google.com/document/d/abc/export?format=pdf",
+      Export::Office,
+      "https://docs.google.com/document/d/abc/export?format=pdf",
+    ),
+    (
       "https://www.dropbox.com/scl/fi/abc/a.zip?rlkey=secret&dl=0&st=xyz",
       Export::Pdf,
       "https://www.dropbox.com/scl/fi/abc/a.zip?rlkey=secret&st=xyz&dl=1",
@@ -661,9 +681,10 @@ fn host_html_rejects_permission_pages_and_only_accepts_dropbox_download_origins(
 }
 
 #[tokio::test]
-async fn dropbox_folder_is_not_a_single_file() {
+async fn dropbox_folder_is_one_zip_file() {
   use reqwest::ResponseBuilderExt;
   let engine = super::engine::Engine::scripted(std::sync::Arc::new(|url, _| {
+    assert!(url.ends_with("dl=1"), "{url}");
     Ok(
       http::Response::builder()
         .url(Url::parse(url).unwrap())
@@ -674,12 +695,78 @@ async fn dropbox_folder_is_not_a_single_file() {
         .into(),
     )
   }));
-  let (_active, cancel) = tokio::sync::watch::channel(true);
-  let result = engine
-    .probe(
-      "https://dropbox.com/scl/fo/abc/folder?rlkey=secret&dl=0",
-      cancel,
-    )
-    .await;
-  assert_eq!(result.err().map(|error| error.code()), Some("fileNotFile"));
+  for source in [
+    "https://dropbox.com/scl/fo/abc/folder?rlkey=secret&dl=0",
+    "https://dropbox.com/scl/fo/abc/folder?rlkey=secret&dl=1",
+    "https://dropbox.com/sh/abc/folder?dl=0",
+    "https://dropbox.com/scl/fi/abc/file.zip?rlkey=secret&dl=0",
+  ] {
+    let (_active, cancel) = tokio::sync::watch::channel(true);
+    let probe = engine.probe(source, cancel).await.unwrap();
+    assert_eq!(probe.name, "folder.zip");
+  }
+}
+
+#[tokio::test]
+async fn removed_direct_file_probe_wins_but_unknown_page_probe_is_inconclusive() {
+  use super::{engine::Engine, Error};
+  use std::sync::Arc;
+  for status in [404, 410] {
+    let engine = Engine::scripted(Arc::new(move |url, _| {
+      use reqwest::ResponseBuilderExt;
+      Ok(
+        http::Response::builder()
+          .url(url.parse().unwrap())
+          .status(status)
+          .body(Vec::<u8>::new())
+          .unwrap()
+          .into(),
+      )
+    }));
+    let (_tx, rx) = tokio::sync::watch::channel(true);
+    assert!(matches!(
+      super::runner::probe_metadata(&engine, "https://files.example/missing.pdf", rx.clone()).await,
+      Some(Err(Error::Removed))
+    ));
+    assert!(
+      super::runner::probe_metadata(&engine, "https://files.example/page", rx)
+        .await
+        .is_none()
+    );
+  }
+}
+
+#[tokio::test]
+async fn generic_unknown_video_falls_back_to_extensionless_files_and_arabic_names() {
+  use super::{engine::Engine, runner};
+  use std::sync::Arc;
+  for (mime, disposition, name) in [
+    ("application/json", Some("attachment; filename*=UTF-8''%D9%85%D9%84%D9%81%20%D8%AA%D8%AC%D8%B1%D9%8A%D8%A8%D9%8A.pdf"), "ملف تجريبي.pdf"),
+    ("application/json", None, "get.json"),
+    ("text/plain", None, "get.txt"),
+  ] {
+    let source = "https://files.example/redirect/4";
+    let info = serde_json::json!({"extractor":"generic", "ext":"unknown_video", "url":"https://files.example/get"});
+    assert!(runner::generic_file_candidate(source, &info));
+    let engine = Engine::scripted(Arc::new(move |_, _| {
+      use reqwest::ResponseBuilderExt;
+      let mut response = http::Response::builder().url("https://files.example/get".parse().unwrap()).header("content-type", mime);
+      if let Some(disposition) = disposition { response = response.header("content-disposition", disposition); }
+      Ok(response.body(b"{}".to_vec()).unwrap().into())
+    }));
+    let (_tx, rx) = tokio::sync::watch::channel(true);
+    let probe = runner::probe_metadata_impl(&engine, source, rx, true).await.unwrap().unwrap();
+    assert_eq!(probe.kind, Kind::File);
+    assert_eq!(probe.name, name);
+  }
+  for info in [
+    serde_json::json!({"extractor":"youtube", "ext":"unknown_video"}),
+    serde_json::json!({"extractor":"generic", "ext":"mp4"}),
+    serde_json::json!({"extractor":"generic", "ext":"unknown_video", "entries":[]}),
+  ] {
+    assert!(!runner::generic_file_candidate(
+      "https://files.example/item",
+      &info
+    ));
+  }
 }

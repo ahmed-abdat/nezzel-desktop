@@ -207,6 +207,43 @@ async fn reddit_video_shortlink_binds_its_media_id_after_the_post_redirect() {
 }
 
 #[tokio::test]
+async fn reddit_video_without_a_post_title_gets_a_neutral_title_not_the_manifest_name() {
+  let cases: serde_json::Value =
+    serde_json::from_str(include_str!("../../tests/fixtures/reddit/posts.json")).unwrap();
+  let html = cases
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|c| c["name"] == "video")
+    .unwrap()["html"]
+    .as_str()
+    .unwrap();
+  for (html, want) in [
+    (html.to_owned(), "Synthetic post"),
+    (
+      html.replace(" post-title=\"Synthetic post\"", ""),
+      "Reddit video abcdefgh1234",
+    ),
+  ] {
+    let transport = FakeTransport(std::sync::Mutex::new(
+      [
+        (
+          "https://www.reddit.com/video/abcdefgh1234/",
+          reply(302, Some(CANONICAL), b""),
+        ),
+        (CANONICAL, reply(200, None, html.as_bytes())),
+      ]
+      .into(),
+    ));
+    let verdict = read_site("https://v.redd.it/abcdefgh1234", &transport).await;
+    assert!(
+      matches!(&verdict, Verdict::Verified(Resolution::PostMedia { title, .. }) if title.as_deref() == Some(want)),
+      "{want}"
+    );
+  }
+}
+
+#[tokio::test]
 async fn reddit_requires_public_media_dns_before_handoff() {
   struct Refusing(FakeTransport);
   impl http::Transport for Refusing {
@@ -379,5 +416,75 @@ async fn reddit_link_posts_still_forward_known_media_hosts() {
   assert!(
     matches!(read_site(CANONICAL, &transport).await.resolution(CANONICAL),
     Resolution::PostMedia { url, .. } if url == "https://www.youtube.com/watch?v=abc123")
+  );
+}
+
+#[tokio::test]
+async fn reddit_media_wrapper_resolves_directly_and_after_share_redirects() {
+  let share = "https://www.reddit.com/r/test/s/Share123/";
+  let wrapper = "https://www.reddit.com/media?url=https%3A%2F%2Fi.redd.it%2Fphoto.jpg";
+  for source in [wrapper, share] {
+    let transport = FakeTransport(std::sync::Mutex::new(
+      [(share, reply(302, Some(wrapper), b""))].into(),
+    ));
+    let result = read_site(source, &transport).await.resolution(source);
+    let Resolution::Attachments { metadata } = result else {
+      panic!("expected photo attachment, got {result:?}");
+    };
+    let media: crate::models::ParsedSingleVideo = serde_json::from_str(&metadata).unwrap();
+    assert_eq!(media.attachments[0].url, "https://i.redd.it/photo.jpg");
+    assert_eq!(media.title.as_deref(), Some("photo.jpg"));
+  }
+}
+
+#[tokio::test]
+async fn reddit_media_wrapper_keeps_the_host_and_public_address_gates() {
+  for wrapper in [
+    "https://www.reddit.com/media?url=https://evil.test/a.jpg",
+    "https://www.reddit.com/media?url=https://i.redd.it.evil.test/a.jpg",
+    "https://www.reddit.com/media?url=https://redd.it/a.jpg",
+    "https://www.reddit.com/media?url=https://i.redd.it@evil.test/a.jpg",
+    "https://www.reddit.com/media?url=http://i.redd.it/a.jpg",
+    "https://www.reddit.com/media?url=https://i.redd.it:8443/a.jpg",
+    "https://www.reddit.com/media?url=https://i.redd.it/a.jpg&url=https://evil.test/a.jpg",
+    "https://www.reddit.com/media?url=https://i.redd.it/a.html",
+    "https://reddit.com.evil.test/media?url=https://i.redd.it/a.jpg",
+  ] {
+    assert!(
+      super::super::reddit::media_target(wrapper).is_none(),
+      "{wrapper}"
+    );
+  }
+  struct Refused;
+  impl http::Transport for Refused {
+    async fn admit_media(&self, _: &reqwest::Url) -> Result<(), http::FetchError> {
+      Err(http::FetchError::InvalidUrl)
+    }
+    async fn get(&self, _: &reqwest::Url, _: usize) -> Result<http::Response, http::FetchError> {
+      panic!("wrapper must not fetch before admitting the image")
+    }
+  }
+  let wrapper = "https://www.reddit.com/media?url=https://preview.redd.it/a.png?width=1080";
+  assert_eq!(
+    read_site(wrapper, &Refused).await.resolution(wrapper),
+    Resolution::Passthrough(wrapper.into())
+  );
+}
+
+#[test]
+fn reddit_media_redirect_is_recovered_from_ytdlp_errors_only_for_reddit_sources() {
+  let wrapper = "https://www.reddit.com/media?url=https%3A%2F%2Fi.redd.it%2Fa.jpg";
+  let stderr = format!("ERROR: Unsupported URL: {wrapper}");
+  assert_eq!(
+    reddit_media_redirect("https://reddit.com/r/test/s/Share123", &stderr).as_deref(),
+    Some(wrapper)
+  );
+  assert_eq!(reddit_media_redirect("https://evil.test/a", &stderr), None);
+  assert_eq!(
+    reddit_media_redirect(
+      "https://reddit.com/r/test/s/Share123",
+      &stderr.replace("ERROR:", "WARNING:")
+    ),
+    None
   );
 }

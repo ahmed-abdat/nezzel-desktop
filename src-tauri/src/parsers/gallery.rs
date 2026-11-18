@@ -68,6 +68,7 @@ pub struct GalleryAsset {
 
 #[derive(Debug, Clone)]
 pub struct GalleryPost {
+  pub truncated: bool,
   pub source: String,
   pub extract_url: String,
   pub assets: Vec<GalleryAsset>,
@@ -107,6 +108,34 @@ pub fn image_extension(ext: &str) -> bool {
   crate::media_types::ext_in(crate::media_types::IMAGE_EXTS, ext)
 }
 
+/// Only terminal diagnostics from process stderr may drive retry decisions.
+pub(crate) fn stderr_failure(message: &str, cdn: bool) -> GalleryError {
+  let errors = message
+    .lines()
+    .filter_map(|line| {
+      line.strip_prefix("ERROR:").or_else(|| {
+        let (_, rest) = line.strip_prefix('[')?.split_once(']')?;
+        rest.strip_prefix("[error]")
+      })
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
+  let failed = if cdn {
+    cdn_failure(&errors)
+  } else {
+    failure(&errors)
+  };
+  // gallery-dl logs a DNS outage as a [warning] and still exits 0 with a generic stdout error.
+  if matches!(
+    failed,
+    GalleryError::Unsupported | GalleryError::Refused("imageSourceUnavailable")
+  ) && super::ytdlp_error::network_down("", message)
+  {
+    return GalleryError::NetworkDown;
+  }
+  failed
+}
+
 pub fn failure(message: &str) -> GalleryError {
   if let Some(error) = super::ytdlp_error::CookieReadError::classify(message, false, false) {
     return GalleryError::Refused(error.code());
@@ -126,11 +155,30 @@ pub fn failure(message: &str) -> GalleryError {
   {
     return GalleryError::Refused("server5xx");
   }
+  if lower.contains("http error 451") || lower.contains("451 unavailable for legal reasons") {
+    return GalleryError::Refused("legalRestriction451");
+  }
   if lower.contains("timed out") {
     return GalleryError::Refused("networkTimeout");
   }
+  if lower.contains("blocked by network security") {
+    return GalleryError::Refused("redditNetworkBlocked");
+  }
+  if lower.contains("notfounderror") && lower.contains("story") {
+    return GalleryError::Refused("storyExpired");
+  }
+  if lower.contains("400 bad request")
+    && lower.contains("https://i.instagram.com/api/v1/media/")
+    && lower.contains("/info/")
+  {
+    return GalleryError::Refused("notFound404");
+  }
   // Generic cookie advice appended to an empty/throttled response is not a refused session.
-  if !lower.contains("authenticationerror") && !lower.contains("authorizationerror") {
+  if !lower.contains("authenticationerror")
+    && !lower.contains("authorizationerror")
+    && !lower.contains("authrequired")
+    && !lower.contains("authenticated cookies needed")
+  {
     if lower.contains("empty media response") {
       return GalleryError::Refused("unableToExtractIdOrInfo");
     }
@@ -144,6 +192,8 @@ pub fn failure(message: &str) -> GalleryError {
   }
 
   if lower.contains("authenticationerror")
+    || lower.contains("authrequired")
+    || lower.contains("authenticated cookies needed")
     || lower.contains("authorizationerror")
     || lower.contains("login required")
     || lower.contains("loginrequired")
@@ -161,6 +211,9 @@ pub fn failure(message: &str) -> GalleryError {
     GalleryError::Refused("accessForbidden403")
   } else if lower.contains("404 not found")
     || lower.contains("http error 404")
+    || lower.contains("404 client error")
+    || lower.contains("404: not found")
+    || lower.contains("nomediaerror")
     || lower.contains("notfounderror")
   {
     GalleryError::Refused("notFound404")
@@ -178,11 +231,17 @@ pub fn parse_output(
   source: &str,
 ) -> Result<GalleryPost, GalleryError> {
   if code != 0 {
-    return Err(failure(&String::from_utf8_lossy(stderr)));
+    return Err(stderr_failure(&String::from_utf8_lossy(stderr), false));
   }
   match parse_gallery(stdout, source) {
     Err(GalleryError::Refused("imageSourceUnavailable")) => {
-      Err(failure(&String::from_utf8_lossy(stderr)))
+      Err(stderr_failure(&String::from_utf8_lossy(stderr), false))
+    }
+    // An empty result during a DNS outage is the outage, not an unsupported post.
+    Err(GalleryError::Unsupported)
+      if super::ytdlp_error::network_down("", &String::from_utf8_lossy(stderr)) =>
+    {
+      Err(GalleryError::NetworkDown)
     }
     other => other,
   }
@@ -217,6 +276,31 @@ fn tiktok_image_identity(source: &str, image: &reqwest::Url) -> Option<String> {
     return None;
   }
   Some(format!("tiktok|{post_id}|{resource}"))
+}
+
+fn instagram_video_index(source: &str, video: &reqwest::Url) -> Option<usize> {
+  let page = reqwest::Url::parse(source).ok()?;
+  if page.host_str().and_then(crate::sites::site_of) != Some(crate::sites::SiteId::Instagram)
+    || video.host_str().and_then(crate::sites::site_of) != Some(crate::sites::SiteId::Instagram)
+  {
+    return None;
+  }
+  let parts: Vec<_> = page.path().trim_matches('/').split('/').collect();
+  let code = parts
+    .windows(2)
+    .find(|parts| matches!(parts[0], "p" | "reel" | "tv"))?[1];
+  let video_parts: Vec<_> = video.path().trim_matches('/').split('/').collect();
+  if !matches!(video_parts.as_slice(), ["p" | "reel" | "tv", found, _] if *found == code) {
+    return None;
+  }
+  video
+    .path()
+    .rsplit('/')
+    .next()?
+    .strip_suffix(".mp4")?
+    .parse::<usize>()
+    .ok()
+    .filter(|index| (1..=1024).contains(index))
 }
 
 fn imgur_media_identity(source: &str, media: &reqwest::Url) -> Option<String> {
@@ -282,7 +366,10 @@ fn asset(
   let tiktok_identity = matches!(kind, AttachmentKind::Image)
     .then(|| tiktok_image_identity(source, &url))
     .flatten();
-  let direct = delegated
+  let instagram_index = delegated
+    .then(|| instagram_video_index(source, &url))
+    .flatten();
+  let direct = (delegated && instagram_index.is_none())
     || tiktok_identity.is_some()
     || (imgur_identity.is_some() && matches!(kind, AttachmentKind::Video));
   let identity = tiktok_identity.or(imgur_identity).unwrap_or_else(|| {
@@ -294,7 +381,29 @@ fn asset(
       stable_query
     )
   });
-  let file_index = if direct { None } else { file_index };
+  let file_index = instagram_index.or(if direct { None } else { file_index });
+  // Keep the delegated URL for identity, but transfer the progressive video supplied
+  // by gallery-dl. Re-extracting this carousel with yt-dlp loses its photos.
+  let video_url = (delegated && instagram_index.is_some())
+    .then(|| meta["video_url"].as_str())
+    .flatten()
+    .filter(|raw| {
+      reqwest::Url::parse(raw).is_ok_and(|url| {
+        url.scheme() == "https"
+          && url.username().is_empty()
+          && url.password().is_none()
+          && url.host_str().is_some_and(|host| {
+            (crate::sites::host_is(host, "cdninstagram.com")
+              || crate::sites::host_is(host, "fbcdn.net"))
+              && !crate::sites::host_is(host, "instagram.com")
+          })
+      })
+    });
+  let file_index = if video_url.is_some() {
+    None
+  } else {
+    file_index
+  };
   Ok(GalleryAsset {
     index,
     file_index,
@@ -303,7 +412,7 @@ fn asset(
       id: hex::encode(Sha256::digest(identity.as_bytes())),
       file_index,
       kind,
-      url: raw.into(),
+      url: video_url.unwrap_or(raw).into(),
       thumbnail: None,
       alt: meta["alt"]
         .as_str()
@@ -354,10 +463,8 @@ pub fn parse_gallery(bytes: &[u8], source: &str) -> Result<GalleryPost, GalleryE
     return Err(GalleryError::Invalid);
   }
   let records: Vec<Value> = serde_json::from_slice(bytes).map_err(|_| GalleryError::Invalid)?;
-  if records.len() > 1024 {
-    return Err(GalleryError::Invalid);
-  }
   let mut post = GalleryPost {
+    truncated: false,
     source: source.into(),
     extract_url: source.into(),
     assets: Vec::new(),
@@ -379,6 +486,9 @@ pub fn parse_gallery(bytes: &[u8], source: &str) -> Result<GalleryPost, GalleryE
   let mut ids = std::collections::HashSet::new();
   let mut file_index = 0;
   for record in records {
+    if post.assets.len() >= 100 {
+      break;
+    }
     let record = record.as_array().ok_or(GalleryError::Invalid)?;
     let record_type = record.first().and_then(Value::as_i64);
     if matches!(record_type, Some(2 | 3)) {
@@ -413,9 +523,6 @@ pub fn parse_gallery(bytes: &[u8], source: &str) -> Result<GalleryPost, GalleryE
       Some(-1) => return Err(failure(&record.get(1).unwrap_or(&Value::Null).to_string())),
       Some(2) => {}
       Some(3) => {
-        if post.assets.len() >= 256 {
-          return Err(GalleryError::Invalid);
-        }
         file_index += 1;
         // gallery-dl emits the soundtrack/caption alongside the actual visual assets.
         let metadata = record.get(2).ok_or(GalleryError::Invalid)?;
@@ -466,7 +573,7 @@ pub fn parse_gallery(bytes: &[u8], source: &str) -> Result<GalleryPost, GalleryE
           .ok_or(GalleryError::Invalid)?;
         if raw.starts_with("ytdl:") {
           let video = asset(record, source, post.assets.len() + 1, None)?;
-          if post.assets.len() >= 256 || !ids.insert(video.item.id.clone()) {
+          if !ids.insert(video.item.id.clone()) {
             return Err(GalleryError::Invalid);
           }
           post.assets.push(video);
@@ -574,6 +681,7 @@ impl GalleryPost {
       });
     }
     Ok(Self {
+      truncated: false,
       source: source.into(),
       extract_url: source.into(),
       title,
@@ -625,6 +733,7 @@ impl GalleryPost {
       MediaKind::Image
     };
     ParsedSingleVideo {
+      playlist_child: false,
       id,
       fetch_engine: None,
       resolved_url: (self.extract_url != self.source).then_some(self.extract_url),
@@ -662,6 +771,70 @@ impl GalleryPost {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn recorded_missing_gallery_outputs_keep_the_specific_refusal() {
+    for (source, output) in [
+      (
+        "https://www.facebook.com/media/set/?set=a.123",
+        br#"[[-1,{"error":"HttpError","message":"404: Not Found"}]]"#.as_slice(),
+      ),
+      (
+        "https://www.instagram.com/p/missing/",
+        br#"[[-1,{"error":"NoMediaError","message":"No media found"}]]"#.as_slice(),
+      ),
+    ] {
+      assert_eq!(
+        parse_output(0, output, b"", source).unwrap_err(),
+        GalleryError::Refused("notFound404")
+      );
+    }
+  }
+
+  #[test]
+  fn listing_cap_truncates_large_galleries_instead_of_refusing() {
+    for delegated in [false, true] {
+      let records: Vec<_> = (0..300).map(|i| {
+        if delegated {
+          serde_json::json!([6, format!("ytdl:https://example.com/video/{i}"), {"extension":"mp4", "num":i+1}])
+        } else {
+          serde_json::json!([3, format!("https://cdn.example/{i}.jpg"), {"extension":"jpg"}])
+        }
+      }).collect();
+      let post = parse_gallery(
+        &serde_json::to_vec(&records).unwrap(),
+        "https://www.pinterest.com/nasa/board/",
+      )
+      .unwrap();
+      assert_eq!(post.assets.len(), 100);
+      assert_eq!(post.assets.last().unwrap().index, 100);
+    }
+  }
+
+  #[test]
+  fn authrequired_requests_login_for_media_timelines() {
+    for line in [
+      "[twitter][error] AuthRequired: authenticated cookies needed to access this timeline",
+      "[twitter][error] authenticated cookies needed",
+    ] {
+      assert_eq!(stderr_failure(line, false), GalleryError::Login);
+    }
+  }
+
+  #[test]
+  fn social_refusals_keep_the_site_reason_instead_of_requesting_login() {
+    for (message, code) in [
+      ("[reddit][error] AuthorizationError: You've been blocked by network security.", "redditNetworkBlocked"),
+      ("[instagram][error] NotFoundError: Requested story could not be found", "storyExpired"),
+      ("[instagram][error] HttpError: '400 Bad Request' for 'https://i.instagram.com/api/v1/media/123/info/'", "notFound404"),
+    ] {
+      assert_eq!(stderr_failure(message, false), GalleryError::Refused(code));
+    }
+    assert_ne!(
+      failure("400 Bad Request https://other.example/api/v1/media/123/info/"),
+      GalleryError::Refused("notFound404")
+    );
+  }
 
   #[test]
   fn facebook_photo_titles_skip_hosts_and_urls_for_the_caption() {
@@ -1001,6 +1174,30 @@ mod tests {
     );
 
     assert_eq!(parse_output(0, br#"[[-1,{"error":"AbortExtraction","message":"HTTP redirect to login page (https://www.instagram.com/accounts/login/)"}]]"#, b"", "https://instagram.com/p/example").unwrap_err(), GalleryError::Login);
+    assert_eq!(
+      parse_output(
+        0,
+        br#"[[-1,{"error":"KeyError","message":"'guest_token'"}]]"#,
+        b"[twitter][warning]  NameResolutionError: Failed to resolve 'api.x.com' ([Errno 8] nodename nor servname provided, or not known)",
+        "https://x.com/NASA/status/2119833829389041896"
+      )
+      .unwrap_err(),
+      GalleryError::NetworkDown
+    );
+    assert_eq!(
+      parse_output(
+        0,
+        b"[]",
+        b"[tiktok][warning]  NameResolutionError: Failed to resolve 'www.tiktok.com' ([Errno 8] nodename nor servname provided, or not known)",
+        "https://www.tiktok.com/@a/photo/1"
+      )
+      .unwrap_err(),
+      GalleryError::NetworkDown
+    );
+    assert_eq!(
+      parse_output(0, b"[]", b"", "https://www.tiktok.com/@a/photo/1").unwrap_err(),
+      GalleryError::Unsupported
+    );
     for (message, code) in [
       ("HTTP Error 504: Gateway Timeout", "server5xx"),
       ("HTTP Error 504: connection timed out", "server5xx"),
@@ -1145,6 +1342,24 @@ mod tests {
     assert!(!gallery_first("https://youtube.com/watch?v=1"));
     assert!(!gallery_first("https://x.com/user"));
     assert!(gallery_first("https://example.com/post/1"));
+  }
+
+  #[test]
+  fn process_info_and_retry_messages_are_not_terminal_gallery_errors() {
+    for text in [
+      "[download] Destination: /Offline timeout Too Many Requests.mp4",
+      "[gallery][info] title timed out",
+      "[download][warning] HTTP Error 429: Too Many Requests. Retrying (1/10)",
+    ] {
+      assert_eq!(
+        stderr_failure(text, false),
+        GalleryError::Refused("imageSourceUnavailable")
+      );
+    }
+    assert_eq!(
+      stderr_failure("[download][error] HTTP Error 429: Too Many Requests", false),
+      GalleryError::Refused("rateLimited429")
+    );
   }
 
   #[test]

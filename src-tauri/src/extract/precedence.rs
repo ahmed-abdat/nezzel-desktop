@@ -41,6 +41,12 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
     .iter()
     .filter(|attempt| !is_timeout(attempt))
     .all(|attempt| matches!(attempt.outcome, Outcome::NoMatch | Outcome::Unsupported));
+  let network_blocked = attempts.iter().any(|attempt| {
+    attempt.stage == StageId::Gallery
+      && attempt
+        .code
+        .is_some_and(|code| code.as_str() == "redditNetworkBlocked")
+  });
   let mut best: Option<(Rank, Confidence, &'static str)> = None;
   let authenticated_terminal = attempts.iter().any(|attempt| {
     attempt.auth != AuthUsed::Anonymous
@@ -57,6 +63,26 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
       && attempt.outcome == Outcome::NoMedia
   });
   for attempt in attempts {
+    if network_blocked && attempt.outcome == Outcome::Login {
+      continue;
+    }
+    // A cookie-bearing parse result replaces this engine's earlier anonymous login guess.
+    if attempt.auth == AuthUsed::Anonymous
+      && attempt.outcome == Outcome::Login
+      && attempts.iter().any(|later| {
+        later.stage == attempt.stage
+          && later.auth != AuthUsed::Anonymous
+          && later.outcome == Outcome::ExtractFailed
+          && later.code.is_some_and(|code| {
+            matches!(
+              code.as_str(),
+              "unableToExtractInitialData" | "unableToExtractIdOrInfo"
+            )
+          })
+      })
+    {
+      continue;
+    }
     if authenticated_no_media && attempt.outcome == Outcome::Forbidden {
       continue;
     }
@@ -95,7 +121,19 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
     let rank = if local_failure {
       Some(Rank(0, 0))
     } else if is_timeout(attempt) {
-      Some(Rank::TIMEOUT)
+      Some(
+        if (attempt.stage == StageId::Gallery && attempt.confidence == Confidence::High)
+          || (attempt.stage == StageId::Ytdlp
+            && attempt.confidence >= Confidence::Medium
+            && attempt
+              .code
+              .is_some_and(|code| code.as_str() == "networkTimeout"))
+        {
+          Rank(11, 1)
+        } else {
+          Rank::TIMEOUT
+        },
+      )
     } else {
       match attempt.outcome {
         Outcome::Drm => Some(Rank::CONTENT_PROTECTED),
@@ -106,6 +144,17 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
         Outcome::Login | Outcome::AgeRestricted => Some(Rank::LOGIN),
         Outcome::RateLimited => Some(Rank::THROTTLED),
         Outcome::Blocked | Outcome::Forbidden => Some(Rank::FORBIDDEN),
+        // An offline machine explains every other stage's guess; only content verdicts outrank it.
+        Outcome::Network(NetworkScope::PageHost)
+          if attempt.code.is_some_and(|code| {
+            matches!(
+              code.as_str(),
+              "networkNameResolutionFailed" | "unableToConnectToProxy"
+            )
+          }) =>
+        {
+          Some(Rank::NETWORK)
+        }
         Outcome::Network(_) => all_network.then_some(Rank::NETWORK),
         Outcome::KindMismatch => Some(Rank::KIND_MISMATCH),
         Outcome::ExtractFailed => Some(Rank::SITE_CHANGED),
@@ -119,7 +168,14 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
         Outcome::Verified | Outcome::NoMatch | Outcome::Cancelled | Outcome::LoginPending => None,
       }
     };
-    let code = if site_changed {
+    let authenticated_parse = attempt.auth != AuthUsed::Anonymous
+      && attempt.code.is_some_and(|code| {
+        matches!(
+          code.as_str(),
+          "unableToExtractInitialData" | "unableToExtractIdOrInfo"
+        )
+      });
+    let code = if site_changed && !authenticated_parse {
       Some("siteChanged")
     } else {
       attempt.code.map(DiagnosticCode::as_str)
@@ -140,15 +196,24 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
     if all_unsupported {
       "urlNotSupported"
     } else {
-      "unknown"
+      attempts
+        .iter()
+        .find(|attempt| {
+          matches!(attempt.outcome, Outcome::Network(_))
+            && attempt
+              .code
+              .is_some_and(|code| code.as_str() != "sponsorBlockUnreachable")
+        })
+        .and_then(|attempt| attempt.code)
+        .map_or("unknown", DiagnosticCode::as_str)
     },
     |(_, _, code)| {
       if code == "photosOnly"
         && attempts.iter().any(|attempt| {
           attempt.stage == StageId::Gallery
-            && attempt
-              .code
-              .is_some_and(|code| code.as_str() == "noMediaFound")
+            && attempt.code.is_some_and(|code| {
+              matches!(code.as_str(), "noMediaFound" | "imageSourceUnavailable")
+            })
         })
       {
         "noMediaFound"
@@ -202,6 +267,60 @@ mod tests {
       classify(code, "", NetworkScope::PageHost),
       0,
     )
+  }
+
+  #[test]
+  fn claimed_gallery_timeout_outweighs_generic_unsupported() {
+    let mut timeout = failed("fetchTimeout");
+    timeout.stage = StageId::Gallery;
+    assert_eq!(
+      final_code(&[failed("urlNotSupported"), timeout]),
+      Some("fetchTimeout")
+    );
+  }
+
+  #[test]
+  fn explicit_reddit_network_block_replaces_earlier_login_advice() {
+    let mut blocked = failed("redditNetworkBlocked");
+    blocked.stage = StageId::Gallery;
+    assert_eq!(
+      final_code(&[failed("signInRequired"), blocked]),
+      Some("redditNetworkBlocked")
+    );
+  }
+
+  #[test]
+  fn authenticated_parse_failure_supersedes_same_engines_anonymous_login_wall() {
+    let mut parsed = failed("unableToExtractInitialData");
+    parsed.auth = AuthUsed::Browser;
+    assert_eq!(
+      final_code(&[failed("signInRequired"), parsed]),
+      Some("unableToExtractInitialData")
+    );
+    let mut unrelated = parsed;
+    unrelated.stage = StageId::Gallery;
+    assert_eq!(
+      final_code(&[failed("signInRequired"), unrelated]),
+      Some("signInRequired")
+    );
+  }
+
+  #[test]
+  fn x_no_video_and_exhausted_photo_fallback_does_not_promise_a_retry() {
+    let mut gallery = failed("imageSourceUnavailable");
+    gallery.stage = StageId::Gallery;
+    assert_eq!(
+      final_code(&[failed("photosOnly"), gallery]),
+      Some("noMediaFound")
+    );
+    gallery = Attempt {
+      stage: StageId::Gallery,
+      ..failed("notFound404")
+    };
+    assert_eq!(
+      final_code(&[failed("photosOnly"), gallery]),
+      Some("notFound404")
+    );
   }
 
   #[test]
@@ -347,17 +466,24 @@ mod tests {
       ),
       (
         vec!["networkNameResolutionFailed", "photosOnly"],
-        "photosOnly",
+        "networkNameResolutionFailed",
       ),
       (
         vec!["networkNameResolutionFailed", "urlNotSupported"],
-        "unknown",
+        "networkNameResolutionFailed",
       ),
-      (vec!["networkNameResolutionFailed", "unknown"], "unknown"),
+      (
+        vec!["networkNameResolutionFailed", "imageSourceUnavailable"],
+        "networkNameResolutionFailed",
+      ),
+      (
+        vec!["networkNameResolutionFailed", "unknown"],
+        "networkNameResolutionFailed",
+      ),
       (vec!["networkTimeout"], "networkTimeout"),
       (vec!["networkTimeout", "unknown"], "networkTimeout"),
       (vec!["networkTimeout", "sslVerifyFailed"], "sslVerifyFailed"),
-      (vec!["networkTimeout", "urlNotSupported"], "urlNotSupported"),
+      (vec!["networkTimeout", "urlNotSupported"], "networkTimeout"),
       (vec!["networkTimeout", "signInRequired"], "signInRequired"),
       (vec!["fetchTimeout"], "fetchTimeout"),
       (vec!["fetchTimeout", "unknown"], "fetchTimeout"),
@@ -373,6 +499,20 @@ mod tests {
     assert_eq!(
       final_code(&[failed("sslVerifyFailed"), no_match]),
       Some("sslVerifyFailed")
+    );
+  }
+
+  #[test]
+  fn production_confidence_ytdlp_timeout_beats_gallery_unsupported() {
+    let mut timeout = failed("networkTimeout");
+    timeout.confidence = Confidence::Medium;
+    let mut unsupported = failed("urlNotSupported");
+    unsupported.stage = StageId::Gallery;
+    assert_eq!(final_code(&[timeout, unsupported]), Some("networkTimeout"));
+    // A stage-local SponsorBlock outage never names the failure of the whole link.
+    assert_eq!(
+      final_code(&[failed("sponsorBlockUnreachable"), failed("urlNotSupported")]),
+      Some("unknown")
     );
   }
 

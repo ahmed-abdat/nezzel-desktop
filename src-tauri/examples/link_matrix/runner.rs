@@ -35,12 +35,17 @@ tokio::task_local! { static GALLERY_ERRORS: RefCell<Vec<String>>; }
 
 pub(crate) fn observe_gallery_stderr(bytes: &[u8]) {
   let _ = GALLERY_ERRORS.try_with(|lines| {
-    lines.borrow_mut().extend(
+    let mut lines = lines.borrow_mut();
+    lines.extend(
       String::from_utf8_lossy(bytes)
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(safe_line),
     );
+    if lines.len() > 80 {
+      let remove = lines.len() - 80;
+      lines.drain(..remove);
+    }
   });
 }
 
@@ -49,7 +54,11 @@ fn safe_line(line: &str) -> String {
   if line.to_ascii_lowercase().contains("cookie") {
     "[engine cookie-related diagnostic omitted]".into()
   } else {
-    line.chars().take(8192).collect()
+    crate::diagnostics::redact::scrub(
+      &line.chars().take(8192).collect::<String>(),
+      crate::diagnostics::redact::local_names(),
+    )
+    .to_string()
   }
 }
 
@@ -138,9 +147,13 @@ fn start() -> Result<(), Box<dyn Error>> {
   // The library already embeds the macOS plist for the real app entry point.
   let mut context = tauri::generate_context!(test = true);
   context.config_mut().app.windows.clear();
-  let app = tauri::Builder::default()
+  #[allow(unused_mut)]
+  let mut app = tauri::Builder::default()
     .plugin(tauri_plugin_store::Builder::new().build())
     .build(context)?;
+  // Harness only: no Dock icon, so it doesn't look like a second Nezzel.
+  #[cfg(target_os = "macos")]
+  app.set_activation_policy(tauri::ActivationPolicy::Accessory);
   let handle = app.handle();
   handle.manage(crate::paths::PathsManager::isolated(
     run_dir.clone(),
@@ -331,7 +344,7 @@ async fn run_one(
         &item_count,
         &mut resumes,
       ));
-      let deadline = tokio::time::sleep(Duration::from_secs(180));
+      let deadline = tokio::time::sleep(support::row_deadline_floor(&row.link.expected));
       tokio::pin!(deadline);
       let began = tokio::time::Instant::now();
       let mut watching = true;
@@ -339,7 +352,7 @@ async fn run_one(
         result = &mut work => break result,
         changed = discovered.changed(), if watching => {
           if changed.is_ok() {
-            deadline.as_mut().reset(began + crate::parsers::gallery::gallery_deadline(*discovered.borrow()).max(Duration::from_secs(180)));
+            deadline.as_mut().reset(began + crate::parsers::gallery::gallery_deadline(*discovered.borrow()).max(support::row_deadline_floor(&row.link.expected)));
           } else { watching = false; }
         }
         _ = &mut deadline => {
@@ -347,7 +360,7 @@ async fn run_one(
           // Let production cancellation kill yt-dlp's process tree before dropping its future.
           let _ = tokio::time::timeout(Duration::from_secs(25), &mut work).await;
           break Err(format!("Harness per-link deadline: {} seconds (production group cancellation)",
-            crate::parsers::gallery::gallery_deadline(*discovered.borrow()).max(Duration::from_secs(180)).as_secs()))
+            crate::parsers::gallery::gallery_deadline(*discovered.borrow()).max(support::row_deadline_floor(&row.link.expected)).as_secs()))
         }
       }};
       let gallery_errors = GALLERY_ERRORS.with(|v| v.borrow().clone());
@@ -414,16 +427,17 @@ async fn run_one(
         format!("{images} image, {videos} video, {audio} audio")
       };
       row.files = files;
-      if !captured.iter().any(|(kind, _)| kind == "media_fatal")
-        && ((row.link.expected == "file" && !row.files.is_empty())
-          || matches_expected(
-            &row.link.expected,
-            row.link.count,
-            row.link.count_is_total,
-            images,
-            videos,
-            audio,
-          ))
+      if !captured.iter().any(|(kind, payload)| {
+        kind == "media_fatal" && payload["id"].as_str() == Some(group.as_str())
+      }) && ((row.link.expected == "file" && !row.files.is_empty())
+        || matches_expected(
+          &row.link.expected,
+          row.link.count,
+          row.link.count_is_total,
+          images,
+          videos,
+          audio,
+        ))
       {
         row.verdict = "PASS".into();
         row.reason = if row.link.expected == "unknown" {
@@ -449,6 +463,15 @@ async fn run_one(
     }
     Err(error) => {
       row.reason = error;
+      if row.reason.starts_with("liveNow:") {
+        row.verdict = if row.link.expected == "live" {
+          "PASS"
+        } else {
+          "LIVE"
+        }
+        .into();
+        row.got = "live stream (production refusal)".into();
+      }
       // Only the final failing engine determines LOGIN/GONE. An earlier gallery
       // unsupported/404 on a yt-dlp fallback is diagnostic context, not the verdict.
       // A successful yt-dlp probe can leave a log before a later gallery image
@@ -464,13 +487,27 @@ async fn run_one(
         &last_engine_error(&log)
       };
       let evidence = format!("{} {}", row.reason, final_engine);
-      row.verdict = if row.reason.starts_with("Harness ") {
+      row.verdict = if row.reason.starts_with("liveNow:") {
+        if row.link.expected == "live" {
+          "PASS"
+        } else {
+          "LIVE"
+        }
+      } else if row.reason.starts_with("Harness ") {
         "FAIL"
       } else {
         classify(&codes, &evidence)
       }
       .into();
       row.cause = root_cause(&codes, &evidence);
+      let section_evidence = format!(
+        "{log} {evidence} {}",
+        serde_json::to_string(&captured).unwrap_or_default()
+      );
+      if support::section_ffmpeg_403(&row.link.url, &section_evidence) {
+        row.verdict = "HARNESS".into();
+        row.cause = "section/ffmpeg 403: 15 s harness section; normal YouTube downloader not tested by this failure".into();
+      }
       // Include incomplete artifacts for inspection, never count them toward PASS.
       let listed = list_files(&folder, &mut row.files).is_ok();
       // Captured events are appended in production emission order. A previous
@@ -537,7 +574,10 @@ async fn run_one(
 
 fn scrub(value: &mut Value) {
   match value {
-    Value::String(text) => *text = crate::parsers::ytdlp_error::redact_diagnostic(text),
+    Value::String(text) => {
+      *text = crate::diagnostics::redact::scrub(text, crate::diagnostics::redact::local_names())
+        .to_string()
+    }
     Value::Object(fields) => fields.values_mut().for_each(scrub),
     Value::Array(items) => items.iter_mut().for_each(scrub),
     _ => {}
@@ -573,34 +613,50 @@ async fn pipeline(
     .await?
     .ok_or("fetch cancelled/no metadata")?;
   let mut media_items = Vec::new();
-  match media {
-    ParsedMedia::Single(item) => media_items.push((item, entry.url.clone())),
-    ParsedMedia::Playlist(playlist) => {
-      item_count.send_replace(playlist.entries.len().max(1));
-      // The UI asks for a playlist selection. Exercise every returned entry, within
-      // the same per-link time budget (no silent first-item-only success).
-      for (number, item) in playlist.entries.into_iter().enumerate() {
-        let child = FetchEntry {
-          id: format!("{group}-child-{number}"),
-          url: item.video_url,
-          total: 2,
-          ..entry.clone()
-        };
-        match resumes
-          .run(app, Work::Fetch(Box::new(child.clone())))
-          .await?
-        {
-          Some(ParsedMedia::Single(item)) => media_items.push((item, child.url.clone())),
-          _ => return Err("Playlist child has no downloadable metadata".into()),
+  let mut pending = std::collections::VecDeque::from([(media, entry.url.clone(), 0usize)]);
+  let mut visited = HashSet::from([entry.url.clone()]);
+  let mut fetched = 0;
+  let mut live = false;
+  while let Some((media, source, depth)) = pending.pop_front() {
+    match media {
+      ParsedMedia::Single(item) => media_items.push((item, source)),
+      ParsedMedia::Playlist(playlist) => {
+        item_count.send_replace(playlist.entries.len().max(1));
+        if depth >= 3 {
+          continue;
+        }
+        for item in playlist.entries {
+          if fetched >= 100 {
+            break;
+          }
+          if !visited.insert(item.video_url.clone()) {
+            continue;
+          }
+          let child = FetchEntry {
+            id: format!("{group}-child-{fetched}"),
+            url: item.video_url,
+            total: 2,
+            ..entry.clone()
+          };
+          fetched += 1;
+          // Production skips refused children. Nested tabs remain bounded by depth and count.
+          if let Ok(Some(media)) = resumes.run(app, Work::Fetch(Box::new(child.clone()))).await {
+            pending.push_back((media, child.url, depth + 1));
+          }
         }
       }
-    }
-    ParsedMedia::Livestream(_) => {
-      return Err("Livestreams unsupported (production fetch_pipeline.rs)".into())
+      ParsedMedia::Livestream(_) => live = true,
     }
   }
   if media_items.is_empty() {
-    return Err("Empty playlist".into());
+    return Err(
+      if live {
+        "liveNow: this selection contains live streams"
+      } else {
+        "playlistEmpty: no downloadable children"
+      }
+      .into(),
+    );
   }
   item_count.send_replace(
     media_items
@@ -639,6 +695,7 @@ async fn pipeline(
       values.insert("uploader".into(), uploader);
     }
     let download = DownloadItem {
+      playlist_child: item.playlist_child,
       fetch_engine: item.fetch_engine,
       resolved_url: item.resolved_url,
       id: item.id,
@@ -657,12 +714,14 @@ async fn pipeline(
       overrides: Some(DownloadOverrides {
         output: Some(OutputOverrides {
           download_dir: Some(folder.to_string_lossy().into_owned()),
-          partial_download: Some(PartialDownloadOverride {
-            section: Some(DownloadSection {
-              id: "matrix-budget".into(),
-              start: "0".into(),
-              end: "15".into(),
-            }),
+          partial_download: support::use_preview_section(&link.expected).then(|| {
+            PartialDownloadOverride {
+              section: Some(DownloadSection {
+                id: "matrix-budget".into(),
+                start: "0".into(),
+                end: "15".into(),
+              }),
+            }
           }),
           ..Default::default()
         }),
@@ -904,7 +963,7 @@ fn write_reports(
     "final_code",
   ];
   let mut tsv = format!("{}\n", headers.join("\t"));
-  let mut md = format!("# Link matrix\n\nCompleted {}/{} rows. Run files: `{}`.\n\nProduction: gallery::run_media_info (including resolve readers), DownloadItem→DownloadEntry, gallery::run_media_download→gallery/yt-dlp, default argument builders, error parser and login consent. Stand-ins: windowless real Tauri host; isolated default state; direct scheduler worker calls (queue/UI selection omitted); clipboard normalization plus HTTP URL validation; all playlist entries selected; first 15s AV section and output folder override. {} No saved credentials/vault loaded. Images decode with app ffmpeg, streams checked with app ffprobe.\n\nInputs: {}\n\n", rows.len(), total, run_dir.display(), if options.authenticated() { "Explicit local authentication supplied; raw engine output omitted." } else { "No login consent accepted." }, options.inputs.iter().map(|p| format!("`{}`", p.display())).collect::<Vec<_>>().join(", "));
+  let mut md = format!("# Link matrix\n\nCompleted {}/{} rows. Run files: `{}`.\n\nProduction: gallery::run_media_info (including resolve readers), DownloadItem→DownloadEntry, gallery::run_media_download→gallery/yt-dlp, default argument builders, error parser and login consent. Stand-ins: windowless real Tauri host; isolated default state; direct scheduler worker calls (queue/UI selection omitted); clipboard normalization plus HTTP URL validation; all playlist entries selected; first 15s AV section and output folder override (section/ffmpeg 403 is HARNESS noise, not a normal-download failure). {} No saved credentials/vault loaded. Images decode with app ffmpeg, streams checked with app ffprobe.\n\nInputs: {}\n\n", rows.len(), total, run_dir.display(), if options.authenticated() { "Explicit local authentication supplied; raw engine output omitted." } else { "No login consent accepted." }, options.inputs.iter().map(|p| format!("`{}`", p.display())).collect::<Vec<_>>().join(", "));
   let mut counts = BTreeMap::<&str, usize>::new();
   let mut groups = BTreeMap::<&str, usize>::new();
   for row in rows {
@@ -978,6 +1037,28 @@ fn write_reports(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[tokio::test]
+  async fn engine_evidence_keeps_a_scrubbed_tail() {
+    GALLERY_ERRORS
+      .scope(RefCell::new(Vec::new()), async {
+        for index in 0..100 {
+          observe_gallery_stderr(format!("warning {index}\n").as_bytes());
+        }
+        observe_gallery_stderr(
+          b"ERROR: HTTP Error 429: Too Many Requests https://example.com/private?token=secret\n",
+        );
+        observe_gallery_stderr(b"cookie secret material\n");
+        GALLERY_ERRORS.with(|lines| {
+          let lines = lines.borrow();
+          assert_eq!(lines.len(), 80);
+          assert!(!lines.join("\n").contains("token=secret"));
+          assert!(lines[78].contains("429"));
+          assert_eq!(lines[79], "[engine cookie-related diagnostic omitted]");
+        });
+      })
+      .await;
+  }
 
   #[tokio::test(start_paused = true)]
   async fn a_deadline_row_does_not_stop_later_rows_or_their_reports() {

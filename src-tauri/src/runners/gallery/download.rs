@@ -13,7 +13,7 @@ use crate::models::progress::{
 use crate::models::TrackType;
 use crate::parsers::gallery::{GalleryAsset, GalleryError, GalleryPost};
 use crate::runners::{
-  gallery_files::{finalize, read_image, Staging},
+  gallery_files::{finalize, read_image},
   login::{CookieRetry, LoginRequest, LoginSession},
   retry_policy::RetryAction,
   ytdlp_download::{
@@ -48,7 +48,42 @@ pub(super) fn video_request(
   video.login_browser = browser;
   video.resume_parent = Some(Box::new(entry.clone()));
   video.resolved = None;
-  if asset.file_index.is_none() {
+  let listing = !crate::parsers::post::single_post_url(&post.source);
+  if listing {
+    let host = reqwest::Url::parse(&post.source).ok();
+    let site = host
+      .as_ref()
+      .and_then(|url| url.host_str())
+      .and_then(site_by_domain);
+    let target = match site {
+      Some(SiteId::X) => asset.metadata["tweet_id"].as_u64().map(|id| {
+        format!(
+          "https://x.com/i/status/{id}/video/{}",
+          asset.metadata["num"].as_u64().unwrap_or(1)
+        )
+      }),
+      Some(SiteId::Bluesky) => asset.metadata["post_id"].as_str().and_then(|id| {
+        let handle = asset.metadata["author"]["handle"].as_str()?;
+        Some(format!("https://bsky.app/profile/{handle}/post/{id}"))
+      }),
+      _ => None,
+    };
+    if let Some(target) = target {
+      video.url = target;
+      video.video_index = None;
+      return Ok(video);
+    }
+  }
+  // Mixed Instagram posts can expose CDN videos that its yt-dlp post extractor cannot see.
+  // Delegated ytdl: entries still point at Instagram and retain b014's carousel position.
+  let direct_instagram_video = post.has_images()
+    && reqwest::Url::parse(&post.source)
+      .is_ok_and(|url| url.host_str().and_then(site_by_domain) == Some(SiteId::Instagram))
+    && reqwest::Url::parse(&asset.item.url).is_ok_and(|url| {
+      url.path().ends_with(".mp4")
+        && url.host_str().and_then(site_by_domain) != Some(SiteId::Instagram)
+    });
+  if asset.file_index.is_none() || direct_instagram_video || listing {
     if let Some(title) = &post.title {
       let title = if post.assets.len() > 1 {
         format!("{title} ({}/{})", asset.index, post.assets.len())
@@ -65,7 +100,7 @@ pub(super) fn video_request(
         .insert("fulltitle".into(), title);
     }
   }
-  if asset.file_index.is_none() {
+  if asset.file_index.is_none() || direct_instagram_video || listing {
     // Direct reader videos (e.g. Threads) may have no dimensions. The empty height is
     // authoritative; yt-dlp's empty-placeholder setting would otherwise leave "-(p)".
     if asset.item.height.is_none() {
@@ -87,6 +122,10 @@ pub(super) fn video_request(
       .count(),
   );
   let mut url = reqwest::Url::parse(&post.extract_url).map_err(|_| GalleryError::Invalid)?;
+  if url.host_str().and_then(site_by_domain) == Some(SiteId::Instagram) {
+    // Instagram playlists retain photo entries. Counting videos selects the wrong child.
+    video.video_index = asset.file_index;
+  }
   if url.host_str().and_then(site_by_domain) == Some(SiteId::X) {
     let base = url
       .path()
@@ -108,6 +147,7 @@ pub(super) async fn download_attempt(
   app: &AppHandle,
   entry: &DownloadEntry,
   login: &mut LoginSession,
+  recovery: &mut crate::runners::reliability::Recovery,
 ) -> Result<(), GalleryError> {
   login.has_session = false;
   let runner = GalleryRunner::new(
@@ -139,7 +179,16 @@ pub(super) async fn download_attempt(
       post
     })
   } else {
-    let resolution = crate::resolve::resolve(&entry.url).await;
+    let resolution =
+      if crate::resolve::readers(&entry.url).contains(&crate::routing::ReaderId::Threads) {
+        if let Some(cookies) = runner._cookies.as_ref().filter(|c| c.has_session) {
+          cookies.resolve_threads(&entry.url).await
+        } else {
+          crate::resolve::resolve(&entry.url).await
+        }
+      } else {
+        crate::resolve::resolve(&entry.url).await
+      };
     match resolution {
       crate::resolve::Resolution::Failed { failure } => {
         return Err(GalleryError::Refused(failure.code()))
@@ -200,39 +249,51 @@ pub(super) async fn download_attempt(
       YtdlpRunner::new(app).output_root(&TrackType::Video, entry.overrides.as_ref()),
     );
   }
-  let staging = Staging::new()?;
+  let root = YtdlpRunner::new(app).output_root(&TrackType::Video, entry.overrides.as_ref());
+  // Images are finalized within this attempt; unlike video partials they are not resumable.
+  let staging = crate::runners::gallery_files::Staging::in_root(&root)?;
   let mut images = Vec::new();
+  let mut skipped = 0;
+  let mut last_failure = GalleryError::Refused("imageSourceUnavailable");
   let image_assets: Vec<_> = selected
     .iter()
     .copied()
     .filter(|asset| matches!(asset.item.kind, AttachmentKind::Image))
     .collect();
   let sources = runner
-    .images(&post, &image_assets, &entry.group_id, &staging.path)
+    .images(&post, &image_assets, &entry.group_id, &staging.path, || {
+      recovery.progressed()
+    })
     .await?;
   for (asset, source) in image_assets.iter().zip(sources) {
     if !is_group_running(&entry.group_id) {
       return Err(GalleryError::Cancelled);
     }
-    let bytes = read_image(&source)?;
+    let source = match source {
+      Ok(source) => source,
+      Err(error) => {
+        skipped += 1;
+        last_failure = error;
+        continue;
+      }
+    };
+    let bytes = match read_image(&source) {
+      Ok(bytes) => bytes,
+      Err(error) => {
+        skipped += 1;
+        last_failure = error;
+        continue;
+      }
+    };
     let destination = filename(app, entry, asset, &bytes, post.assets.len() > 1, &post).await?;
     images.push((source, destination));
   }
-  // A video login retry resumes the original selected manifest, not a detached child download.
-  for asset in &selected {
-    if matches!(asset.item.kind, AttachmentKind::Video) {
-      let video = video_request(entry, &post, asset, login.browser.clone())?;
-      match run_ytdlp_download_with_cookies(app.clone(), video, runner._cookies.clone()).await {
-        Ok(()) => {}
-        Err(YtdlpDownloadError::LoginPending) => {
-          return Err(GalleryError::Refused("imageLoginPending"))
-        }
-        Err(YtdlpDownloadError::ExpiredMedia) => return Err(GalleryError::Expired),
-        Err(_) => return Err(GalleryError::Refused("imageSourceUnavailable")),
-      }
-    }
-  }
   for (index, (source, destination)) in images.iter().enumerate() {
+    crate::scheduling::disk_space::check(
+      destination,
+      std::fs::metadata(source).ok().map(|m| m.len()),
+    )
+    .map_err(GalleryError::Refused)?;
     finalize(source, destination, || !is_group_running(&entry.group_id))?;
     if let Some(records) = app.try_state::<crate::download_records::DownloadRecords>() {
       records.record_item(&entry.group_id, &entry.id, &destination.to_string_lossy());
@@ -264,6 +325,52 @@ pub(super) async fn download_attempt(
       },
     );
   }
+  let mut saved = images.len();
+  // Photos are committed before a video can request login or fail.
+  for asset in &selected {
+    if matches!(asset.item.kind, AttachmentKind::Video) {
+      let video = video_request(entry, &post, asset, login.browser.clone())?;
+      match crate::events::ATTACHMENT_ATTEMPT
+        .scope(
+          (),
+          run_ytdlp_download_with_cookies(app.clone(), video, runner._cookies.clone()),
+        )
+        .await
+      {
+        Ok(()) => {
+          saved += 1;
+        }
+        Err(YtdlpDownloadError::LoginPending) => {
+          return Err(GalleryError::Refused("imageLoginPending"))
+        }
+        Err(error) => {
+          skipped += 1;
+          last_failure = if matches!(error, YtdlpDownloadError::ExpiredMedia) {
+            GalleryError::Expired
+          } else {
+            GalleryError::Refused("imageSourceUnavailable")
+          };
+        }
+      }
+    }
+  }
+  if saved == 0 {
+    return Err(last_failure);
+  }
+  if skipped > 0 {
+    let mut event = error_diagnostic(
+      &entry.group_id,
+      &entry.id,
+      &GalleryError::Refused(skipped_code(saved, skipped, &last_failure)),
+      login.has_session,
+    );
+    event.level = crate::models::error::DiagnosticLevel::Warning;
+    crate::events::emit(
+      app,
+      crate::events::MEDIA_DIAGNOSTIC,
+      crate::models::MediaDiagnosticPayload::from_diagnostic_event(event),
+    );
+  }
   if !is_group_running(&entry.group_id) {
     return Err(GalleryError::Cancelled);
   }
@@ -272,6 +379,15 @@ pub(super) async fn download_attempt(
   }
   login.succeeded(app, &entry.group_id);
   Ok(())
+}
+
+/// "The other items were saved" is only true when most were; a CDN burst limit is named instead.
+fn skipped_code(saved: usize, skipped: usize, last_failure: &GalleryError) -> &'static str {
+  if skipped > saved && *last_failure == GalleryError::Refused("rateLimited429") {
+    "rateLimited429"
+  } else {
+    "galleryItemsSkipped"
+  }
 }
 
 pub(super) fn refresh_expired_manifest(
@@ -330,9 +446,24 @@ pub async fn run_media_download(
     entry.login_was_accepted,
   );
   let mut refreshed = false;
+  let start = tokio::time::Instant::now();
+  let mut recovery = crate::runners::reliability::Recovery::default();
+  let mut cancel = subscribe_group(&entry.group_id);
   loop {
+    if !*cancel.borrow() {
+      return Ok(());
+    }
+    loop {
+      let delay = crate::runners::reliability::host_delay(&entry.url);
+      if delay.is_zero() {
+        break;
+      }
+      if !crate::runners::reliability::wait(&app, &entry, &mut cancel, delay, true).await {
+        return Ok(());
+      }
+    }
     login.announce(&app, &entry.id, &entry.group_id);
-    match download_attempt(&app, &entry, &mut login).await {
+    match download_attempt(&app, &entry, &mut login, &mut recovery).await {
       Ok(()) => {
         crate::library::complete(&app, &entry).await;
         return Ok(());
@@ -349,6 +480,30 @@ pub async fn run_media_download(
         return Err(YtdlpDownloadError::LoginPending)
       }
       Err(error) => {
+        if error == GalleryError::Refused("rateLimited429") {
+          if let Some(delay) = recovery.busy_delay() {
+            crate::runners::reliability::cool_host(&entry.url, delay);
+            continue;
+          }
+          crate::runners::reliability::fatal(&app, &entry, "rateLimited429");
+          return Err(YtdlpDownloadError::RunnerError("rateLimited429".into()));
+        }
+        if error == GalleryError::NetworkDown
+          || matches!(
+            error,
+            GalleryError::Refused("networkTimeout" | "networkNameResolutionFailed")
+          )
+        {
+          if let Some(delay) = recovery.network_delay(start.elapsed()) {
+            if !crate::runners::reliability::wait(&app, &entry, &mut cancel, delay, false).await {
+              return Ok(());
+            }
+            continue;
+          }
+        }
+        if error == GalleryError::Refused("downloadStalled") && recovery.restart_stall() {
+          continue;
+        }
         if refresh_expired_manifest(&mut entry, &error, &mut refreshed) {
           continue;
         }
@@ -409,7 +564,22 @@ mod tests {
   use super::*;
   use crate::models::ParsedMedia;
   use crate::runners::gallery::images::verified_image;
+  use crate::runners::gallery_files::Staging;
   use serde_json::json;
+
+  #[test]
+  fn mostly_rate_limited_gallery_names_the_limit_instead_of_saying_the_rest_were_saved() {
+    let limited = crate::parsers::gallery::stderr_failure(
+      "[flickr][error] HttpError: '429 Too Many Requests' for 'https://live.staticflickr.com/1/2_o.jpg'",
+      false,
+    );
+    assert_eq!(skipped_code(1, 99, &limited), "rateLimited429");
+    assert_eq!(skipped_code(99, 1, &limited), "galleryItemsSkipped");
+    assert_eq!(
+      skipped_code(1, 99, &GalleryError::Refused("imageSourceUnavailable")),
+      "galleryItemsSkipped"
+    );
+  }
 
   #[test]
   fn imgur_selected_videos_keep_distinct_cdn_targets_instead_of_repeating_the_album() {
@@ -477,12 +647,14 @@ while IFS= read -r line; do
     -extractor.directlink.transform=*) url=$(printf '%s' "$line" | cut -d '"' -f 4) ;;
     https://nezzel.invalid/attachment.jpg)
       printf '%s\n' "$url" >> "$(dirname "$0")/transferred"
+      if [ -f "$(dirname "$0")/skip" ] && [ "${destination##*/}" = 2 ]; then continue; fi
       cp "$(dirname "$0")/fixture.png" "$destination/asset.png"
       printf '{"nezzel_url":"%s","extension":"png"}\n' "$url" > "$destination/receipt.json"
       ;;
     *) exit 1 ;;
   esac
 done < "$input"
+if [ -f "$(dirname "$0")/skip" ]; then echo 'ERROR: HTTP Error 404: Not Found' >&2; exit 1; fi
 "#,
     )
     .unwrap();
@@ -505,11 +677,11 @@ done < "$input"
     let stage = root.path.join("transfer");
     std::fs::create_dir(&stage).unwrap();
     let downloaded = runner
-      .images(&post, &selected, &group, &stage)
+      .images(&post, &selected, &group, &stage, || {})
       .await
       .unwrap();
     let destination = root.path.join("saved/b.png");
-    finalize(&downloaded[0], &destination, || false).unwrap();
+    finalize(downloaded[0].as_ref().unwrap(), &destination, || false).unwrap();
     assert_eq!(
       std::fs::read(destination).unwrap(),
       include_bytes!("../../../../src/assets/placeholder.png")
@@ -526,13 +698,16 @@ done < "$input"
     let all = post.selected(None).unwrap();
     let stage = root.path.join("slideshow");
     std::fs::create_dir(&stage).unwrap();
-    let paths = runner.images(&post, &all, &group, &stage).await.unwrap();
+    let paths = runner
+      .images(&post, &all, &group, &stage, || {})
+      .await
+      .unwrap();
     assert_eq!(paths.len(), 5);
     for (index, path) in paths.iter().enumerate() {
       let destination = root.path.join(format!("saved/{}.png", index + 1));
-      finalize(path, &destination, || false).unwrap();
+      finalize(path.as_ref().unwrap(), &destination, || false).unwrap();
       // Resume recognizes our completed bytes rather than overwriting a different file.
-      finalize(path, &destination, || false).unwrap();
+      finalize(path.as_ref().unwrap(), &destination, || false).unwrap();
       assert_eq!(
         std::fs::read(destination).unwrap(),
         include_bytes!("../../../../src/assets/placeholder.png")
@@ -552,7 +727,157 @@ done < "$input"
       verified_image(&post, all[4], &group, &stage.join("5")),
       Err(GalleryError::Refused("imageSelectionChanged"))
     );
+    // Recorded Pinterest board: a nonzero process exit and a missing receipt must
+    // preserve every other asset in its original slot.
+    std::fs::write(root.path.join("skip"), b"").unwrap();
+    let board = crate::parsers::gallery::parse_output(
+      0,
+      include_bytes!("../../parsers/fixtures/gallery-recorded-pinterest-board.json"),
+      b"",
+      "https://www.pinterest.com/nasa/board/",
+    )
+    .unwrap();
+    let assets = board.selected(None).unwrap();
+    let transfer = root.path.join("board");
+    std::fs::create_dir(&transfer).unwrap();
+    let results = runner
+      .images(&board, &assets, &group, &transfer, || {})
+      .await
+      .unwrap();
+    assert_eq!(results.len(), assets.len());
+    assert!(results[1].is_err());
+    for (index, result) in results.iter().enumerate().filter(|(index, _)| *index != 1) {
+      let path = result.as_ref().unwrap();
+      assert_eq!(
+        path
+          .parent()
+          .unwrap()
+          .file_name()
+          .unwrap()
+          .to_str()
+          .unwrap(),
+        (index + 1).to_string()
+      );
+      assert_eq!(
+        std::fs::read(path).unwrap(),
+        include_bytes!("../../../../src/assets/placeholder.png")
+      );
+    }
     crate::scheduling::group_state::remove_group(&group);
+  }
+
+  #[test]
+  fn recorded_gallery_videos_use_the_asset_not_the_listing() {
+    for (source, fixture) in [
+      (
+        "https://www.instagram.com/p/DfxRiPZIXJo/",
+        include_bytes!("../../parsers/fixtures/gallery-recorded-instagram-mixed.json").as_slice(),
+      ),
+      (
+        "https://www.instagram.com/reel/DfxRiPZIXJo/",
+        include_bytes!("../../parsers/fixtures/gallery-recorded-instagram-mixed.json").as_slice(),
+      ),
+      (
+        "https://www.instagram.com/nasa/p/DfxRiPZIXJo/",
+        include_bytes!("../../parsers/fixtures/gallery-recorded-instagram-mixed.json").as_slice(),
+      ),
+      (
+        "https://www.instagram.com/p/DfxRiPZIXJo/embed/",
+        include_bytes!("../../parsers/fixtures/gallery-recorded-instagram-mixed.json").as_slice(),
+      ),
+      (
+        "https://x.com/NASA/media",
+        include_bytes!("../../parsers/fixtures/gallery-recorded-x-listing.json").as_slice(),
+      ),
+      (
+        "https://bsky.app/profile/nytimes.com/media",
+        include_bytes!("../../parsers/fixtures/gallery-recorded-bluesky-listing.json").as_slice(),
+      ),
+    ] {
+      let post = crate::parsers::gallery::parse_output(0, fixture, b"", source).unwrap();
+      let item = serde_json::from_value(json!({"id":"id","url":source,"format":{"trackType":"both"},"fetchEngine":"gallery","templateContext":{"values":{}}})).unwrap();
+      let entry = DownloadEntry::from((item, "group".into()));
+      for asset in post
+        .assets
+        .iter()
+        .filter(|asset| matches!(asset.item.kind, AttachmentKind::Video))
+      {
+        let child = video_request(&entry, &post, asset, None).unwrap();
+        assert_eq!(child.video_index, None);
+        if source.contains("instagram") {
+          assert_eq!(
+            child.resolved.as_ref().unwrap().url,
+            asset.metadata["video_url"].as_str().unwrap()
+          );
+          let media = serde_json::to_string(&post.clone().into_media("post".into())).unwrap();
+          let restored = GalleryPost::from_resolved(&media, source).unwrap();
+          let restored_asset = restored
+            .assets
+            .iter()
+            .find(|a| matches!(a.item.kind, AttachmentKind::Video))
+            .unwrap();
+          assert_eq!(
+            video_request(&entry, &restored, restored_asset, None)
+              .unwrap()
+              .resolved
+              .unwrap()
+              .url,
+            child.resolved.unwrap().url
+          );
+        } else if source.contains("x.com") {
+          assert!(child
+            .url
+            .contains(&format!("/i/status/{}/video/", asset.metadata["tweet_id"])));
+        } else {
+          assert!(child.url.contains(&format!(
+            "/post/{}",
+            asset.metadata["post_id"].as_str().unwrap()
+          )));
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn instagram_mixed_video_uses_gallery_cdn_and_pure_video_keeps_positions() {
+    let source = "https://www.instagram.com/p/DfxRiPZIXJo/";
+    let post = crate::parsers::gallery::parse_gallery(br#"[[3,"https://cdn.example/a.jpg",{"extension":"jpg","num":1}],[3,"https://cdn.example/v.mp4?sig=example",{"extension":"mp4","num":2}]]"#, source).unwrap();
+    let item = serde_json::from_value(json!({"id":"id","url":source,"format":{"trackType":"both"},"fetchEngine":"gallery","mediaKind":"mixed","templateContext":{"values":{}}})).unwrap();
+    let entry = DownloadEntry::from((item, "group".into()));
+    let child = video_request(&entry, &post, &post.assets[1], None).unwrap();
+    assert_eq!(
+      child.resolved.as_ref().map(|input| input.url.as_str()),
+      Some("https://cdn.example/v.mp4?sig=example")
+    );
+    assert_eq!(
+      child.resolved.as_ref().unwrap().source_page.as_deref(),
+      Some(source)
+    );
+    assert_eq!(child.video_index, None);
+    let mut videos = post.clone();
+    videos.assets.remove(0);
+    let child = video_request(&entry, &videos, &videos.assets[0], None).unwrap();
+    assert!(child.resolved.is_none());
+    assert_eq!(child.video_index, Some(2));
+  }
+
+  #[test]
+  fn instagram_delegated_video_selects_its_carousel_position_not_video_count() {
+    let source = "https://www.instagram.com/p/DfxRiPZIXJo/";
+    let post = crate::parsers::gallery::parse_gallery(br#"[[3,"https://cdn.example/a.jpg",{"extension":"jpg","num":1}],[6,"ytdl:https://www.instagram.com/p/DfxRiPZIXJo/2.mp4",{"extension":"mp4","num":2}],[3,"https://cdn.example/b.jpg",{"extension":"jpg","num":3}]]"#, source).unwrap();
+    let metadata = serde_json::to_string(&post.clone().into_media("post".into())).unwrap();
+    let post = GalleryPost::from_resolved(&metadata, source).unwrap();
+    let item = serde_json::from_value(json!({"id":"id","url":source,"format":{"trackType":"both"},"attachmentIds":[post.assets[1].item.id],"fetchEngine":"gallery","mediaKind":"mixed","templateContext":{"values":{}}})).unwrap();
+    let entry = DownloadEntry::from((item, "group".into()));
+    let child = video_request(&entry, &post, &post.assets[1], None).unwrap();
+    assert_eq!(child.url, source);
+    assert!(child.resolved.is_none());
+    assert_eq!(
+      crate::runners::ytdlp_download::selected_video_args(&child),
+      ["--yes-playlist", "--playlist-items", "2"]
+    );
+    assert!(matches!(post.assets[0].item.kind, AttachmentKind::Image));
+    assert_eq!(download_engine(&entry), DownloadEngine::Gallery);
   }
 
   #[test]

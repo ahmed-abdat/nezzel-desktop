@@ -123,6 +123,7 @@ export interface PerformanceSettings {
   autoLoadSize: boolean;
   concurrentFragments: number;
   aria2Enabled: boolean;
+  keepAwake: boolean;
 }
 
 export interface SubtitleSettings {
@@ -278,6 +279,7 @@ export const defaultPerformanceSettings: PerformanceSettings = {
   autoLoadSize: true,
   concurrentFragments: 4,
   aria2Enabled: false,
+  keepAwake: true,
 };
 
 export const defaultSubtitleSettings: SubtitleSettings = {

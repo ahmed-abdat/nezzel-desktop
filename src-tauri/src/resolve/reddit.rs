@@ -121,10 +121,61 @@ fn owner(value: &str) -> bool {
       .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
 pub(crate) fn is_post_url(raw: &str) -> bool {
-  Identity::parse(raw).is_some()
+  Identity::parse(raw).is_some() || media_target(raw).is_some()
+}
+
+/// Reddit's image viewer is a wrapper, not a media extractor. Never follow arbitrary targets.
+pub(crate) fn media_target(raw: &str) -> Option<Url> {
+  let page = http::https_url(raw).ok()?;
+  if !matches!(
+    page.host_str(),
+    Some(
+      "reddit.com"
+        | "www.reddit.com"
+        | "old.reddit.com"
+        | "new.reddit.com"
+        | "sh.reddit.com"
+        | "m.reddit.com"
+        | "np.reddit.com"
+    )
+  ) || page.path().trim_end_matches('/') != "/media"
+  {
+    return None;
+  }
+  let mut targets = page.query_pairs().filter(|(key, _)| key == "url");
+  let (_, target) = targets.next()?;
+  if targets.next().is_some() {
+    return None;
+  }
+  let target = http::https_url(&target).ok()?;
+  let host = target.host_str()?;
+  if !host.ends_with(".redd.it") || !ext_in(IMAGE_EXTS, target.path().rsplit('.').next()?) {
+    return None;
+  }
+  Some(target)
+}
+
+async fn read_image<T: http::Transport>(source: &str, target: Url, transport: &T) -> Verdict {
+  let title = target
+    .path_segments()
+    .and_then(|mut parts| parts.next_back())
+    .map(str::to_owned);
+  post::attachments(
+    transport,
+    source,
+    target.path(),
+    "Reddit",
+    title.clone(),
+    None,
+    vec![post::image(target.to_string(), title)],
+  )
+  .await
 }
 
 pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdict {
+  if let Some(target) = media_target(raw) {
+    return read_image(raw, target, transport).await;
+  }
   let Some(requested) = Identity::parse(raw) else {
     return Verdict::NoMatch;
   };
@@ -148,6 +199,9 @@ pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdic
       let Some(next) = response.location.as_deref().and_then(|v| url.join(v).ok()) else {
         break;
       };
+      if let Some(target) = media_target(next.as_str()) {
+        return read_image(next.as_str(), target, transport).await;
+      }
       let Some(identity) = Identity::parse(next.as_str()) else {
         break;
       };
@@ -371,6 +425,14 @@ fn parse(body: &str, id: &str, video_id: Option<&str>) -> Option<Post> {
           && n.attr("post-id") == format!("t3_{id}")
           && manifest_from_player(n.attr("src")).as_deref() == Some(manifest.as_str())
       })?;
+      // The manifest file name is no title: yt-dlp would name the file "DASHPlaylist".
+      let title = title.or_else(|| {
+        let id = manifest
+          .trim_start_matches("https://v.redd.it/")
+          .split('/')
+          .next()?;
+        Some(format!("Reddit video {id}"))
+      });
       Some(Post::Video {
         target: manifest,
         title,

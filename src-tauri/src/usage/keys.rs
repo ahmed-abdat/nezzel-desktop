@@ -44,11 +44,20 @@ pub const TRAY_HIDDEN: &str = "tray.hidden";
 pub const SHORTCUT_USED: &str = "shortcut.used";
 pub const REPORT_OPENED: &str = "report.opened";
 pub const LOGIN_PROFILE: &str = "login.profile";
+pub const WANT_LIVE_DOWNLOAD: &str = "want.live_download";
 pub const USAGE_CAPPED: &str = "usage.capped";
 
 /// Keys the web UI may count through `usage_count`; everything else is counted in Rust where it happens.
 /// `funnel.batch` once per multi-link Download (the store calls `media_download` once per link).
-pub const UI_KEYS: &[&str] = &[PASTE, PAUSE, PAUSE_ALL, RETRY, REPORT_OPENED, FUNNEL_BATCH];
+pub const UI_KEYS: &[&str] = &[
+  PASTE,
+  PAUSE,
+  PAUSE_ALL,
+  RETRY,
+  REPORT_OPENED,
+  FUNNEL_BATCH,
+  WANT_LIVE_DOWNLOAD,
+];
 
 pub const SITE: &str = "site:";
 pub const SITE_IN: &str = "sitein:";
@@ -117,6 +126,7 @@ pub const FAILURE_CODES: &[&str] = &[
   "outputNameTooLong",
   "permissionDenied",
   "photosOnly",
+  "profileNotSupported",
   "playlistPrivateOrMissing",
   "rateLimited429",
   "rejectedByFilter",
@@ -126,6 +136,7 @@ pub const FAILURE_CODES: &[&str] = &[
   "signInRequiredForBotDetection",
   "sponsorBlockUnreachable",
   "sslVerifyFailed",
+  "storyExpired",
   "unableToConnectToProxy",
   "unableToExtractIdOrInfo",
   "unableToExtractInitialData",
@@ -193,6 +204,7 @@ pub static FIXED: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
     SHORTCUT_USED,
     REPORT_OPENED,
     LOGIN_PROFILE,
+    WANT_LIVE_DOWNLOAD,
     USAGE_CAPPED,
   ]
   .into_iter()

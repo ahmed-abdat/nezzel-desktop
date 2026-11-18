@@ -13,6 +13,8 @@ pub(in crate::runners) struct CookieAccess {
   pub args: Vec<String>,
   pub has_session: bool,
   consent_app: Option<tauri::AppHandle>,
+  // Reads the current policy, so revocation is observed without retaining a snapshot.
+  live_consent: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
   usage: Option<crate::runners::login::notice::LoginUsage>,
   _jar: Option<std::sync::Arc<CookieJar>>,
 }
@@ -66,6 +68,7 @@ impl CookieAccess {
             args: vec![],
             has_session: false,
             consent_app: None,
+            live_consent: None,
             usage: None,
             _jar: None,
           })
@@ -85,6 +88,7 @@ impl CookieAccess {
             has_session: rows > 0,
             args: vec!["--cookies".into(), path.to_string_lossy().into_owned()],
             consent_app: None,
+            live_consent: None,
             usage: None,
             _jar: Some(std::sync::Arc::new(jar)),
           });
@@ -142,6 +146,7 @@ impl CookieAccess {
       args: vec!["--cookies".into(), path.to_string_lossy().into_owned()],
       has_session: rows > 0,
       consent_app: None,
+      live_consent: None,
       usage: None,
       _jar: Some(std::sync::Arc::new(jar)),
     })
@@ -173,11 +178,7 @@ impl CookieAccess {
     }
   }
   pub(crate) fn check_live_consent(&self) -> Result<(), &'static str> {
-    if self
-      .consent_app
-      .as_ref()
-      .is_some_and(|app| !crate::runners::login::automatic::enabled(app))
-    {
+    if self.live_consent.as_ref().is_some_and(|enabled| !enabled()) {
       return Err("browserLoginDisabled");
     }
     Ok(())
@@ -247,6 +248,7 @@ impl CookieAccess {
       ],
       has_session: true,
       consent_app: None,
+      live_consent: None,
       usage: None,
       _jar: Some(std::sync::Arc::new(jar)),
     })
@@ -299,6 +301,10 @@ impl CookieAccess {
     }
     if wants_browser {
       result.consent_app = Some(app.clone());
+      let app = app.clone();
+      result.live_consent = Some(std::sync::Arc::new(move || {
+        crate::runners::login::automatic::enabled(&app)
+      }));
       if let Some(host) = reqwest::Url::parse(source)
         .ok()
         .and_then(|url| url.host_str().and_then(super::site_key))
@@ -342,4 +348,286 @@ fn new_jar(context: &CookieContext) -> Result<(CookieJar, PathBuf, std::fs::File
   let path = jar.directory.join("cookies.txt");
   let file = private_file(&path).map_err(|_| COOKIE_READ_ERROR)?;
   Ok((jar, path, file))
+}
+
+impl crate::resolve::http::CookieProvider for CookieAccess {
+  fn header(
+    &self,
+    url: &reqwest::Url,
+  ) -> Result<Option<reqwest::header::HeaderValue>, crate::resolve::http::FetchError> {
+    use crate::resolve::http::FetchError;
+    self.check_live_consent().map_err(|_| FetchError::Status)?;
+    if url.scheme() != "https" || url.host_str() != Some("www.threads.com") {
+      return Ok(None);
+    }
+    let Some(path) = self
+      .args
+      .windows(2)
+      .find(|a| a[0] == "--cookies")
+      .map(|a| &a[1])
+    else {
+      return Ok(None);
+    };
+    let text = std::fs::read_to_string(path).map_err(|_| FetchError::Status)?;
+    threads_cookie_header(&text, url, unix_now())
+  }
+}
+// RFC domain/path/expiry matching; Instagram cookies must never be sent to Threads.
+fn threads_cookie_header(
+  text: &str,
+  url: &reqwest::Url,
+  now: i64,
+) -> Result<Option<reqwest::header::HeaderValue>, crate::resolve::http::FetchError> {
+  use crate::resolve::http::FetchError;
+  let mut pairs = Vec::new();
+  for line in text.lines() {
+    let line = line.strip_prefix("#HttpOnly_").unwrap_or(line);
+    if line.starts_with('#') {
+      continue;
+    }
+    let f: Vec<_> = line.split('\t').collect();
+    if f.len() != 7 {
+      continue;
+    }
+    let host = url.host_str().unwrap_or_default();
+    let domain = f[0].trim_start_matches('.');
+    if !matches!(domain, "threads.com" | "www.threads.com")
+      || !(host == domain || f[1] == "TRUE" && host.ends_with(&format!(".{domain}")))
+    {
+      continue;
+    }
+    let expiry = f[4].parse::<i64>().map_err(|_| FetchError::Status)?;
+    if expiry != 0 && expiry <= now {
+      continue;
+    }
+    if !(url.path() == f[2]
+      || url
+        .path()
+        .strip_prefix(f[2])
+        .is_some_and(|tail| f[2].ends_with('/') || tail.starts_with('/')))
+    {
+      continue;
+    }
+    if f[5].is_empty()
+      || f[5]
+        .bytes()
+        .any(|b| !b.is_ascii_alphanumeric() && !b"_-.".contains(&b))
+      || f[6].contains([';', '\r', '\n'])
+    {
+      return Err(FetchError::Status);
+    }
+    pairs.push(format!("{}={}", f[5], f[6]));
+  }
+  if pairs.is_empty() {
+    return Ok(None);
+  }
+  let mut header =
+    reqwest::header::HeaderValue::from_str(&pairs.join("; ")).map_err(|_| FetchError::Status)?;
+  header.set_sensitive(true);
+  Ok(Some(header))
+}
+impl CookieAccess {
+  pub(crate) async fn resolve_threads(&self, url: &str) -> crate::resolve::Resolution {
+    self
+      .resolve_threads_with(url, &crate::resolve::http::PublicHttp)
+      .await
+  }
+  async fn resolve_threads_with<T: crate::resolve::http::Transport + Sync>(
+    &self,
+    url: &str,
+    transport: &T,
+  ) -> crate::resolve::Resolution {
+    if self.check_live_consent().is_err() {
+      return crate::resolve::Resolution::Unsupported {
+        reason: crate::resolve::Reason::Login,
+      };
+    }
+    self.announce_used();
+    crate::resolve::threads_session(
+      url,
+      &crate::resolve::http::SessionHttp {
+        transport,
+        cookies: self,
+      },
+    )
+    .await
+  }
+}
+
+#[cfg(test)]
+mod threads_tests {
+  use super::*;
+  use crate::resolve::http::{
+    CookieProvider, FetchError, PublicHttp, Response, SessionHttp, Transport,
+  };
+  use reqwest::{header::HeaderValue, Url};
+  const URL: &str = "https://www.threads.com/@fixture/post/Dfx3XnMjokc";
+  const JAR: &str = "#HttpOnly_.threads.com\tTRUE\t/\tTRUE\t0\tsessionid\tfixture-session\n.instagram.com\tTRUE\t/\tTRUE\t0\tother\tinstagram-value\n.evil.test\tTRUE\t/\tTRUE\t0\tother\tevil-value\n.threads.com\tTRUE\t/\tTRUE\t1\told\texpired\n.threads.com\tTRUE\t/private\tTRUE\t0\tprivate\thidden\n";
+  fn response(body: String) -> Response {
+    Response {
+      status: 200,
+      location: None,
+      content_type: Some("text/html".into()),
+      body: body.into_bytes(),
+      content_length: None,
+    }
+  }
+  struct Mock;
+  impl Transport for Mock {
+    async fn get(&self, _url: &Url, _cap: usize) -> Result<Response, FetchError> {
+      Ok(response(
+        include_str!(
+          "../../../tests/fixtures/threads/re-2026-11-16/ssr-restricted-geoblocked-props.json"
+        )
+        .into(),
+      ))
+    }
+    async fn authenticated(
+      &self,
+      url: &Url,
+      _cap: usize,
+      api: Option<(&str, Option<&str>)>,
+      cookie: HeaderValue,
+    ) -> Result<Response, FetchError> {
+      assert_eq!(url.host_str(), Some("www.threads.com"));
+      assert_eq!(cookie.to_str().unwrap(), "sessionid=fixture-session");
+      assert!(cookie.is_sensitive());
+      if let Some((lsd, form)) = api {
+        assert_eq!(lsd, "fixture-lsd");
+        assert!(form.is_some());
+      }
+      Ok(response(format!(
+        "<script>[\"adp_BarcelonaPostPageTargetQueryRelayPreloader_ab\",{}]</script>",
+        include_str!(
+          "../../../tests/fixtures/threads/re-2026-11-16/ssr-targetquery-quote-post.json"
+        )
+      )))
+    }
+    async fn admit_media(&self, _url: &Url) -> Result<(), FetchError> {
+      Ok(())
+    }
+  }
+  struct Consent<'a> {
+    allowed: bool,
+    access: &'a CookieAccess,
+  }
+  impl CookieProvider for Consent<'_> {
+    fn header(&self, url: &Url) -> Result<Option<HeaderValue>, FetchError> {
+      if !self.allowed {
+        return Err(FetchError::Status);
+      }
+      self.access.header(url)
+    }
+  }
+
+  #[tokio::test]
+  async fn threads_real_consent_gate_stops_before_any_request() {
+    struct NoRequests;
+    impl Transport for NoRequests {
+      async fn get(&self, _url: &Url, _cap: usize) -> Result<Response, FetchError> {
+        panic!("anonymous request after refused consent")
+      }
+      async fn authenticated(
+        &self,
+        _url: &Url,
+        _cap: usize,
+        _api: Option<(&str, Option<&str>)>,
+        _cookie: HeaderValue,
+      ) -> Result<Response, FetchError> {
+        panic!("Cookie sent after refused consent")
+      }
+    }
+    for (browser, consent) in [("none", Some(true)), ("automatic", Some(false))] {
+      let auth = crate::state::config_models::AuthSettings {
+        cookie_browser: browser.into(),
+        browser_login_consent: consent,
+        ..Default::default()
+      };
+      let access = CookieAccess {
+        args: vec![],
+        has_session: true,
+        consent_app: None,
+        live_consent: Some(std::sync::Arc::new(move || {
+          crate::runners::login::global_consent(&auth) == Some(true)
+        })),
+        usage: None,
+        _jar: None,
+      };
+      assert_eq!(access.check_live_consent(), Err("browserLoginDisabled"));
+      assert_eq!(
+        access.resolve_threads_with(URL, &NoRequests).await,
+        crate::resolve::Resolution::Unsupported {
+          reason: crate::resolve::Reason::Login
+        }
+      );
+    }
+  }
+  #[tokio::test]
+  async fn threads_session_scopes_headers_and_restricted_page_unlocks_only_with_consent() {
+    let root = crate::runners::gallery_files::Staging::new().unwrap();
+    let jar = root.path.join("cookies.txt");
+    std::fs::write(&jar, JAR).unwrap();
+    let access = CookieAccess {
+      args: vec!["--cookies".into(), jar.to_string_lossy().into_owned()],
+      has_session: true,
+      consent_app: None,
+      live_consent: None,
+      usage: None,
+      _jar: None,
+    };
+    let anonymous = crate::resolve::threads_session(URL, &Mock).await;
+    assert_eq!(
+      anonymous,
+      crate::resolve::Resolution::Unsupported {
+        reason: crate::resolve::Reason::Login
+      }
+    );
+    for allowed in [false, true] {
+      let consent = Consent {
+        allowed,
+        access: &access,
+      };
+      let http = SessionHttp {
+        transport: &Mock,
+        cookies: &consent,
+      };
+      let result = crate::resolve::threads_session(URL, &http).await;
+      assert_eq!(
+        matches!(result, crate::resolve::Resolution::Attachments { .. }),
+        allowed
+      );
+      if allowed {
+        for url in [
+          "https://static.cdninstagram.com/a.js",
+          "https://www.instagram.com/",
+          "https://www.threads.com.evil.test/",
+          "http://www.threads.com/",
+        ] {
+          assert!(access.header(&Url::parse(url).unwrap()).unwrap().is_none());
+          http.get(&Url::parse(url).unwrap(), 1024).await.unwrap();
+        }
+        http
+          .threads_api(
+            &Url::parse("https://www.threads.com/api/graphql").unwrap(),
+            1024,
+            "fixture-lsd",
+            Some("fixture-form"),
+          )
+          .await
+          .unwrap();
+      }
+    }
+    // Transport itself refuses an incorrectly scoped provider before any network access.
+    assert!(matches!(
+      PublicHttp
+        .authenticated(
+          &Url::parse("https://evil.test/").unwrap(),
+          1024,
+          None,
+          HeaderValue::from_static("fixture=value")
+        )
+        .await,
+      Err(FetchError::InvalidUrl)
+    ));
+  }
 }

@@ -11,6 +11,13 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 use tokio::sync::mpsc::UnboundedSender;
 
+fn check_output_space(
+  root: Result<std::path::PathBuf, &'static str>,
+  estimate: Option<u64>,
+) -> Result<(), &'static str> {
+  super::disk_space::check(&root?, estimate)
+}
+
 #[derive(Clone)]
 pub struct DownloadSender(pub UnboundedSender<DispatchRequest<DownloadRequest>>);
 
@@ -26,6 +33,7 @@ pub enum DownloadRequest {
 #[derive(Clone)]
 pub struct DownloadEntry {
   pub group_id: String,
+  pub playlist_child: bool,
   pub id: String,
   pub url: String,
   pub resolved: Option<Box<crate::resolve::ResolvedInput>>,
@@ -56,6 +64,7 @@ impl From<(DownloadItem, String)> for DownloadEntry {
     Self {
       group_id: item.1,
       id: item.0.id,
+      playlist_child: item.0.playlist_child,
       url: item.0.url,
       resolved,
       format: item.0.format,
@@ -76,6 +85,10 @@ impl From<(DownloadItem, String)> for DownloadEntry {
 }
 
 impl DownloadEntry {
+  pub(crate) fn is_playlist_child(&self) -> bool {
+    self.playlist_child
+  }
+
   pub(crate) fn take_fetch_input(&mut self) -> Option<crate::resolve::ResolvedInput> {
     self.resolved.take().map(|input| *input).or_else(|| {
       // Rows saved before resolvedUrl was retained still need their site reader.
@@ -150,7 +163,27 @@ pub fn setup_download_dispatcher(
       }
       crate::usage::download_started(&app, &entry);
 
-      let result = crate::runners::gallery::run_media_download(app.clone(), entry.clone()).await;
+      let _awake = super::keep_awake::acquire(&app);
+      let root = if entry.fetch_engine == Some(crate::models::parsed::FetchEngine::Files) {
+        crate::files::runner::root(&app, &entry).map_err(|error| error.code())
+      } else {
+        Ok(
+          crate::runners::ytdlp_runner::YtdlpRunner::new(&app)
+            .output_root(&entry.format.track_type, entry.overrides.as_ref()),
+        )
+      };
+      let estimate = entry
+        .template_context
+        .values
+        .get("filesize")
+        .and_then(|size| size.parse().ok());
+      let result = match check_output_space(root, estimate) {
+        Ok(()) => crate::runners::gallery::run_media_download(app.clone(), entry.clone()).await,
+        Err(code) => {
+          crate::runners::reliability::fatal(&app, &entry, code);
+          Err(YtdlpDownloadError::RunnerError(code.into()))
+        }
+      };
       crate::runners::ytdlp_download::download_finished(
         &entry.group_id,
         &entry.id,
@@ -242,5 +275,12 @@ mod tests {
   #[test]
   fn paused_or_cancelled_job_does_not_report_starting() {
     assert!(starting_progress("item", "group", false).is_none());
+  }
+  #[test]
+  fn preserves_the_destination_resolution_error() {
+    assert_eq!(
+      super::check_output_space(Err("fileIo"), None),
+      Err("fileIo")
+    );
   }
 }

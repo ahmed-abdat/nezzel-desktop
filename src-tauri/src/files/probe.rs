@@ -158,6 +158,12 @@ impl Probe {
   pub(crate) fn from_response(mut body: Response) -> Result<Self> {
     body.ranged = false;
     let response = &body.response;
+    if response.status().as_u16() == 451 {
+      return Err(Error::LegalRestriction);
+    }
+    if matches!(response.status().as_u16(), 404 | 410) {
+      return Err(Error::Removed);
+    }
     if response.status() != reqwest::StatusCode::OK {
       tracing::warn!(
         error_kind = "http_status",
@@ -177,6 +183,14 @@ impl Probe {
       .unwrap_or_default()
       .trim()
       .to_ascii_lowercase();
+    if matches!(
+      mime.as_str(),
+      "application/rss+xml" | "application/atom+xml"
+    ) || (matches!(mime.as_str(), "application/xml" | "text/xml")
+      && response.url().path().ends_with("/podcast.xml"))
+    {
+      return Err(Error::PodcastFeed);
+    }
     let kind = classify(
       response.url(),
       &mime,

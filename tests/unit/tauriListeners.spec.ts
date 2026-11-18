@@ -87,6 +87,22 @@ describe('capture delivery to the main window', () => {
     expect(ready).toHaveBeenCalledOnce();
   });
 
+  it('a different capture of an existing pending link only focuses it, ignoring its later item', async () => {
+    const { groups, states, sheet, send, info, download } = await setup();
+    await send({ kind: 'action', id: 1, url, action: 'adopt', item, choice: null });
+    const existing = groups.orderedGroups[0];
+    states.setGroupState(existing.id, MediaState.downloading);
+    await send({ kind: 'action', id: 2, url: `${url}&si=new`, action: 'download', item: null, choice: null });
+    await send({ kind: 'item', id: 2, item: { ...item, title: 'Late duplicate' } });
+    expect(groups.orderedGroups).toHaveLength(1);
+    expect(existing.title).toBe('Captured title');
+    expect(states.getGroupState(existing.id)).toBe(MediaState.downloading);
+    expect(useMediaStore().duplicateFocus?.id).toBe(existing.id);
+    expect(info).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+    expect(sheet.open).toBe(false);
+  });
+
   it('creates an options row and opens its sheet before the item arrives', async () => {
     const { info, groups, states, sheet, send } = await setup();
     const prepare = vi.spyOn(useMediaStore(), 'prepareCaptureGroup');
@@ -187,6 +203,31 @@ describe('capture delivery to the main window', () => {
     expect(prepare).toHaveBeenCalledTimes(1);
     expect(useMediaOptionsStore().getOptions('capture-58')).toMatchObject({ height: 720 });
     expect(download).not.toHaveBeenCalled();
+  });
+
+  it('dedupes an audio choice while an adopted capture is still reading', async () => {
+    const { send } = await setup();
+    useMediaStore().createCaptureGroup('capture-60', url);
+    await send({ kind: 'action', id: 60, url, action: 'options', choice: { kind: 'audio' }, item: null });
+    await send({ kind: 'action', id: 61, url, action: 'options', choice: { kind: 'audio' }, item: null });
+    expect(useMediaGroupStore().findGroupById('capture-61')).toBeUndefined();
+  });
+
+  it.each([
+    [TrackType.both, { kind: 'audio' }, true],
+    [TrackType.audio, { kind: 'video', height: 720 }, true],
+    [TrackType.audio, { kind: 'audio' }, false],
+    [TrackType.both, { kind: 'video', height: 720 }, false],
+  ] satisfies [TrackType, CaptureChoice, boolean][])('dedupes capture choice against %s (new row: %s)', async (existing, choice, addsRow) => {
+    const { send } = await setup();
+    const media = useMediaStore();
+    const first = media.createCaptureGroup('first', url);
+    useMediaOptionsStore().setOptions(first, { trackType: existing });
+    await send({ kind: 'action', id: 60, url, action: 'options', choice, item: null });
+    expect(!!useMediaGroupStore().findGroupById('capture-60')).toBe(addsRow);
+    // Another capture with the same pending choice cannot add another row before the read completes.
+    await send({ kind: 'action', id: 61, url, action: 'options', choice, item: null });
+    expect(useMediaGroupStore().findGroupById('capture-61')).toBeUndefined();
   });
 
   it.each([

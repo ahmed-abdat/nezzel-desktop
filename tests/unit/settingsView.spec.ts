@@ -1,3 +1,4 @@
+import SettingsPerformance from '../../src/components/settings/SettingsPerformance.vue';
 import Switch from '../../src/components/ui/switch/Switch.vue';
 import { mount } from '@vue/test-utils';
 import { createMemoryHistory, createRouter } from 'vue-router';
@@ -269,4 +270,12 @@ describe('global browser login switch', () => {
     expect(settings.auth.cookieBrowser).toBe('none');
     wrapper.unmount();
   });
+});
+
+it('keeps the awake switch behind the advanced performance disclosure', async () => {
+  const wrapper = mount(SettingsPerformance, { props: { modelValue: structuredClone(defaultSettings) }, global: { plugins: [i18n] } });
+  expect(wrapper.find('#keepAwake').isVisible()).toBe(false);
+  await wrapper.get('button[aria-expanded]').trigger('click');
+  expect(wrapper.get('#keepAwake').isVisible()).toBe(true);
+  wrapper.unmount();
 });

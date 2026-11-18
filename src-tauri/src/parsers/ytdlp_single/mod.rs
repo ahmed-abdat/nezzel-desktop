@@ -55,6 +55,7 @@ pub fn parse_single(info: YtdlpInfo, id: String) -> ParsedMedia {
   );
 
   ParsedMedia::Single(ParsedSingleVideo {
+    playlist_child: false,
     id,
     fetch_engine: None,
     resolved_url: None,

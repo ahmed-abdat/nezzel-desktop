@@ -1,5 +1,23 @@
 use serde::{Deserialize, Serialize};
 
+/// The webview is https: an `http://` thumbnail (Bilibili's hdslb.com CDN) is blocked as mixed
+/// content. Every thumbnail the app emits or stores goes through this one upgrade.
+pub(crate) fn https_thumbnail<S: serde::Serializer>(
+  thumbnail: &Option<String>,
+  serializer: S,
+) -> Result<S::Ok, S::Error> {
+  match thumbnail.as_deref() {
+    Some(url)
+      if url
+        .get(..7)
+        .is_some_and(|p| p.eq_ignore_ascii_case("http://")) =>
+    {
+      serializer.serialize_some(&format!("https://{}", &url[7..]))
+    }
+    _ => serializer.serialize_some(thumbnail),
+  }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[allow(clippy::large_enum_variant)]
@@ -47,7 +65,10 @@ pub struct MediaAttachment {
   pub file_index: Option<usize>,
   pub kind: AttachmentKind,
   pub url: String,
-  #[serde(skip_serializing_if = "Option::is_none")]
+  #[serde(
+    skip_serializing_if = "Option::is_none",
+    serialize_with = "https_thumbnail"
+  )]
   pub thumbnail: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub alt: Option<String>,
@@ -108,6 +129,9 @@ pub struct Chapter {
 #[serde(rename_all = "camelCase")]
 pub struct ParsedSingleVideo {
   pub id: String,
+  /// Set by the fetch coordinator, never inferred from a video's playlist metadata.
+  #[serde(default)]
+  pub playlist_child: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub fetch_engine: Option<FetchEngine>,
   /// Successful fetch target, kept separately from the original source page.
@@ -119,6 +143,7 @@ pub struct ParsedSingleVideo {
   pub attachments: Vec<MediaAttachment>,
   pub url: Option<String>,
   pub title: Option<String>,
+  #[serde(serialize_with = "https_thumbnail")]
   pub thumbnail: Option<String>,
   pub description: Option<String>,
   pub uploader_id: Option<String>,
@@ -146,6 +171,7 @@ pub struct ParsedPlaylist {
   pub id: String,
   pub url: Option<String>,
   pub title: Option<String>,
+  #[serde(serialize_with = "https_thumbnail")]
   pub thumbnail: Option<String>,
   pub uploader: Option<String>,
   pub uploader_id: Option<String>,
@@ -163,7 +189,11 @@ pub struct PlaylistEntry {
   pub title: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub duration: Option<f64>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
+  #[serde(
+    default,
+    skip_serializing_if = "Option::is_none",
+    serialize_with = "https_thumbnail"
+  )]
   pub thumbnail: Option<String>,
   pub video_url: String,
   pub index: usize,

@@ -189,7 +189,9 @@ pub(super) async fn read<T: http::Transport>(input: &str, transport: &T) -> Verd
     .iter()
     .enumerate()
     .any(|(i, n)| own(i) && n.tag.name == "video" && !n.attr("src").is_empty());
-  if video && !unavailable {
+  if unavailable {
+    Verdict::Failed(super::Failure::TelegramAppOnly)
+  } else if video {
     Verdict::Verified(Resolution::Passthrough(format!(
       "https://t.me/{}",
       identity.key

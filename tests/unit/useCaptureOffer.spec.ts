@@ -8,9 +8,85 @@ import { emptyDetails, type CaptureOffer } from '../../src/captureTypes';
 import { emit } from '@tauri-apps/api/event';
 import { i18n } from '../../src/i18n';
 import { installTauriMock } from '../utils/tauriMock';
+import { siteLogo } from '../../src/helpers/siteLogo';
+import { defaultSettings } from '../../src/tauri/types/config';
 
 let wrapper: ReturnType<typeof mount>;
 afterEach(() => wrapper?.unmount());
+
+describe('automatic login after an anonymous preview refusal', () => {
+  it.each([['card', CaptureCard, 'en'], ['bar', CaptureBar, 'ar']] as const)('%s offers Download without asking to use the browser login', async (name, component, locale) => {
+    const send = vi.fn();
+    installTauriMock({
+      config_get: () => ({ ...defaultSettings, appearance: { ...defaultSettings.appearance, language: locale }, auth: { ...defaultSettings.auth, cookieBrowser: 'automatic', alwaysUseBrowserLogins: true } }),
+      capture_snapshot: () => ({ id: 11, url: 'https://www.instagram.com/p/DEg2j6USJgo/?igsh=test', site: 'www.instagram.com', read: true, failed: true, reason: 'login', details: emptyDetails() }),
+      capture_action: send,
+    });
+    wrapper = mount(component, { global: { plugins: [i18n] } });
+    await flushPromises();
+    expect(wrapper.find('[data-testid=capture-fail-actions]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid=capture-fail]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid=capture-automatic-login]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid=capture-automatic-login]').text()).toBe(i18n.global.t('capture.automaticLogin'));
+    if (name === 'bar') await wrapper.get('form').trigger('submit');
+    else await wrapper.get('[data-pick=best]').trigger('click');
+    await flushPromises();
+    expect(send).toHaveBeenCalledWith('capture_action', expect.objectContaining({ id: 11, action: 'download' }));
+  });
+
+  it('rechecks automatic login before dispatch if the owner switched it off while the card was open', async () => {
+    let enabled = true;
+    const send = vi.fn();
+    installTauriMock({
+      config_get: () => ({ ...defaultSettings, auth: { ...defaultSettings.auth, cookieBrowser: 'automatic', alwaysUseBrowserLogins: enabled } }),
+      capture_snapshot: () => ({ id: 13, url: 'https://instagram.com/p/ABC', read: true, failed: true, reason: 'login', details: emptyDetails() }),
+      capture_action: send,
+    });
+    wrapper = mount(CaptureCard, { global: { plugins: [i18n] } });
+    await flushPromises();
+    enabled = false;
+    await wrapper.get('[data-pick=best]').trigger('click');
+    await flushPromises();
+    expect(send).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-testid=capture-fail-actions]').exists()).toBe(true);
+  });
+
+  it('keeps the login prompt when automatic logins are switched off', async () => {
+    installTauriMock({
+      config_get: () => ({ ...defaultSettings, auth: { ...defaultSettings.auth, cookieBrowser: 'automatic', alwaysUseBrowserLogins: false } }),
+      capture_snapshot: () => ({ id: 12, url: 'https://instagram.com/p/ABC', read: true, failed: true, reason: 'login', details: emptyDetails() }),
+    });
+    wrapper = mount(CaptureCard, { global: { plugins: [i18n] } });
+    await flushPromises();
+    expect(wrapper.find('[data-testid=capture-fail-actions]').exists()).toBe(true);
+    expect(wrapper.find('[data-pick=best]').exists()).toBe(false);
+  });
+});
+
+describe('instant capture logos', () => {
+  it.each([CaptureCard, CaptureBar])('renders a short-link logo before metadata, even with remote images disabled', async (component) => {
+    installTauriMock({ capture_snapshot: () => ({ id: 1, url: 'https://vt.tiktok.com/abc', remoteImages: false, read: false, details: emptyDetails() }) });
+    wrapper = mount(component, { global: { plugins: [i18n] } });
+    await flushPromises();
+    expect(wrapper.findAll('svg path').some(path => path.attributes('d') === siteLogo('https://tiktok.com'))).toBe(true);
+    expect(wrapper.find('img[src$="favicon.ico"]').exists()).toBe(false);
+  });
+
+  it('requests a favicon only for an unknown site with remote images enabled', async () => {
+    let capture!: ReturnType<typeof useCaptureOffer>;
+    wrapper = mount(defineComponent({ setup() {
+      capture = useCaptureOffer();
+      return () => null;
+    } }), { global: { plugins: [i18n] } });
+    capture.offer.value.url = 'https://example.org/clip';
+    expect(capture.favicon.value).toBeNull();
+    capture.offer.value.remoteImages = true;
+    expect(capture.favicon.value).toBe('https://example.org/favicon.ico');
+    capture.offer.value.url = 'https://pin.it/abc';
+    expect(capture.logo.value).toBeTruthy();
+    expect(capture.favicon.value).toBeNull();
+  });
+});
 
 describe('capture primary action', () => {
   it.each([

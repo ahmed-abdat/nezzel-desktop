@@ -59,6 +59,53 @@ pub struct FetchEntry {
   pub prior_resolved_url: Option<String>,
 }
 
+impl FetchEntry {
+  pub(crate) fn is_playlist_child(&self) -> bool {
+    self.total > 1
+      || GROUP_COUNTERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(&self.group_id)
+  }
+}
+
+/// An unavailable child is a skipped row; its siblings still own the group counter.
+pub(crate) fn child_terminal(
+  entry: &FetchEntry,
+  diagnostic: &mut crate::models::MediaDiagnosticPayload,
+  fatal: &mut MediaFatalPayload,
+) {
+  if entry.is_playlist_child()
+    && matches!(
+      diagnostic.code.as_str(),
+      "mediaUnavailable" | "videoNotFoundOrPrivate" | "notFound404"
+    )
+  {
+    diagnostic.level = crate::models::error::DiagnosticLevel::Warning;
+    diagnostic.code = "input_filter_skipped".into();
+    fatal.exit_code = Some(0);
+  }
+}
+
+fn live_refusal(
+  group_id: String,
+  id: String,
+  message: String,
+) -> (crate::models::MediaDiagnosticPayload, MediaFatalPayload) {
+  let fatal = MediaFatalPayload::with_exit(group_id.clone(), id.clone(), 1, message.clone());
+  let diagnostic = crate::models::MediaDiagnosticPayload {
+    group_id,
+    id,
+    level: crate::models::error::DiagnosticLevel::Error,
+    code: "liveNow".into(),
+    component: Some("extract".into()),
+    message: message.clone(),
+    raw: message,
+    timestamp: fatal.timestamp,
+  };
+  (diagnostic, fatal)
+}
+
 impl DispatchEntry for FetchEntry {
   fn group_id(&self) -> &String {
     &self.group_id
@@ -159,6 +206,10 @@ fn expand_fetch_request(req: FetchRequest) -> Vec<FetchEntry> {
       format,
     } => {
       let total = playlist.entries.len();
+      GROUP_COUNTERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(group_id.clone(), total);
       playlist
         .entries
         .into_iter()
@@ -265,9 +316,12 @@ async fn handle_fetch_entry(
       }
     }
     Some(ParsedMedia::Livestream(_)) => {
-      let payload =
-        MediaFatalPayload::internal(group_id.clone(), id, "Livestreams unsupported".into(), None);
-      crate::events::emit(&app, crate::events::MEDIA_FATAL, payload);
+      use tauri::Manager;
+      let message = app
+        .state::<crate::i18n::I18nManager>()
+        .t("errors.runner.liveNow");
+      let (diagnostic, fatal) = live_refusal(group_id.clone(), id, message);
+      crate::extract::terminal::emit_terminal(&app, diagnostic, fatal);
       let mut counters = GROUP_COUNTERS.lock().unwrap();
       if let Some(cnt) = counters.get_mut(&group_id) {
         *cnt -= 1;
@@ -312,4 +366,65 @@ pub(crate) fn fresh_fetch_for_test(entry: &FetchEntry) -> FetchEntry {
     overrides: Box::new(entry.overrides.clone()),
   })
   .remove(0)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  #[test]
+  fn live_refusal_is_a_normal_localized_fatal() {
+    let (diagnostic, payload) = live_refusal(
+      "group".into(),
+      "row".into(),
+      "localized live message".into(),
+    );
+    assert_eq!(diagnostic.code, "liveNow");
+    assert_eq!(diagnostic.message, payload.message);
+    assert!(!payload.internal);
+    assert_eq!(payload.message, "localized live message");
+    assert_eq!(payload.exit_code, Some(1));
+  }
+
+  #[test]
+  fn unavailable_child_is_skipped_and_only_last_child_cleans_up() {
+    let group = "unavailable-child-test";
+    let entry = expand_fetch_request(FetchRequest::Playlist {
+      group_id: group.into(),
+      overrides: Box::new(None),
+      entries: (0..2)
+        .map(|index| PlaylistEntry {
+          filesize: None,
+          title: None,
+          duration: None,
+          thumbnail: None,
+          video_url: format!("https://youtube.com/watch?v={index}"),
+          index,
+        })
+        .collect(),
+    })
+    .remove(0);
+    let mut fatal =
+      MediaFatalPayload::with_exit(group.into(), "child".into(), 1, "Unavailable".into());
+    let mut diagnostic = crate::models::MediaDiagnosticPayload {
+      group_id: group.into(),
+      id: "child".into(),
+      level: crate::models::error::DiagnosticLevel::Error,
+      code: "mediaUnavailable".into(),
+      component: None,
+      message: "Unavailable".into(),
+      raw: String::new(),
+      timestamp: 0,
+    };
+    child_terminal(&entry, &mut diagnostic, &mut fatal);
+    assert_eq!(diagnostic.code, "input_filter_skipped");
+    assert_eq!(diagnostic.message, "Unavailable");
+    assert_eq!(fatal.exit_code, Some(0));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    finish_fetch(&tx, group);
+    assert!(rx.try_recv().is_err());
+    finish_fetch(&tx, group);
+    assert!(
+      matches!(rx.try_recv(), Ok(DispatchRequest::Cleanup { group_id }) if group_id == group)
+    );
+  }
 }

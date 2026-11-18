@@ -1,0 +1,163 @@
+[
+  {
+    "input": "https://l.facebook.com/l.php?u=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc%26t%3D10%26si%3Dx",
+    "url": "https://www.youtube.com/watch?v=abc&t=10",
+    "key": "https://youtube.com/watch?t=10&v=abc"
+  },
+  {
+    "input": "https://lm.facebook.com/l.php?u=https%3A%2F%2Fexample.com%2F%D9%85%D8%B1%D8%AD%D8%A8%D8%A7%3Fid%3D1",
+    "url": "https://example.com/%D9%85%D8%B1%D8%AD%D8%A8%D8%A7?id=1"
+  },
+  {
+    "input": "https://google.com/url?q=https%3A%2F%2Fyoutube.com%2Fwatch%3Fv%3Dx%26list%3DL%26index%3D2&sa=x",
+    "url": "https://youtube.com/watch?v=x&list=L&index=2"
+  },
+  {
+    "input": "https://www.google.com/url?url=https%3A%2F%2Fexample.com%2Fa%3Fkey%3Da%252Fb%26id%3D1",
+    "url": "https://example.com/a?key=a%2Fb&id=1"
+  },
+  {
+    "input": "https://youtube.com/redirect?q=https%3A%2F%2Fexample.com%2Fvideo",
+    "url": "https://example.com/video"
+  },
+  {
+    "input": "https://youtube.com/attribution_link?u=%2Fwatch%3Fv%3Dabc%26t%3D25%23t%3D30",
+    "url": "https://www.youtube.com/watch?v=abc&t=25#t=30",
+    "key": "https://youtube.com/watch?t=25&v=abc#t=30"
+  },
+  {
+    "input": "https://nam01.safelinks.protection.outlook.com/?url=https%3A%2F%2Ffacebook.com%2Fstory.php%3Fstory_fbid%3D1%26id%3D2%26fbid%3D3%26fbclid%3Dtracking",
+    "url": "https://facebook.com/story.php?story_fbid=1&id=2&fbid=3"
+  },
+  {
+    "input": "https://t.umblr.com/redirect?z=https%3A%2F%2Fexample.com%2Fa",
+    "url": "https://example.com/a"
+  },
+  {
+    "input": "https://href.li/?https://example.com/a?id=1&key=a%2Fb",
+    "url": "https://example.com/a?id=1&key=a%2Fb"
+  },
+  {
+    "input": "https://href.li/?https%3A%2F%2Fexample.com%2Fa%3Fid%3D1",
+    "url": "https://example.com/a?id=1"
+  },
+  {
+    "input": "https://ddinstagram.com/reel/AbC/?igsh=x",
+    "url": "https://instagram.com/reel/AbC/",
+    "key": "https://instagram.com/p/AbC"
+  },
+  {
+    "input": "https://www.inst agramez.com/p/1",
+    "error": true
+  },
+  {
+    "input": "https://www.kkinstagram.com/p/AbC?igshid=x",
+    "url": "https://instagram.com/p/AbC"
+  },
+  {
+    "input": "https://instagramez.com/p/AbC",
+    "url": "https://instagram.com/p/AbC"
+  },
+  {
+    "input": "https://fixvx.com/u/status/123?s=20&t=key&ref_src=copy",
+    "url": "https://x.com/u/status/123"
+  },
+  {
+    "input": "https://www.fxtwitter.com/u/status/123/photo/1?s=20",
+    "url": "https://x.com/u/status/123/photo/1"
+  },
+  {
+    "input": "https://vxtwitter.com/search?s=query&t=timestamp",
+    "url": "https://x.com/search?s=query&t=timestamp"
+  },
+  {
+    "input": "https://vxtiktok.com/@name/video/1",
+    "url": "https://tiktok.com/@name/video/1"
+  },
+  {
+    "input": "https://tnktok.com/@name/video/1",
+    "url": "https://tiktok.com/@name/video/1"
+  },
+  {
+    "input": "https://rxddit.com/r/test/comments/abc/post",
+    "url": "https://reddit.com/r/test/comments/abc/post"
+  },
+  {
+    "input": "https://example.com/a?utm_source=a&UTM_Medium=b&fbclid=c&gclid=d&igsh=e&igshid=f&mibextid=g&ref_src=h&si=keep&s=keep&t=10&access_key=a%2fb+%20&signature=a'b",
+    "url": "https://example.com/a?si=keep&s=keep&t=10&access_key=a%2fb+%20&signature=a%27b"
+  },
+  {
+    "input": "https://open.spotify.com/track/abc?si=token",
+    "url": "https://open.spotify.com/track/abc"
+  },
+  {
+    "input": "https://youtu.be/abc?si=1&t=10",
+    "url": "https://youtu.be/abc?t=10",
+    "key": "https://youtube.com/watch?t=10&v=abc"
+  },
+  {
+    "input": "https://youtube.com.evil.test/redirect?q=https%3A%2F%2Fexample.com",
+    "url": "https://youtube.com.evil.test/redirect?q=https%3A%2F%2Fexample.com"
+  },
+  {
+    "input": "https://l.facebook.com/l.php?u=javascript%3Aalert(1)",
+    "error": true
+  },
+  {
+    "input": "https://google.com/url?q=not-a-link",
+    "error": true
+  },
+  {
+    "input": "https://google.com/url?q=",
+    "error": true
+  },
+  {
+    "input": "https://google.com/url?other=x",
+    "error": true
+  },
+  {
+    "input": "https://google.com/url?q=http%3A%2F%2F127.0.0.1%2Fsecret",
+    "url": "http://127.0.0.1/secret"
+  },
+  {
+    "input": "https://href.li/?http://[::ffff:127.0.0.1]/secret",
+    "url": "http://[::ffff:7f00:1]/secret"
+  },
+  {
+    "input": "https://href.li/?http://10.0.0.1/secret",
+    "url": "http://10.0.0.1/secret"
+  },
+  {
+    "input": "https://href.li/?http://localhost/secret",
+    "url": "http://localhost/secret"
+  },
+  {
+    "input": "https://href.li/?https://user:pass@example.com/secret",
+    "error": true
+  },
+  {
+    "input": "http://nas.local/v.mp4",
+    "url": "http://nas.local/v.mp4",
+    "key": "http://nas.local/v.mp4"
+  },
+  {
+    "input": "http://192.168.1.5:8080/x.mp4",
+    "url": "http://192.168.1.5:8080/x.mp4",
+    "key": "http://192.168.1.5:8080/x.mp4"
+  },
+  {
+    "input": "http://nas/v.mp4",
+    "url": "http://nas/v.mp4",
+    "key": "http://nas/v.mp4"
+  },
+  {
+    "input": "http://[::1]:8080/v.mp4",
+    "url": "http://[::1]:8080/v.mp4",
+    "key": "http://[::1]:8080/v.mp4"
+  },
+  {
+    "input": "https://example.com:8443/x.mp4",
+    "url": "https://example.com:8443/x.mp4",
+    "key": "https://example.com:8443/x.mp4"
+  }
+]

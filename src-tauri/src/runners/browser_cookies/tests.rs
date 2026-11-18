@@ -398,15 +398,21 @@ fn filtering_removes_the_full_export_on_success_and_parse_error_and_sweep_remove
 #[cfg(unix)]
 fn exporter_fixture(root: &Path, mode: &str) -> CookieContext {
   use std::os::unix::fs::PermissionsExt;
+  let profile = root.join("profile");
+  std::fs::create_dir_all(&profile).unwrap();
+  let db = rusqlite::Connection::open(profile.join("Cookies")).unwrap();
+  db.execute_batch("CREATE TABLE IF NOT EXISTS cookies(value TEXT);")
+    .unwrap();
   let exporter = root.join("exporter");
   std::fs::write(&exporter, format!(r#"#!/bin/sh
 set -eu
 full=''
 info=''
+browser=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --cookies) full="$2"; shift 2 ;;
-    --cookies-from-browser) shift 2 ;;
+    --cookies-from-browser) browser="$2"; shift 2 ;;
     --load-info-json) info="$2"; shift 2 ;;
     --ignore-config|--no-cache-dir|--skip-download|--no-clean-info-json) shift ;;
     *) exit 90 ;;
@@ -415,6 +421,12 @@ done
 [ -f "$info" ]
 printf '%s\n' '# Netscape HTTP Cookie File' '.reddit.com	TRUE	/	TRUE	4102444800	fixture	synthetic' 'google.com	FALSE	/	TRUE	4102444800	fixture	synthetic' > "$full"
 case '{mode}' in
+  profile)
+    profile="${{browser#*:}}"
+    [ ! -d "$profile/Storage" ]
+    [ "$(cat "$profile/../Local State")" = 'synthetic-key' ]
+    cmp "$profile/Cookies" "$(dirname "$0")/expected.db"
+    ;;
   error) echo 'Cookie: private-cookie-value /Users/PrivatePerson/Profile' >&2; exit 1 ;;
   app-bound) echo 'ERROR: cookies use App-Bound encryption (v20)' >&2; exit 1 ;;
   keychain) echo 'WARNING: find-generic-password failed' >&2; exit 1 ;;
@@ -442,6 +454,159 @@ esac
 
 #[cfg(unix)]
 #[tokio::test]
+async fn chromium_export_ignores_newer_partition_and_prefers_network_database() {
+  use std::os::unix::fs::PermissionsExt;
+  use std::time::{Duration, UNIX_EPOCH};
+  for (kind, layout) in [
+    ("chrome", "Cookies"),
+    ("edge", "Network/Cookies"),
+    ("brave", "Cookies"),
+  ] {
+    let root = Staging::new().unwrap();
+    let profile = root.path.join("UserData/Default");
+    let main = profile.join(layout);
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    let db = rusqlite::Connection::open(&main).unwrap();
+    db.execute_batch(
+      "CREATE TABLE cookies(value TEXT); INSERT INTO cookies VALUES ('main-session');",
+    )
+    .unwrap();
+    drop(db);
+    std::fs::copy(&main, root.path.join("expected.db")).unwrap();
+    std::fs::File::open(&main)
+      .unwrap()
+      .set_modified(UNIX_EPOCH + Duration::from_secs(1))
+      .unwrap();
+    let partition = profile.join("Storage/ext/glic/123/Cookies");
+    std::fs::create_dir_all(partition.parent().unwrap()).unwrap();
+    std::fs::write(&partition, b"wrong partition").unwrap();
+    if layout.starts_with("Network") {
+      std::fs::write(profile.join("Cookies"), b"stale root database").unwrap();
+    }
+    std::fs::write(
+      profile.parent().unwrap().join("Local State"),
+      b"synthetic-key",
+    )
+    .unwrap();
+    let context = exporter_fixture(&root.path, "profile");
+    let (_tx, cancel) = watch::channel(true);
+    let access = CookieAccess::prepare(
+      &AuthSettings::default(),
+      Some(&format!("{kind}:{}", profile.display())),
+      "https://reddit.com/post",
+      &context,
+      cancel,
+    )
+    .await
+    .unwrap();
+    let path = PathBuf::from(&access.args[1]);
+    assert_eq!(domains(&path), [".reddit.com"]);
+    assert_eq!(
+      std::fs::metadata(path.parent().unwrap())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777,
+      0o700
+    );
+    drop(access);
+    assert_eq!(std::fs::read_dir(&context.directory).unwrap().count(), 0);
+    assert!(partition.exists());
+  }
+}
+
+#[test]
+fn chromium_snapshot_survives_source_checkpoint_between_file_copies() {
+  let root = Staging::new().unwrap();
+  let original = root.path.join("source");
+  let snapshot = root.path.join("snapshot");
+  std::fs::create_dir(&original).unwrap();
+  std::fs::create_dir(&snapshot).unwrap();
+  let database = original.join("Cookies");
+  let copied_db = snapshot.join("Cookies");
+  let db = rusqlite::Connection::open(&database).unwrap();
+  db.execute_batch("CREATE TABLE cookies(value TEXT); PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; INSERT INTO cookies VALUES ('live-session');").unwrap();
+  let copies = std::cell::Cell::new(0);
+  chromium::copy_database(&database, &copied_db, |from, to| {
+    std::fs::copy(from, to)?;
+    copies.set(copies.get() + 1);
+    if copies.get() == 1 {
+      // Chrome commits its WAL to the live DB between our two file reads.
+      db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
+    }
+    Ok(())
+  })
+  .unwrap();
+  let snapshot = rusqlite::Connection::open(copied_db).unwrap();
+  assert_eq!(
+    snapshot
+      .query_row("SELECT value FROM cookies", [], |row| row
+        .get::<_, String>(0))
+      .unwrap(),
+    "live-session"
+  );
+}
+
+#[test]
+fn chromium_snapshot_is_private_preserves_wal_and_root_profile_key_material() {
+  use crate::runners::browsers::BrowserSource;
+  let root = Staging::new().unwrap();
+  let profile = root.path.join("Opera");
+  std::fs::create_dir(&profile).unwrap();
+  std::fs::write(profile.join("Local State"), b"synthetic-key").unwrap();
+  let db = rusqlite::Connection::open(profile.join("Cookies")).unwrap();
+  db.execute_batch("CREATE TABLE cookies(value TEXT); PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; INSERT INTO cookies VALUES ('live-session');").unwrap();
+  let browser = BrowserSource::parse(&format!("opera+kwallet6:{}", profile.display())).unwrap();
+  let (staged, guard) = chromium::export_profile(&browser, "reddit.com", &root.path).unwrap();
+  assert_eq!(staged.keyring, browser.keyring);
+  assert_eq!(staged.kind, browser.kind);
+  let copy = PathBuf::from(staged.profile.unwrap()).join("Cookies");
+  // yt-dlp treats Opera's supplied profile as browser_dir (no profiles layer).
+  assert_eq!(
+    std::fs::read(copy.parent().unwrap().join("Local State")).unwrap(),
+    b"synthetic-key"
+  );
+  let snapshot = rusqlite::Connection::open(&copy).unwrap();
+  assert_eq!(
+    snapshot
+      .query_row("SELECT value FROM cookies", [], |row| row
+        .get::<_, String>(0))
+      .unwrap(),
+    "live-session"
+  );
+  assert_eq!(
+    std::fs::read(guard.directory.join("Local State")).unwrap(),
+    b"synthetic-key"
+  );
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    for (path, mode) in [
+      (guard.directory.as_path(), 0o700),
+      (copy.parent().unwrap(), 0o700),
+      (copy.as_path(), 0o600),
+    ] {
+      assert_eq!(
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        mode
+      );
+    }
+  }
+  drop(snapshot);
+  let directory = guard.directory.clone();
+  drop(guard);
+  assert!(!directory.exists());
+  assert_eq!(
+    db.query_row("SELECT value FROM cookies", [], |row| row
+      .get::<_, String>(0))
+      .unwrap(),
+    "live-session"
+  );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn chromium_exporter_passes_only_scoped_args_and_erases_full_jar() {
   use crate::parsers::ytdlp_error::{CookieFetchFailure, DiagnosticMatcher, YtdlpErrorParser};
   let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
@@ -455,7 +620,7 @@ async fn chromium_exporter_passes_only_scoped_args_and_erases_full_jar() {
     let (_tx, cancel) = watch::channel(true);
     let access = CookieAccess::prepare(
       &AuthSettings::default(),
-      Some("chrome:/synthetic"),
+      Some(&format!("chrome:{}", root.path.join("profile").display())),
       &format!("https://{host}/post"),
       &context,
       cancel,
@@ -532,9 +697,10 @@ async fn cancelling_an_active_export_removes_the_full_and_scoped_files() {
   let context = exporter_fixture(&root.path, "wait");
   let (tx, cancel) = watch::channel(true);
   let settings = AuthSettings::default();
+  let browser = format!("chrome:{}", root.path.join("profile").display());
   let prepare = CookieAccess::prepare(
     &settings,
-    Some("chrome:/synthetic"),
+    Some(&browser),
     "https://reddit.com/post",
     &context,
     cancel,
@@ -586,13 +752,10 @@ async fn exporter_failure_removes_every_cookie_file() {
     let root = Staging::new().unwrap();
     let context = exporter_fixture(&root.path, mode);
     let (_tx, cancel) = watch::channel(true);
+    let browser = format!("chrome:{}", root.path.join("profile").display());
     let result = CookieAccess::prepare(
       &AuthSettings::default(),
-      Some(if mode == "safari" {
-        "safari"
-      } else {
-        "chrome:/synthetic"
-      }),
+      Some(if mode == "safari" { "safari" } else { &browser }),
       "https://reddit.com/post",
       &context,
       cancel,
@@ -611,7 +774,7 @@ async fn exporter_timeout_removes_every_cookie_file() {
   let (_tx, cancel) = watch::channel(true);
   let result = CookieAccess::prepare(
     &AuthSettings::default(),
-    Some("chrome:/synthetic"),
+    Some(&format!("chrome:{}", root.path.join("profile").display())),
     "https://reddit.com/post",
     &context,
     cancel,

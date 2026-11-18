@@ -1,4 +1,16 @@
 {
+  "errors": {
+    "runner": {
+      "playlistEmpty": "This page has no videos to save. Open it on the site or copy an individual video link.",
+      "vimeoSignInRequired": "Vimeo now needs you signed in to vimeo.com in your browser.",
+      "listingPartial": "Showing the items found before the site stopped responding.",
+      "galleryItemsSkipped": "The other items were saved. Some items could not be downloaded.",
+      "podcastFeed": "This is a podcast feed. Open an episode link to save its audio.",
+      "legalRestriction451": "Not available in your country for legal reasons.",
+      "liveNow": "This is a live stream. Nezzel can save it after the broadcast ends.",
+      "mediaUnavailable": "This video is unavailable (removed, private or a wrong link)."
+    }
+  },
   "tray": {
     "pasteLink": "Paste link",
     "activeDownloads": "Active downloads: {n}",
@@ -51,7 +63,7 @@
     }
   },
   "resolve": {
-    "photosOnly": "This post has photos, not a video. Photo downloads are coming soon."
+    "photosOnly": "This post has photos, not a video. Download the photos instead."
   },
   "files": {
     "errors": {

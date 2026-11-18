@@ -2,11 +2,11 @@
 use super::runner::GalleryRunner;
 use crate::models::TrackType;
 use crate::parsers::gallery::{
-  cdn_failure, gallery_deadline, verify_receipt, GalleryAsset, GalleryError, GalleryPost,
+  gallery_deadline, stderr_failure, verify_receipt, GalleryAsset, GalleryError, GalleryPost,
 };
 use crate::runners::{
   gallery_files::{image_type, Staging},
-  gallery_process::execute_with_started,
+  gallery_process::execute_monitored,
   ytdlp_runner::YtdlpRunner,
 };
 use crate::scheduling::{
@@ -24,14 +24,15 @@ impl GalleryRunner {
     assets: &[&GalleryAsset],
     group: &str,
     stage: &Path,
-  ) -> Result<Vec<PathBuf>, GalleryError> {
+    progressed: impl FnMut() + Send,
+  ) -> Result<Vec<Result<PathBuf, GalleryError>>, GalleryError> {
     if assets.is_empty() {
       return Ok(Vec::new());
     }
     let mut input = String::new();
     for asset in assets {
       let directory = stage.join(asset.index.to_string());
-      std::fs::create_dir(&directory).map_err(|_| GalleryError::Invalid)?;
+      std::fs::create_dir_all(&directory).map_err(|_| GalleryError::Invalid)?;
       // Per-URL input options isolate filenames and receipts in a single process.
       // JSON encoding prevents a source URL or directory from injecting input directives.
       input.push_str(&format!(
@@ -76,25 +77,31 @@ impl GalleryRunner {
         .check_live_consent()
         .map_err(GalleryError::Refused)?;
     }
-    let output = execute_with_started(
+    let output = execute_monitored(
       &self.path,
       &args,
       subscribe_group(group),
       gallery_deadline(assets.len()),
+      Some(stage),
       || {
         if let Some(cookies) = &self._cookies {
           cookies.announce_used();
         }
       },
+      progressed,
     )
     .await?;
-    if output.code != 0 {
-      return Err(cdn_failure(&String::from_utf8_lossy(&output.stderr)));
-    }
-    assets
-      .iter()
-      .map(|asset| verified_image(post, asset, group, &stage.join(asset.index.to_string())))
-      .collect()
+    let failure =
+      (output.code != 0).then(|| stderr_failure(&String::from_utf8_lossy(&output.stderr), true));
+    Ok(
+      assets
+        .iter()
+        .map(|asset| {
+          verified_image(post, asset, group, &stage.join(asset.index.to_string()))
+            .map_err(|error| failure.clone().unwrap_or(error))
+        })
+        .collect(),
+    )
   }
 }
 
@@ -207,16 +214,26 @@ pub(super) fn image_destination(
     .file_name()
     .ok_or(GalleryError::Invalid)?
     .to_string_lossy();
-  if crate::files::sanitize::is_windows_reserved(&name) {
-    Ok(path.with_file_name(format!("_{name}")))
+  let name = if crate::files::sanitize::is_windows_reserved(&name) {
+    format!("_{name}")
   } else {
-    Ok(path)
-  }
+    name.into_owned()
+  };
+  Ok(path.with_file_name(crate::files::sanitize::limit_media_name(&name)))
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn image_names_fit_200_bytes_with_quality_and_carousel_suffix() {
+    let path = std::env::temp_dir().join(format!("{}-(1080p).jpg", "صورة".repeat(40)));
+    let result = image_destination(path, 3, true, "jpg").unwrap();
+    let name = result.file_name().unwrap().to_str().unwrap();
+    assert!(name.len() <= 200);
+    assert!(name.ends_with("-(1080p)-003.jpg"));
+  }
 
   #[test]
   fn image_naming_preserves_resolved_folders_and_original_carousel_position() {

@@ -21,6 +21,20 @@ pub(super) fn configuration(
   network: &NetworkSettings,
   source: &str,
 ) -> Result<Value, GalleryError> {
+  configuration_with_tumblr_key(
+    secrets,
+    network,
+    source,
+    option_env!("NEZZEL_TUMBLR_API_KEY"),
+  )
+}
+
+fn configuration_with_tumblr_key(
+  secrets: &AuthSecrets,
+  network: &NetworkSettings,
+  source: &str,
+  tumblr_key: Option<&str>,
+) -> Result<Value, GalleryError> {
   // Extractors reuse their requests session for CDNs and redirects. Do not let
   // user-defined headers (including nonstandard API keys) follow those requests.
   if secrets.bearer_token.is_some() || !secrets.headers.is_empty() {
@@ -64,6 +78,11 @@ pub(super) fn configuration(
       credentials.insert("password".into(), json!(password));
     }
     config["extractor"][category] = Value::Object(credentials);
+  }
+  if site == Some(SiteId::Tumblr) {
+    if let Some(key) = tumblr_key.map(str::trim).filter(|key| !key.is_empty()) {
+      config["extractor"]["tumblr"] = json!({"api-key": key});
+    }
   }
   Ok(config)
 }
@@ -192,6 +211,39 @@ impl GalleryRunner {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn tumblr_build_key_is_scoped_and_unset_keeps_defaults() {
+    for (source, key, expected) in [
+      (
+        "https://nasa.tumblr.com/post/1",
+        Some("fixture-key"),
+        Some("fixture-key"),
+      ),
+      (
+        "https://www.tumblr.com/nasa/1",
+        Some("  fixture-key  "),
+        Some("fixture-key"),
+      ),
+      (
+        "https://tumblr.com.evil.test/post/1",
+        Some("fixture-key"),
+        None,
+      ),
+      ("https://x.com/a/status/1", Some("fixture-key"), None),
+      ("https://nasa.tumblr.com/post/1", Some(" "), None),
+      ("https://nasa.tumblr.com/post/1", None, None),
+    ] {
+      let config = configuration_with_tumblr_key(
+        &AuthSecrets::default(),
+        &NetworkSettings::default(),
+        source,
+        key,
+      )
+      .unwrap();
+      assert_eq!(config["extractor"]["tumblr"]["api-key"].as_str(), expected);
+    }
+  }
 
   #[test]
   fn credentials_never_appear_in_sidecar_arguments() {

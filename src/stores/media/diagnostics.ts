@@ -44,6 +44,23 @@ export const useMediaDiagnosticsStore = defineStore('media-diagnostics', () => {
     const currentState = stateStore.getGroupState(groupId);
     const group = groupStore.findGroupById(groupId);
     if (!group) throw new Error('Orphaned media item found during error handling.');
+    const leader = groupStore.findGroupLeader(groupId);
+    if (currentState === MediaState.fetchingList && leader?.entries && payload.id !== leader.id) {
+      if (payload.exitCode === 0 && diagnostics.value[payload.id]?.some(event => event.code === 'input_filter_skipped')) {
+        delete fatals.value[payload.id];
+      }
+      group.processed++;
+      group.errored++;
+      if (group.processed === group.total) {
+        const hasMedia = Object.values(group.items).some(item => !item.isLeader);
+        if (hasMedia) mediaStore.finalizePlaylistGroup(group);
+        else {
+          mediaStore.rejectPendingReadyGroup(groupId, payload.message);
+          stateStore.setGroupState(groupId, MediaState.error);
+        }
+      }
+      return;
+    }
     // Automatic report (Rust checks the Settings switch and sends the link shape only).
     reportFailedDownload({
       context: downloadReportContext(findLastDiagnosticByGroupId(groupId)?.code, payload.exitCode, findAttemptsByGroupId(groupId)),
@@ -55,7 +72,6 @@ export const useMediaDiagnosticsStore = defineStore('media-diagnostics', () => {
     }
     group.processed++;
     group.errored++;
-    const leader = groupStore.findGroupLeader(groupId);
     if (leader && leader.entries) {
       if (stateStore.getGroupState(groupId) === MediaState.fetchingList) {
         return;

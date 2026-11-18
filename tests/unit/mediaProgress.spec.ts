@@ -8,6 +8,7 @@ import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaStateStore, MediaState } from '../../src/stores/media/state';
 import { ProgressStage } from '../../src/tauri/types/progress';
 import { useMediaProgressStore } from '../../src/stores/media/progress';
+import { useMediaStore } from '../../src/stores/media/media';
 import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
 
 describe('media progress store', () => {
@@ -205,6 +206,7 @@ describe('media progress store', () => {
     });
 
     stateStore.setGroupState('g-fetch', MediaState.fetchingList);
+    const reject = vi.spyOn(useMediaStore(), 'rejectPendingReadyGroup');
 
     diagnosticsStore.processMediaFatalPayload({
       id: 'failed-fetch-item',
@@ -217,6 +219,28 @@ describe('media progress store', () => {
     });
 
     expect(stateStore.getGroupState('g-fetch')).toBe(MediaState.fetchingList);
+    expect(reject).not.toHaveBeenCalled();
+  });
+
+  it('finishes a playlist when its last child is skipped and retains the message', () => {
+    const groups = useMediaGroupStore();
+    const states = useMediaStateStore();
+    const diagnostics = useMediaDiagnosticsStore();
+    groups.createGroup({ id: 'last-skipped', url: 'https://youtube.com/playlist?list=1',
+      total: 2, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0,
+      items: {
+        leader: { id: 'leader', url: 'https://youtube.com/playlist?list=1', isLeader: true, entries: [], audioCodecs: [], formats: [], filesize: 0 },
+        saved: { id: 'saved', url: 'https://youtube.com/watch?v=1', audioCodecs: [], formats: [], filesize: 0 },
+      },
+    });
+    states.setGroupState('last-skipped', MediaState.fetchingList);
+    diagnostics.processMediaDiagnosticPayload({ id: 'missing', groupId: 'last-skipped', level: 'warning', code: 'input_filter_skipped', message: 'Video unavailable', raw: '', component: 'extract', timestamp: 0 });
+    diagnostics.processMediaFatalPayload({ id: 'missing', groupId: 'last-skipped', internal: false, exitCode: 0, message: 'Video unavailable', details: null, timestamp: 0 });
+    expect(states.getGroupState('last-skipped')).toBe(MediaState.configure);
+    expect(groups.findGroupById('last-skipped')?.items.saved).toBeDefined();
+    expect(diagnostics.findFatalsByGroupId('last-skipped')).toEqual([]);
+    expect(diagnostics.findDiagnosticsByGroupId('last-skipped')).toEqual([expect.objectContaining({ code: 'input_filter_skipped', message: 'Video unavailable' })]);
   });
 
   it('marks combined playlists error when every item fails', () => {

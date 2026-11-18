@@ -76,7 +76,7 @@ pub(super) fn emit_attempts(app: &AppHandle, id: &str, group_id: &str, attempts:
   );
 }
 
-pub(super) fn publish_terminal(
+pub(crate) fn publish_terminal(
   attempts: &[Attempt],
   group: &str,
   id: &str,

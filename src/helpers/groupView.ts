@@ -10,7 +10,7 @@ import { siteName } from './siteName';
  */
 
 /** Where a download is in its life; the one MediaState -> phase map every screen uses. */
-export type Phase = 'reading' | 'playlist' | 'ready' | 'downloading' | 'paused' | 'done' | 'error';
+export type Phase = 'reading' | 'playlist' | 'ready' | 'downloading' | 'paused' | 'done' | 'error' | 'cancelled';
 
 const phaseByState: Record<MediaState, Phase> = {
   [MediaState.fetching]: 'reading',
@@ -23,6 +23,7 @@ const phaseByState: Record<MediaState, Phase> = {
   [MediaState.pausedList]: 'paused',
   [MediaState.done]: 'done',
   [MediaState.error]: 'error',
+  [MediaState.cancelled]: 'cancelled',
 };
 
 export const phaseOf = (state: MediaState): Phase => phaseByState[state];

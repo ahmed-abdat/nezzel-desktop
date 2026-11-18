@@ -954,6 +954,33 @@
   },
   "errors": {
     "runner": {
+      "vimeoSignInRequired": {
+        "shortMessage": "Vimeo exige une connexion",
+        "message": "Vimeo exige désormais une connexion à vimeo.com dans votre navigateur.",
+        "action": "Connectez-vous à Vimeo dans votre navigateur"
+      },
+      "listingPartial": {
+        "shortMessage": "Le chargement de la liste s’est arrêté",
+        "message": "Voici les éléments trouvés avant que le site ne cesse de répondre.",
+        "action": "Ouvrez la page pour voir les autres éléments"
+      },
+      "galleryItemsSkipped": {
+        "shortMessage": "Certains éléments n’ont pas pu être enregistrés",
+        "message": "Les autres éléments ont été enregistrés. Certains n’ont pas pu être téléchargés.",
+        "action": "Ouvrez la publication pour vérifier les éléments manquants"
+      },
+      "podcastFeed": {
+        "shortMessage": "Ceci est un flux de podcast",
+        "message": "Ceci est un flux de podcast. Ouvrez le lien d’un épisode pour enregistrer son audio.",
+        "action": "Copiez le lien d’un épisode"
+      },
+      "legalRestriction451": {
+        "shortMessage": "Indisponible pour des raisons légales",
+        "message": "Ce contenu est indisponible dans votre pays pour des raisons légales.",
+        "action": "Ouvrez la page sur le site pour en savoir plus"
+      },
+      "diskSpaceUnavailable": {"shortMessage": "Impossible de vérifier l’espace libre.", "message": "Impossible de vérifier l’espace libre.", "action": "Choisissez un dossier accessible."},
+      "downloadStalled": {"shortMessage": "Le téléchargement ne progresse plus.", "message": "Le téléchargement ne progresse plus.", "action": "Réessayez lorsque la connexion est stable."},
       "networkTimeout": {
         "shortMessage": "Le site a mis trop de temps à répondre",
         "message": "Le site a mis trop de temps à répondre. Réessayez",
@@ -1004,6 +1031,26 @@
         "message": "Le navigateur ou le profil choisi n’est plus disponible",
         "action": "Choisissez un profil de navigateur installé dans les réglages de connexion"
       },
+      "playlistEmpty": {
+        "shortMessage": "Cette page n’a aucune vidéo à enregistrer",
+        "message": "Cette page n’a aucune vidéo à enregistrer. Ouvrez-la sur le site ou copiez le lien d’une vidéo.",
+        "action": "Copiez le lien d’une vidéo"
+      },
+      "profileNotSupported": {
+        "shortMessage": "Les liens de profil ne sont pas pris en charge",
+        "message": "Les liens de profil ne sont pas pris en charge. Copiez le lien d’une publication ou d’un reel.",
+        "action": "Copiez le lien d’une publication ou d’un reel"
+      },
+      "telegramAppOnly": {
+        "shortMessage": "Disponible dans Telegram uniquement",
+        "message": "Cette vidéo ne peut être lue que dans l’application Telegram. Elle n’est pas disponible dans l’aperçu web.",
+        "action": "Ouvrir dans Telegram"
+      },
+      "storyExpired": {
+        "shortMessage": "Cette story n’est plus disponible",
+        "message": "Cette story a expiré ou n’est pas accessible à votre compte",
+        "action": "Ouvrez la story sur Instagram pour vérifier"
+      },
       "accountAccessDenied": {
         "shortMessage": "Votre compte n’a peut-être pas accès",
         "message": "Le site a refusé après l’envoi de votre connexion. Votre compte n’a peut-être pas accès à ce contenu",
@@ -1048,6 +1095,11 @@
         "shortMessage": "Indisponible dans votre pays",
         "message": "Ce contenu n’est pas disponible dans votre région",
         "action": "Nezzel ne peut rien y changer. Essayez un lien d'une autre source"
+      },
+      "redditNetworkBlocked": {
+        "shortMessage": "Reddit a bloqué cette requête",
+        "message": "La sécurité réseau de Reddit a bloqué ce téléchargement. Se reconnecter ne lèvera pas ce blocage.",
+        "action": "Ouvrir la publication sur Reddit"
       },
       "accessForbidden403": {
         "shortMessage": "Le site a refusé ce téléchargement",
@@ -1095,9 +1147,9 @@
         "action": "Mettez à jour les outils de téléchargement dans les Réglages, puis réessayez"
       },
       "drmProtected": {
-        "shortMessage": "Cette vidéo est protégée contre la copie",
-        "message": "Le site protège cette vidéo contre la copie, Nezzel ne peut donc pas l'enregistrer",
-        "action": "Nezzel ne peut pas enregistrer les vidéos protégées. Regardez-la sur le site"
+        "shortMessage": "Ce contenu est protégé par le site et ne peut pas être enregistré",
+        "message": "Ce contenu est protégé par le site et ne peut pas être enregistré.",
+        "action": "Vous pouvez la regarder sur le site"
       },
       "embedOnly": {
         "shortMessage": "Cette vidéo ne se lit que dans une autre page",
@@ -1113,6 +1165,21 @@
         "shortMessage": "Le site prépare encore ce média",
         "message": "Le site prépare encore ce média. Réessayez plus tard.",
         "action": "Réessayez plus tard"
+      },
+      "notLive": {
+        "shortMessage": "Ce compte ne diffuse pas en direct actuellement",
+        "message": "Ce compte ne diffuse pas en direct actuellement. Réessayez au début d’une diffusion.",
+        "action": "Réessayer pendant une diffusion en direct"
+      },
+      "liveNow": {
+        "shortMessage": "C’est un direct",
+        "message": "C’est un direct. Nezzel pourra l’enregistrer une fois la diffusion terminée.",
+        "action": "Vous pourrez l’enregistrer après la fin du direct"
+      },
+      "likeeUnavailable": {
+        "shortMessage": "Impossible d’enregistrer cette vidéo Likee depuis son lien",
+        "message": "Cette vidéo s’ouvre désormais uniquement dans l’application Likee et ne peut pas être enregistrée à partir du lien.",
+        "action": "Ouvrir la vidéo dans Likee"
       },
       "mediaUnavailable": {
         "shortMessage": "Le site ne propose pas ce média pour l'instant",
@@ -1500,6 +1567,7 @@
       "clearFailed": "Retirer les échecs"
     },
     "row": {
+      "listingCapped": "Affichage des 100 premiers éléments",
       "downloadVideoInstead": "Télécharger la vidéo à la place",
       "retryWithBest": "Réessayer avec la meilleure qualité",
       "reading": "Lecture du lien…",
@@ -1518,6 +1586,9 @@
       "details": "Détails",
       "more": "Plus d'actions",
       "openPage": "Ouvrir la page",
+      "wantLiveDownload": "Je souhaite cette fonctionnalité",
+      "liveRequestNoted": "Merci, c’est noté",
+      "openVimeo": "Ouvrir dans Vimeo",
       "openBrowser": "Ouvrir dans le navigateur",
       "perDownload": "Réglages de ce téléchargement",
       "saved": "Enregistré",
@@ -1556,6 +1627,8 @@
       "stillReading": "Lecture en cours… {s} s",
       "readingStuck": "Ce site met du temps à répondre. Réessayez ou retirez-le",
       "cancelled": "Téléchargement annulé",
+      "cancelledState": "Annulé",
+      "alreadySaved": "Déjà enregistré",
       "alreadyDownloaded": "Déjà téléchargé",
       "resuming": "Reprise…",
       "cancel": "Annuler le téléchargement"
@@ -1577,6 +1650,7 @@
       "notice": "Nezzel a utilisé votre session {browser} pour {host}",
       "noticeOwn": "Nezzel a utilisé sa session enregistrée pour {host}",
       "privacy": "Les sessions du navigateur sont activées par défaut. Nezzel utilise uniquement les cookies de ce site pour le téléchargement. Les fichiers temporaires protégés sont supprimés après utilisation ; les cookies ne sont jamais envoyés à Nezzel, aux rapports d’erreur ou aux statistiques. Désactivez cette option dans Paramètres → Connexions.",
+      "sessionExpired": "Votre session a expiré. Reconnectez-vous dans {browser}, puis réessayez",
       "embeddedRemedy": "Connectez-vous à ce site dans Firefox, ou ajoutez un fichier cookies.txt dans les paramètres de connexion, puis réessayez.",
       "keychain": "macOS peut demander d’autoriser Nezzel à accéder au trousseau du navigateur",
       "tryAnother": "Essayer un autre navigateur",
@@ -1893,6 +1967,7 @@
     }
   },
   "capture": {
+    "automaticLogin": "La connexion de votre navigateur sera utilisée automatiquement",
     "noFormats": "Ouvrez les options pour examiner ce lien",
     "views": "{count} vues",
     "photos": "1 photo | {n} photos",
@@ -2249,5 +2324,14 @@
     "offline": "Vous êtes hors ligne. Connectez-vous à Internet, puis réessayez de réparer les outils.",
     "unavailable": "Les téléchargements ne fonctionneront qu’après la réparation des outils",
     "action": "Réparer les outils de téléchargement"
+  },
+  "reliability": {
+    "waitingNetwork": "En attente de connexion…",
+    "siteBusy": "Le site est occupé, nouvel essai dans {n} s",
+    "keepAwake": "Garder l’ordinateur éveillé",
+    "keepAwakeHint": "Empêcher la veille pendant les téléchargements.",
+    "resume": "Reprendre {n} téléchargement | Reprendre {n} téléchargements",
+    "dismiss": "Ignorer",
+    "changeFolder": "Changer de dossier"
   }
 }

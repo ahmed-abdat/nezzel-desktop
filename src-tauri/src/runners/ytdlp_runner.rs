@@ -345,6 +345,10 @@ impl<'a> YtdlpRunner<'a> {
     info_timeout(&self.args)
   }
 
+  pub(crate) fn fetch_info_timeout(&self, source: &str) -> Duration {
+    fetch_info_timeout(&self.args, source)
+  }
+
   /// No deadline of its own (download-time probes keep their old behaviour); inside a fetch row the
   /// row budget still clamps it via `remaining_budget`. Fetch stages call `output_with_timeout`.
   pub async fn output(self, group_id: &str) -> Result<Option<YtdlpOutput>, String> {
@@ -356,6 +360,9 @@ impl<'a> YtdlpRunner<'a> {
     group_id: &str,
     timeout: Duration,
   ) -> Result<Option<YtdlpOutput>, String> {
+    let listing = self.args.iter().any(|arg| arg == "-j")
+      && self.args.iter().any(|arg| arg == "--flat-playlist");
+    let source = self.args.last().cloned().unwrap_or_default();
     let mut cancel = crate::scheduling::group_state::subscribe_group(group_id);
     if !*cancel.borrow() {
       return Ok(None);
@@ -370,7 +377,11 @@ impl<'a> YtdlpRunner<'a> {
       Err(Interrupted::Cancelled) => return Ok(None),
       Err(Interrupted::Timeout) => return Err(FETCH_TIMEOUT.into()),
     };
-    collect_output(rx, child, cancel, deadline).await
+    if listing {
+      collect_listing_output(rx, child, cancel, deadline, &source).await
+    } else {
+      collect_output(rx, child, cancel, deadline).await
+    }
   }
 
   pub(super) fn with_cookie_access(
@@ -579,6 +590,71 @@ fn log_run_summary(args: &[String]) {
 // Large but finite so `Deadline::now() + timeout` cannot overflow.
 const UNBOUNDED_OUTPUT: Duration = Duration::from_secs(24 * 60 * 60);
 
+fn fetch_info_timeout(args: &[String], source: &str) -> Duration {
+  let full = info_timeout(args);
+  // single_post_url describes carousel folding, not all single videos (notably
+  // YouTube/Vimeo). Only positively identified collections get the shorter budget.
+  if args.iter().any(|arg| arg == "--no-playlist") || crate::parsers::post::single_post_url(source)
+  {
+    return full;
+  }
+  let Ok(url) = reqwest::Url::parse(source) else {
+    return full;
+  };
+  let host = url
+    .host_str()
+    .unwrap_or_default()
+    .trim_start_matches("www.");
+  let parts: Vec<_> = url
+    .path()
+    .split('/')
+    .filter(|part| !part.is_empty())
+    .collect();
+  let listing = match host {
+    "youtube.com" | "m.youtube.com" | "music.youtube.com" => {
+      url
+        .query_pairs()
+        .any(|(key, value)| key == "list" && !value.is_empty())
+        || matches!(
+          parts.as_slice(),
+          ["playlist" | "feed" | "results", ..] | ["channel" | "c" | "user", _, ..]
+        )
+        || parts.first().is_some_and(|part| part.starts_with('@'))
+    }
+    "mixcloud.com" => matches!(
+      parts.as_slice(),
+      [_] | [_, "uploads" | "favorites" | "playlists", ..]
+    ),
+    "soundcloud.com" => matches!(
+      parts.as_slice(),
+      [_] | [_, "sets" | "likes" | "reposts", ..]
+    ),
+    "vimeo.com" => {
+      matches!(
+        parts.as_slice(),
+        ["album" | "showcase" | "channels", _] | ["groups", _, "videos"]
+      ) || matches!(parts.as_slice(), [name] if !name.bytes().all(|b| b.is_ascii_digit()))
+    }
+    "x.com" | "twitter.com" => matches!(parts.as_slice(), [_] | [_, "media"]),
+    "bsky.app" => matches!(parts.as_slice(), ["profile", _] | ["profile", _, "media"]),
+    "instagram.com" => matches!(parts.as_slice(), [_] | [_, "reels" | "tagged"]),
+    "pinterest.com" => matches!(parts.as_slice(), [board, _] if *board != "pin"),
+    "imgur.com" => matches!(parts.as_slice(), ["t" | "tag", _, ..]),
+    "flickr.com" => matches!(
+      parts.as_slice(),
+      ["photos", _] | ["photos", _, "albums", ..]
+    ),
+    "tumblr.com" => matches!(parts.as_slice(), [_]),
+    host if host.ends_with(".tumblr.com") => parts.is_empty(),
+    _ => false,
+  };
+  if listing {
+    full.min(Duration::from_secs(30))
+  } else {
+    full
+  }
+}
+
 fn info_timeout(args: &[String]) -> Duration {
   let playlist = !args.iter().any(|arg| arg == "--no-playlist")
     && (args.iter().any(|arg| arg == "--yes-playlist")
@@ -630,6 +706,8 @@ async fn collect_output(
             stdout.push(b'\n');
           }
           Some(YtdlpCommandEvent::Stderr(line)) => {
+            #[cfg(feature = "link-matrix")]
+            crate::link_matrix::observe_gallery_stderr(&line);
             stderr.extend(line);
             stderr.push(b'\n');
           }
@@ -656,6 +734,101 @@ async fn collect_output(
     Err(Interrupted::Cancelled) => Ok(None),
     Err(Interrupted::Timeout) => Err(FETCH_TIMEOUT.into()),
   }
+}
+
+async fn collect_listing_output(
+  mut rx: UnboundedReceiver<YtdlpCommandEvent>,
+  child: YtdlpChild,
+  mut cancel: watch::Receiver<bool>,
+  deadline: Deadline,
+  source: &str,
+) -> Result<Option<YtdlpOutput>, String> {
+  let has_session = child
+    ._cookies
+    .as_ref()
+    .is_some_and(|cookies| cookies.has_session);
+  let mut guard = OutputChildGuard(Some(child));
+  let mut entries = Vec::new();
+  let mut stderr = Vec::new();
+  let mut size = 0;
+  let mut partial = false;
+  let mut code = loop {
+    match wait_until(rx.recv(), deadline, &mut cancel).await {
+      Ok(Some(YtdlpCommandEvent::Stdout(line))) => {
+        size += line.len();
+        // One long VOD's -j line can alone exceed 11 MB; 100 entries stay bounded.
+        if size > 64 * 1024 * 1024 {
+          return Err("listing output too large".into());
+        }
+        if line.iter().all(u8::is_ascii_whitespace) {
+          continue;
+        }
+        let entry: serde_json::Value =
+          serde_json::from_slice(&line).map_err(|_| "invalid listing output")?;
+        entries.push(entry);
+        if entries.len() >= 100 {
+          break 0;
+        }
+      }
+      Ok(Some(YtdlpCommandEvent::Stderr(line))) => {
+        #[cfg(feature = "link-matrix")]
+        crate::link_matrix::observe_gallery_stderr(&line);
+        stderr.extend_from_slice(&line);
+        stderr.push(b'\n');
+        if stderr.len() > 128 * 1024 {
+          stderr.drain(..stderr.len() - 128 * 1024);
+        }
+      }
+      Ok(Some(YtdlpCommandEvent::Terminated(term))) => {
+        guard.0 = None;
+        break term.code.unwrap_or(1);
+      }
+      Ok(Some(YtdlpCommandEvent::Error(error))) => return Err(error),
+      Ok(None) => return Err("yt-dlp event stream ended unexpectedly".into()),
+      Err(Interrupted::Cancelled) => return Ok(None),
+      Err(Interrupted::Timeout) if entries.is_empty() => return Err(FETCH_TIMEOUT.into()),
+      Err(Interrupted::Timeout) => {
+        partial = true;
+        break 0;
+      }
+    }
+  };
+  drop(guard);
+  if code != 0
+    && entries
+      .iter()
+      .any(|entry| !entry["playlist_index"].is_null() || !entry["playlist_id"].is_null())
+  {
+    partial = true;
+    code = 0;
+  }
+  let value = if entries.len() == 1
+    && entries[0]["playlist_index"].is_null()
+    && entries[0]["playlist_id"].is_null()
+  {
+    entries.remove(0)
+  } else {
+    let first = entries.first();
+    serde_json::json!({
+      "_type": "playlist",
+      "id": first.and_then(|e| e.get("playlist_id")),
+      "title": first.and_then(|e| e.get("playlist_title")),
+      "playlist_count": first.and_then(|e| e.get("playlist_count")),
+      "uploader": first.and_then(|e| e.get("playlist_uploader")),
+      "uploader_id": first.and_then(|e| e.get("playlist_uploader_id")),
+      "channel": first.and_then(|e| e.get("playlist_channel")),
+      "channel_id": first.and_then(|e| e.get("playlist_channel_id")),
+      "webpage_url": source,
+      "entries": entries,
+      "_nezzel_listing_partial": partial,
+    })
+  };
+  Ok(Some(YtdlpOutput {
+    has_session,
+    code,
+    stdout: serde_json::to_vec(&value).map_err(|e| e.to_string())?,
+    stderr,
+  }))
 }
 
 impl YtdlpChild {
@@ -1097,6 +1270,153 @@ fn insert_before_url_separator(args: &mut Vec<String>, extra: &[String]) {
 
 #[cfg(test)]
 mod tests {
+  #[tokio::test(start_paused = true)]
+  #[cfg(unix)]
+  async fn recorded_json_lines_cap_or_timeout_reaps_the_listing_process() {
+    use super::*;
+    for count in [0, 3, 150] {
+      let mut command = Command::new("/bin/sh");
+      command
+        .args(["-c", "trap '' TERM; printf ready; read done"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+      configure_command(&mut command).unwrap();
+      let mut raw = command.spawn().unwrap();
+      let mut ready = [0; 5];
+      raw.stdout.take().unwrap().read_exact(&mut ready).unwrap();
+      let child = YtdlpChild {
+        platform: platform_process_from_child(&raw).unwrap(),
+        _cookies: None,
+      };
+      let (tx, rx) = unbounded_channel();
+      let original: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../parsers/fixtures/ytdlp-recorded-vimeo.json"
+      ))
+      .unwrap();
+      for index in 0..count {
+        let mut record = original.clone();
+        record["playlist_index"] = serde_json::json!(index + 1);
+        record["playlist_id"] = serde_json::json!("staffpicks");
+        record["playlist_count"] = serde_json::json!(150);
+        record["playlist_uploader"] = serde_json::json!("Vimeo Staff");
+        record["playlist_channel"] = serde_json::json!("Staff Picks");
+        tx.send(YtdlpCommandEvent::Stdout(
+          serde_json::to_vec(&record).unwrap(),
+        ))
+        .unwrap();
+      }
+      let (_cancel_tx, cancel) = watch::channel(true);
+      let result = collect_listing_output(
+        rx,
+        child,
+        cancel,
+        Deadline::now() + Duration::from_secs(30),
+        "https://vimeo.com/channels/staffpicks",
+      )
+      .await;
+      assert!(!raw.wait().unwrap().success());
+      if count == 0 {
+        assert_eq!(result.unwrap_err(), FETCH_TIMEOUT);
+        continue;
+      }
+      let output = result.unwrap().unwrap();
+      let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+      assert_eq!(value["_nezzel_listing_partial"], count < 100);
+      assert_eq!(value["playlist_count"], 150);
+      assert_eq!(value["uploader"], "Vimeo Staff");
+      assert_eq!(value["channel"], "Staff Picks");
+      let crate::models::ParsedMedia::Playlist(playlist) =
+        crate::parsers::ytdlp_info::parse_ytdlp_info_for_url(
+          std::str::from_utf8(&output.stdout).unwrap(),
+          "row".into(),
+          Some("https://vimeo.com/channels/staffpicks"),
+        )
+        .unwrap()
+      else {
+        panic!("playlist")
+      };
+      assert_eq!(playlist.entries.len(), count.min(100));
+      assert_eq!(playlist.playlist_count, Some(150));
+      assert_eq!(playlist.uploader.as_deref(), Some("Vimeo Staff"));
+      assert_eq!(playlist.entries[0].video_url, original["webpage_url"]);
+    }
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn listing_accepts_one_huge_json_line() {
+    use super::*;
+    let (tx, rx) = unbounded_channel();
+    let mut record: serde_json::Value = serde_json::from_slice(include_bytes!(
+      "../parsers/fixtures/ytdlp-recorded-vimeo.json"
+    ))
+    .unwrap();
+    record["formats_blob"] = serde_json::json!("x".repeat(10 * 1024 * 1024));
+    tx.send(YtdlpCommandEvent::Stdout(
+      serde_json::to_vec(&record).unwrap(),
+    ))
+    .unwrap();
+    tx.send(YtdlpCommandEvent::Terminated(TerminatedPayload {
+      code: Some(0),
+    }))
+    .unwrap();
+    let (_tx, cancel) = watch::channel(true);
+    let child = YtdlpChild {
+      platform: PlatformProcess::detached(),
+      _cookies: None,
+    };
+    let result = collect_listing_output(
+      rx,
+      child,
+      cancel,
+      Deadline::now() + Duration::from_secs(30),
+      "https://www.youtube.com/watch?v=MRg4uIpJ3xE",
+    )
+    .await;
+    assert!(result.unwrap().is_some());
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn recorded_single_fetch_keeps_its_full_metadata_budget() {
+    use super::*;
+    for (source, timed_out) in [
+      ("https://www.youtube.com/watch?v=BaW_jenozKc", false),
+      ("https://youtu.be/BaW_jenozKc", false),
+      ("https://player.vimeo.com/video/76979871", false),
+      ("https://soundcloud.com/nasa/launch", false),
+      ("https://unknown.example/watch/item", false),
+      ("https://www.instagram.com/p/DPzn27ejGSa/", false),
+      ("https://www.mixcloud.com/NASA/", true),
+      ("https://www.youtube.com/playlist?list=PLtest", true),
+    ] {
+      let args = ["-j", "--flat-playlist", "--lazy-playlist", source].map(String::from);
+      let (tx, rx) = unbounded_channel();
+      let sender = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(45)).await;
+        let _ = tx.send(YtdlpCommandEvent::Stdout(
+          include_bytes!("../parsers/fixtures/ytdlp-recorded-vimeo.json").to_vec(),
+        ));
+        let _ = tx.send(YtdlpCommandEvent::Terminated(TerminatedPayload {
+          code: Some(0),
+        }));
+      });
+      let (_tx, cancel) = watch::channel(true);
+      let child = YtdlpChild {
+        platform: PlatformProcess::detached(),
+        _cookies: None,
+      };
+      let result = collect_listing_output(
+        rx,
+        child,
+        cancel,
+        Deadline::now() + fetch_info_timeout(&args, source),
+        source,
+      )
+      .await;
+      sender.abort();
+      assert_eq!(result.is_err(), timed_out, "{source}: {result:?}");
+    }
+  }
+
   #[test]
   fn cookie_options_go_before_the_url_separator() {
     let extra = ["--cookies".to_string(), "/tmp/jar.txt".to_string()];

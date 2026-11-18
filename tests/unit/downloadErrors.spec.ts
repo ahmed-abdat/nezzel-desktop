@@ -1,6 +1,6 @@
 import { flushPromises, mount, shallowMount } from '@vue/test-utils';
 import { createMemoryHistory, createRouter } from 'vue-router';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import MediaDownloadOptions from '../../src/components/media-card/MediaDownloadOptions.vue';
 import { SelectField } from '../../src/components/ui/select';
 import { TrackType } from '../../src/tauri/types/media';
@@ -15,6 +15,72 @@ import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
 import { useLoginStore } from '../../src/stores/login';
 
 describe('download failure presentation', () => {
+  it.each(['en', 'ar', 'fr'] as const)('acknowledges live requests immediately and opens protected pages in %s', async (locale) => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const count = vi.fn(() => new Promise<void>(() => {}));
+    const open = vi.fn();
+    installTauriMock({ 'usage_count': count, 'plugin:opener|open_url': open });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }, { path: '/settings/logins', name: 'settings.logins', component: { template: '<div />' } }] });
+    await router.push('/');
+    try {
+      for (const [id, code, url, action] of [
+        ['live', 'liveNow', 'https://example.com/live', 'wantLiveDownload'],
+        ['vimeo-login', 'signInRequired', 'https://player.vimeo.com/video/123', 'openVimeo'],
+        ['vimeo', 'drmProtected', 'https://player.vimeo.com/video/123', 'openVimeo'],
+        ['other', 'drmProtected', 'https://example.com/video', 'openBrowser'],
+        ['lookalike', 'drmProtected', 'https://vimeo.com.example.org/video', 'openBrowser'],
+      ]) {
+        const groups = useMediaGroupStore();
+        groups.createGroup({ id, url, title: 'Video', total: 1, processed: 0, errored: 0, isCombined: false, audioCodecs: [], formats: [], filesize: 0,
+          items: { [id]: { id, isLeader: true, url, audioCodecs: [], formats: [], filesize: 0 } } });
+        useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id, groupId: id, code, level: 'error', component: null, message: '', raw: '', timestamp: 1 });
+        useMediaStateStore().setGroupState(id, MediaState.error);
+        const row = mount(DownloadRow, { props: { group: groups.findGroupById(id)! }, global: { plugins: [router, i18n] } });
+        try {
+          const t = i18n.global.t;
+          if (code !== 'signInRequired') expect(row.findAll('button').some(b => b.text() === t('downloads.row.retry'))).toBe(false);
+          const key = `downloads.row.${action}`;
+          expect(i18n.global.te(key, locale)).toBe(true);
+          const button = row.findAll('button').find(b => b.text() === t(key));
+          expect(button).toBeDefined();
+          await button!.trigger('click');
+          if (code === 'liveNow') {
+            expect(button!.text()).toBe(t('downloads.row.liveRequestNoted'));
+            expect(button!.attributes('disabled')).toBeDefined();
+            expect(button!.find('svg').exists()).toBe(true);
+            await button!.trigger('click');
+            expect(count).toHaveBeenCalledExactlyOnceWith('usage_count', { key: 'want.live_download' });
+          } else {
+            expect(row.get('[data-testid="row-error"]').text()).toContain(t(code === 'signInRequired' ? 'errors.runner.vimeoSignInRequired.message' : 'errors.runner.drmProtected.shortMessage'));
+            expect(open).toHaveBeenLastCalledWith('plugin:opener|open_url', expect.objectContaining({ url }));
+          }
+        } finally { row.unmount(); }
+      }
+    } finally { i18n.global.locale.value = previous; }
+  });
+
+  it.each(['en', 'ar', 'fr'] as const)('keeps partial-success and listing notices visible in %s', async (locale) => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    try {
+      for (const [code, state] of [['galleryItemsSkipped', MediaState.done], ['listingPartial', MediaState.configure]] as const) {
+        const id = `${locale}-${code}`;
+        const groups = useMediaGroupStore();
+        groups.createGroup({ id, url: 'https://www.pinterest.com/nasa/board/', title: 'Board', total: 1, processed: 1, errored: 0, isCombined: false, audioCodecs: [], formats: [], filesize: 0,
+          items: { [id]: { id, isLeader: true, url: 'https://www.pinterest.com/nasa/board/', audioCodecs: [], formats: [], filesize: 0 } } });
+        useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id, groupId: id, code, level: 'warning', component: 'gallery-dl', message: '', raw: '', timestamp: 1 });
+        useMediaStateStore().setGroupState(id, state);
+        const row = mount(DownloadRow, { props: { group: groups.findGroupById(id)! }, global: { plugins: [router, i18n] } });
+        try {
+          expect(row.get('[role="status"]').text()).toBe(i18n.global.t(`errors.runner.${code}.message`));
+        } finally { row.unmount(); }
+      }
+    } finally { i18n.global.locale.value = previous; }
+  });
+
   it.each(['en', 'ar', 'fr'] as const)('shows the cookie remedy inside a terminal login card in %s', async (locale) => {
     const previous = i18n.global.locale.value;
     i18n.global.locale.value = locale;

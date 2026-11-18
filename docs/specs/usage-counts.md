@@ -25,7 +25,7 @@ fail, without an ID, links, titles, file names, paths or account names.
 - `keys.rs`: the one allow-list (fixed set + patterned `site:`/`sitein:`/`sitefail:`/`opt:`/`failcode:`). Unknown keys are
   dropped, never an error. Domain = `diagnostics::link` registrable-domain logic (shared helper, read-only
   reuse), lowercase, regex `[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+`, ≤ 64 chars, numeric last label (IP) dropped.
-- `store.rs`: `usage.json` in the app data dir: `{since, usage_day, counts, today:{day, per_key}, installed_at,
+- `store.rs`: `usage.json` in the app data dir: `{since, usage_day, live_request_day, counts, today:{day, per_key}, installed_at,
   last_version, ended_jobs}`. Atomic write (tmp + rename). Never logged.
 - Caps: ≤ 50 distinct keys per open prefix between sends (Android's MAX_SITES; extra `site:` → `site.other`,
   extra `sitein:`/`sitefail:`/`opt:` dropped). **Desktop-only client limit:** each key counts at most 500 per UTC
@@ -39,12 +39,12 @@ fail, without an ID, links, titles, file names, paths or account names.
   No separate network check (Android's WorkManager "network required"): an offline attempt is the equivalent:
   it fails, keeps the counters and is retried on the next tick. On any failure: keep; counters older than 7 days (`since`) are dropped before a send. Transport is a trait
   (`UsagePost`) so tests use a mock; no network in tests.
-- Switch off: clear the counters (keep `usage_day`, `installed_at`, `last_version`), bump a generation so an
+- Switch off: clear the counters (keep `usage_day`, `live_request_day`, `installed_at`, `last_version`), bump a generation so an
   in-flight send can't write back, count nothing until on again.
 - Never sends: debug builds (`cfg!(debug_assertions)`), unit tests (mock transport only), e2e (front-end only,
   Tauri mocked), any build without `NEZZEL_USAGE_URL`.
 - Front end: one command `usage_count(key)` for UI-only events: `paste`, `pause`, `pause_all`, `retry`,
-  `report.opened` (Rust accepts only these). `media_download` gets an `origin` (tap/batch/resume) from the store. Download, funnel, site, update and engine keys are counted in Rust where the event happens.
+  `report.opened`, `funnel.batch`, `want.live_download` (Rust accepts only these). `media_download` gets an `origin` (tap/batch/resume) from the store. Download, funnel, site, update and engine keys are counted in Rust where the event happens.
 
 ## 3. Keys (A = same key as Android, D = desktop-only, new on the server)
 | Key | Where counted |
@@ -55,6 +55,7 @@ fail, without an ID, links, titles, file names, paths or account names.
 | `update.installed` (A) | first start with `last_version` ≠ current version |
 | `update.offered/tapped/ready` (A), `update.failed.network/verify/install` (A) | updater commands (`updater_check/download/install`) |
 | `engine.update.ok/failed` (A), `engine.fresh.d0-7/d8-30/d31up/bundled` (A, once-key) | `binaries_manager.rs` |
+| `want.live_download` (D) | live-stream row request; at most once per device per UTC day, persisted as `live_request_day` in Rust `usage.json`; survives sends, restarts and switch toggles. Off still shows thanks but counts nothing. Only the fixed key is sent, never link/title/ID. |
 | `paste` (A) | link pasted/typed into the input |
 | `clip.shown`, `clip.accepted` (A) | copied-link card shown (clipboard watcher) / Download or Options on it (`capture_action`) |
 | `funnel.link` (A) | a link received (any source) |

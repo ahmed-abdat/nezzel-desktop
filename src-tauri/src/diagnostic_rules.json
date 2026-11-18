@@ -1,6 +1,14 @@
 {
   "rules": [
     {
+      "code": "legalRestriction451",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "HTTP Error 451" },
+        { "kind": "substr", "value": "Unavailable For Legal Reasons" }
+      ]
+    },
+    {
       "code": "diskFull",
       "appliesTo": "error",
       "patterns": [
@@ -24,6 +32,8 @@
       "appliesTo": "error",
       "patterns": [
         { "kind": "substr", "value": "Unable to extract video ID" },
+        { "kind": "substr", "value": "BiliIntl said: Unknown error" },
+        { "kind": "substr", "value": "Failed to parse JSON" },
         { "kind": "substr", "value": "Unable to extract uploader id" },
         { "kind": "substr", "value": "Unable to extract info section" },
         { "kind": "substr", "value": "Instagram sent an empty media response" },
@@ -32,6 +42,15 @@
         { "kind": "substr", "value": "TikTok API keeps sending the same page" },
         { "kind": "substr", "value": "No working app info is available" },
         { "kind": "substr", "value": "Unable to extract secondary user ID" }
+      ]
+    },
+    {
+      "code": "signInRequired",
+      "component": "instagram:story",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "This content is unreachable" },
+        { "kind": "substr", "value": "You need to log in to access this content" }
       ]
     },
     {
@@ -135,6 +154,23 @@
     },
     {
       "code": "signInRequired",
+      "component": "youtube",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)(?:private video|this video is private).*\\bsign in\\b" }
+      ]
+    },
+    {
+      "code": "videoNotFoundOrPrivate",
+      "component": "youtube",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "This video is private" },
+        { "kind": "substr", "value": "Private video" }
+      ]
+    },
+    {
+      "code": "signInRequired",
       "appliesTo": "error",
       "patterns": [
         { "kind": "substr", "value": "Sign in to confirm your age" },
@@ -207,7 +243,8 @@
       "appliesTo": "error",
       "patterns": [
         { "kind": "substr", "value": "HTTP Error 404" },
-        { "kind": "substr", "value": "404: Not Found" }
+        { "kind": "substr", "value": "404: Not Found" },
+        { "kind": "substr", "value": "'404 Not Found' for" }
       ]
     },
     {
@@ -224,7 +261,17 @@
       "code": "networkTimeout",
       "appliesTo": "error",
       "patterns": [
-        { "kind": "substr", "value": "timed out" }
+        { "kind": "substr", "value": "timed out" },
+        { "kind": "regex", "value": "ffmpeg exited with code (?:196|202|251)(?:$|[^0-9])" },
+        { "kind": "substr", "value": "RemoteDisconnected" },
+        { "kind": "substr", "value": "Remote end closed connection" },
+        { "kind": "substr", "value": "Connection reset by peer" },
+        { "kind": "substr", "value": "Connection aborted" },
+        { "kind": "substr", "value": "IncompleteRead" },
+        { "kind": "substr", "value": "curl: (35) " },
+        { "kind": "substr", "value": "curl: (52) " },
+        { "kind": "substr", "value": "curl: (55) " },
+        { "kind": "substr", "value": "curl: (56) " }
       ]
     },
     {
@@ -232,6 +279,7 @@
       "appliesTo": "error",
       "patterns": [
         { "kind": "substr", "value": "HTTP Error 429" },
+        { "kind": "substr", "value": "Request is blocked by server (412)" },
         { "kind": "substr", "value": "Too many requests" },
         { "kind": "substr", "value": "rate limit" },
         { "kind": "substr", "value": "rate-limit" }
@@ -259,7 +307,7 @@
       "patterns": [{ "kind": "substr", "value": "Unable to extract data" }]
     },
     {
-      "code": "unableToExtractIdOrInfo",
+      "code": "likeeUnavailable",
       "component": "likee",
       "appliesTo": "error",
       "patterns": [{ "kind": "substr", "value": "Unable to extract video info" }]
@@ -273,11 +321,23 @@
       ]
     },
     {
+      "code": "notLive",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "not currently live" },
+        { "kind": "substr", "value": "channel is offline" },
+        { "kind": "substr", "value": "channel is not live" },
+        { "kind": "substr", "value": "user is offline" }
+      ]
+    },
+    {
       "code": "drmProtected",
       "appliesTo": "error",
       "patterns": [
+        { "kind": "substr", "value": "known to use DRM protection" },
         { "kind": "substr", "value": "is DRM protected" },
         { "kind": "substr", "value": "This video is DRM protected" },
+        { "kind": "substr", "value": "protected by DRM" },
         { "kind": "substr", "value": "Unable to open key file skd:" }
       ]
     },
@@ -309,6 +369,7 @@
       "appliesTo": "error",
       "patterns": [
         { "kind": "substr", "value": "Unsupported URL" },
+        { "kind": "substr", "value": "This website is no longer supported" },
         { "kind": "substr", "value": "No suitable extractor" }
       ]
     },
@@ -336,7 +397,10 @@
         { "kind": "substr", "value": "connection refused" },
         { "kind": "substr", "value": "name or service not known" },
         { "kind": "substr", "value": "nodename nor servname" },
-        { "kind": "substr", "value": "temporary failure in name resolution" }
+        { "kind": "substr", "value": "temporary failure in name resolution" },
+        { "kind": "substr", "value": "Could not resolve host" },
+        { "kind": "substr", "value": "Could not contact DNS servers" },
+        { "kind": "substr", "value": "curl: (7) " }
       ]
     },
     {
@@ -440,7 +504,7 @@
       "code": "livestreamNotStarted",
       "appliesTo": "error",
       "patterns": [
-        { "kind": "substr", "value": "This live event will begin in a few moments" },
+        { "kind": "substr", "value": "This live event will begin in" },
         { "kind": "substr", "value": "This live broadcast has not yet started" },
         { "kind": "substr", "value": "Twitter Space not started yet" },
         { "kind": "substr", "value": "This live event is scheduled for" },
@@ -474,6 +538,22 @@
       "appliesTo": "error",
       "patterns": [
         { "kind": "substr", "value": "Unable to connect to proxy" }
+      ]
+    },
+    {
+      "code": "mediaUnavailable",
+      "component": "youtube",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)^(Video unavailable|This video is (unavailable|not available))" }
+      ]
+    },
+    {
+      "code": "mediaUnavailable",
+      "component": "dailymotion",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "substr", "value": "Not found." }
       ]
     },
     {

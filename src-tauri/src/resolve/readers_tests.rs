@@ -318,6 +318,21 @@ async fn linkedin_extensionless_share_photo_reaches_selected_image_download() {
 }
 
 #[tokio::test]
+async fn telegram_withheld_video_has_an_app_only_reason() {
+  let fake = FakeTransport(std::sync::Mutex::new(
+    [(
+      TELEGRAM,
+      reply(200, None, reader_fixture("telegram", "too-big").as_bytes()),
+    )]
+    .into(),
+  ));
+  match read_site(TELEGRAM, &fake).await {
+    Verdict::Failed(failure) => assert_eq!(failure.code(), "telegramAppOnly"),
+    _ => panic!("expected app-only refusal"),
+  }
+}
+
+#[tokio::test]
 async fn telegram_identity_media_policy_and_video_handoff() {
   for input in [
     "https://t.me/c/123/456",

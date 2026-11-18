@@ -150,6 +150,14 @@ const GALLERY: &[Matcher] = &[
           .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
     }),
   ),
+  // yt-dlp has no Facebook album extractor: gallery-dl's 404 for a deleted album is the verdict.
+  Matcher::new(
+    StageId::Gallery,
+    "facebook-album",
+    30,
+    Confidence::Medium,
+    host_path(&["facebook.com"], true, Path::Prefixes(&["/media/set"])),
+  ),
   // An album must reach its photo-capable engine before yt-dlp can verify a partial video list.
   Matcher::new(
     StageId::Gallery,

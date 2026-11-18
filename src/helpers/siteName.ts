@@ -1,4 +1,5 @@
 import { SITES } from '@/generated/contract';
+import { siteForHost } from './siteLogo';
 
 /** Known sites from the engine's site table (`sites.rs`). */
 const KNOWN: readonly { name: string; hosts: readonly string[]; extractors: readonly string[] }[] = SITES;
@@ -6,18 +7,19 @@ const KNOWN: readonly { name: string; hosts: readonly string[]; extractors: read
 /** Human site name for a yt-dlp extractor key or a URL host. */
 export function siteName(extractor: string | undefined, url: string | undefined): string | undefined {
   const key = extractor?.split(':')[0]?.toLowerCase();
-  if (key && key !== 'generic') {
-    return KNOWN.find(site => site.extractors.includes(key))?.name ?? key.charAt(0).toUpperCase() + key.slice(1);
-  }
+  const knownExtractor = key === 'youtubeclip' ? 'youtube' : key;
+  const extractedSite = KNOWN.find(site => site.extractors.includes(knownExtractor ?? ''));
+  if (extractedSite) return extractedSite.name;
   try {
     const host = new URL(url ?? '').hostname.toLowerCase().replace(/^www\./, '');
     // Before the extractor is known (still reading, or a login request), name known sites by host.
     // Exact host or a subdomain only: the login card asks for consent with this name, so
     // "youtube.evil.net" must never read as "YouTube".
-    const known = KNOWN.find(site => site.hosts.some(domain => host === domain || host.endsWith(`.${domain}`)));
-    return known ? known.name : host;
+    const known = siteForHost(host);
+    if (known) return known.name;
+    return key && key !== 'generic' ? key.charAt(0).toUpperCase() + key.slice(1) : host;
   } catch {
-    return undefined;
+    return key && key !== 'generic' ? key.charAt(0).toUpperCase() + key.slice(1) : undefined;
   }
 }
 

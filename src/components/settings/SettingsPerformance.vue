@@ -8,6 +8,9 @@
     </settings-row>
 
     <template #more>
+      <settings-row for-id="keepAwake" :label="t('reliability.keepAwake')" :help="t('reliability.keepAwakeHint')">
+        <Switch id="keepAwake" v-model="settings.performance.keepAwake" />
+      </settings-row>
       <settings-row for-id="splitPlaylistThreshold" :label="t('prefs.adv.perf.split')" :help="t('prefs.adv.perf.splitHint')">
         <SelectField id="splitPlaylistThreshold" v-model="settings.performance.splitPlaylistThreshold" :options="splitOptions" />
       </settings-row>

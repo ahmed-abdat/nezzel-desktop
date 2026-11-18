@@ -93,7 +93,10 @@ export function useDownloadRow(group: Ref<Group>) {
   });
 
   const statusLocalization = computed<Record<string, string>>(() => i18n.tm('media.steps.download.status'));
+  const waiting = computed(() => Object.values(group.value.items).map(item => progressStore.progress[item.id]).find(progress => progress?.stage === ProgressStage.waitingNetwork || progress?.stage === ProgressStage.siteBusy));
   const stageLabel = computed(() => {
+    if (waiting.value?.stage === ProgressStage.waitingNetwork) return t('reliability.waitingNetwork');
+    if (waiting.value?.stage === ProgressStage.siteBusy) return t('reliability.siteBusy', { n: formatCount(waiting.value.etaSecs ?? 0) });
     let stage = single.value?.stage ?? ProgressStage.initializing;
     if (stage === ProgressStage.downloading && single.value?.percentage == null) stage = ProgressStage.initializing;
     return statusLocalization.value[stage] ?? capitalizeFirstLetter(stage);
@@ -121,6 +124,12 @@ export function useDownloadRow(group: Ref<Group>) {
     return saved && t(`downloads.row.${saved.key}`, { n: saved.n }, saved.n);
   });
   const destination = computed(() => destinationStore.getPrimaryDestination(group.value.id)?.path);
+  const alreadySaved = computed(() => {
+    const primary = destinationStore.getPrimaryDestination(group.value.id);
+    return phase.value === 'done' && !!primary
+      && destinationStore.getDestinations(group.value.id)
+        .filter(d => d.confidence === primary.confidence).every(d => d.alreadyDownloaded);
+  });
   /** Category of a file download: from the saved file when it exists, else the link's title. */
   const fileKind = computed(() => groupFileKind(group.value, destination.value));
   const choiceLabel = computed(() => {
@@ -172,6 +181,7 @@ export function useDownloadRow(group: Ref<Group>) {
         break;
       case 'downloading':
         if (queued.value) parts.push(statusLocalization.value[ProgressStage.queued]);
+        else if (waiting.value) parts.push(stageLabel.value);
         else if (resuming.value && !isList.value) parts.push(t('downloads.row.resuming'));
         else if (percent.value == null) parts.push(stageLabel.value);
         else {
@@ -183,8 +193,11 @@ export function useDownloadRow(group: Ref<Group>) {
       case 'paused':
         parts.push(t('downloads.row.paused', { percent: formatPct(percent.value ?? 0) }));
         break;
+      case 'cancelled':
+        parts.push(t('downloads.row.cancelledState'));
+        break;
       case 'done':
-        parts.push(group.value.isCombined ? t('downloads.row.items', { n: group.value.total }, group.value.total) : choiceLabel.value);
+        parts.push(alreadySaved.value ? t('downloads.row.alreadySaved') : group.value.isCombined ? t('downloads.row.items', { n: group.value.total }, group.value.total) : choiceLabel.value);
         break;
       default:
         break;
@@ -203,5 +216,5 @@ export function useDownloadRow(group: Ref<Group>) {
   const lastFatal = computed(() => diagnosticsStore.findLastFatalByGroupId(group.value.id));
   const needsLogin = computed(() => phase.value === 'error' && (LOGIN_CODES as readonly string[]).includes(lastDiagnostic.value?.code ?? ''));
 
-  return { state, phase, isList, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, choice, fileKind, readingStuck, processing };
+  return { state, phase, isList, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, alreadySaved, choice, fileKind, readingStuck, processing };
 }

@@ -11,7 +11,8 @@
       <label for="capture-url" class="sr-only">{{ t('capture.url') }}</label>
       <div class="flex items-center gap-2">
         <div class="flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-lg bg-foreground/[0.05] px-3 ring-primary/40 focus-within:bg-card focus-within:ring-2">
-          <img v-if="favicon && !faviconFailed" :src="favicon" alt="" class="size-4 shrink-0 rounded-sm" @error="faviconFailed = true" />
+          <svg v-if="logo" viewBox="0 0 24 24" fill="currentColor" class="size-4 shrink-0" aria-hidden="true"><path :d="logo" /></svg>
+          <img v-else-if="favicon && !faviconFailed" :src="favicon" alt="" class="size-4 shrink-0 rounded-sm" @error="faviconFailed = true" />
           <Link2 v-else class="size-4 shrink-0 text-muted-foreground rtl:-scale-x-100" aria-hidden="true" />
           <Input variant="bare"
             id="capture-url"
@@ -25,7 +26,7 @@
             class="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/70"
             @input="edit"
             @paste="onPaste" />
-          <span v-if="offer.resolving || (offer.url && !offer.feed && !offer.read && !offer.failed)" class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary motion-reduce:animate-none" role="status" :aria-label="t('capture.loading')" />
+          <span v-if="offer.resolving || (offer.url && !offer.feed && !offer.read && !failed && !automaticLogin)" class="size-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary motion-reduce:animate-none" role="status" :aria-label="t('capture.loading')" />
         </div>
         <tooltip :content="t('capture.dismiss')">
           <Button type="button" variant="ghost" size="icon" class="size-9 shrink-0 text-muted-foreground" :aria-label="t('capture.dismiss')" data-testid="capture-close" @click="act('dismiss')">
@@ -36,7 +37,8 @@
 
       <div class="min-h-[63px]">
         <p v-if="offer.feed" class="text-[12.5px] text-foreground/80 text-pretty" role="status" data-testid="capture-feed">{{ t('capture.feedPage') }}</p>
-        <div v-else-if="offer.url && !offer.failed && !error" class="flex gap-3" data-testid="capture-preview">
+        <p v-else-if="automaticLogin && !error" class="text-[12.5px] text-muted-foreground" role="status" data-testid="capture-automatic-login">{{ t('capture.automaticLogin') }}</p>
+        <div v-else-if="offer.url && !failed && !error" class="flex gap-3" data-testid="capture-preview">
           <div class="relative h-[63px] w-28 shrink-0 overflow-hidden rounded-md bg-muted">
             <FileTypeIcon v-if="fileKind" :category="fileKind" class="size-full p-4 text-muted-foreground" />
             <img v-else-if="offer.remoteImages && details.thumbnail && !thumbFailed" :src="details.thumbnail" alt="" class="size-full object-cover" referrerpolicy="no-referrer" @error="thumbFailed = true" />
@@ -69,7 +71,7 @@
         </div>
         <p v-else-if="offer.resolving" class="text-[12.5px] text-muted-foreground" role="status">{{ t('capture.readingBrowser') }}</p>
         <p v-else-if="error" class="text-[12.5px] text-destructive" role="alert">{{ t(error === 'action' ? 'capture.actionFailed' : 'capture.failed') }}</p>
-        <CaptureFailure v-else-if="offer.failed" :reason="failure" :site="offer.site" />
+        <CaptureFailure v-else-if="failed" :reason="failure" :site="offer.site" />
         <p v-else-if="text && !offer.url" class="text-[12.5px] text-muted-foreground" role="status">{{ t('capture.unsupported') }}</p>
         <p v-else class="text-[12.5px] text-muted-foreground">{{ t('capture.emptyHint') }}</p>
       </div>
@@ -79,7 +81,7 @@
         <span v-else class="inline-flex min-w-max flex-1 items-center gap-1 whitespace-nowrap text-[11.5px] text-muted-foreground">
           <Kbd>{{ escKey }}</Kbd>{{ t('capture.escCloses') }}
         </span>
-        <CaptureFailActions v-if="offer.failed && !editing" :reason="failure" :busy="acting" @act="onFail" />
+        <CaptureFailActions v-if="failed && !editing" :reason="failure" :busy="acting" @act="onFail" />
         <template v-else>
           <Button type="button" variant="ghost" size="sm" :disabled="!ready" @click="act('options')">{{ t('capture.options') }}</Button>
           <CapturePicks :picks="picks" :loading="choicesLoading" :choose-items="isPlaylist" :disabled="!ready" :acting="acting" submit @pick="pick" />
@@ -119,7 +121,7 @@ const panel = ref<HTMLElement>();
 let editTimer: ReturnType<typeof setTimeout> | undefined;
 let sizer: ResizeObserver | undefined;
 
-const { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, fileKind, isPhotos, isPlaylist, choicesLoading, favicon, bestParts, act, onFail, start } = useCaptureOffer({
+const { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, failed, automaticLogin, fileKind, isPhotos, isPlaylist, choicesLoading, logo, favicon, bestParts, act, onFail, start } = useCaptureOffer({
   onNewOffer(value, wasEditing) {
     if (wasEditing) return;
     text.value = value.url;

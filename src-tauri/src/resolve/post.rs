@@ -59,6 +59,7 @@ pub(super) async fn attachments<T: http::Transport>(
     MediaKind::Video
   };
   let media = ParsedSingleVideo {
+    playlist_child: false,
     id: id.into(),
     fetch_engine: None,
     resolved_url: None,

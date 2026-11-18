@@ -9,6 +9,7 @@ pub mod login;
 pub mod override_resolver;
 #[cfg(any(target_os = "macos", test))]
 mod quicktime;
+pub(crate) mod reliability;
 pub mod retry_policy;
 pub mod template_context;
 pub(crate) mod tool_process;

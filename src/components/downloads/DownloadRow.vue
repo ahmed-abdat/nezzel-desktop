@@ -6,6 +6,7 @@
         :class="[tint, compactRows ? 'py-1.5' : 'py-2.5']"
         :aria-selected="selected"
         :data-phase="phase"
+        :data-group-id="group.id"
         :aria-busy="phase === 'reading' || phase === 'downloading' ? 'true' : undefined"
         tabindex="0"
         :aria-keyshortcuts="canOpen ? 'Enter' : undefined"
@@ -24,7 +25,7 @@
         <figure
           v-if="showThumbnails"
           class="relative m-0 grid shrink-0 place-items-center overflow-hidden rounded-[5px] bg-muted text-muted-foreground ring-1 ring-black/5 dark:ring-white/5"
-          :class="[compactRows ? 'h-[27px] w-12' : 'h-10 w-[72px]', phase === 'reading' && !thumbUrl && 'animate-pulse', canOpen && 'cursor-pointer']"
+          :class="[compactRows ? 'h-[27px] w-12' : 'h-10 w-[72px]', phase === 'reading' && !thumbUrl && !logo && 'animate-pulse', canOpen && 'cursor-pointer']"
           @click="openFromRow"
         >
           <file-type-icon v-if="fileKind" :category="fileKind" :class="compactRows ? 'size-4' : 'size-5'" />
@@ -34,9 +35,11 @@
             :alt="t('media.view.thumbnailAlt', { title: group.title ?? '' })"
             class="size-full object-cover"
             loading="lazy"
+            referrerpolicy="no-referrer"
             @error="thumbFailed = true"
           />
-          <!-- No picture: what it is (video, audio, photos) and where it came from, never a broken box. -->
+          <svg v-else-if="logo" viewBox="0 0 24 24" fill="currentColor" :class="compactRows ? 'size-4' : 'size-5'" aria-hidden="true"><path :d="logo" /></svg>
+          <!-- Unknown site without a picture: show the media kind. -->
           <template v-else-if="phase !== 'reading'">
             <component :is="kindIcon" :class="compactRows ? 'size-3.5' : 'size-4'" aria-hidden="true" />
             <span
@@ -56,7 +59,8 @@
           </Tooltip>
 
           <login-needed v-if="loginCard" class="mt-1" :card="loginCard" :site="site" :diagnostic-code="diagnostic.code" :details="diagnostic.raw === 'unknown' ? undefined : diagnostic.raw" @retry="retry" />
-          <template v-else-if="phase === 'error'">
+          <p v-if="vimeoLogin && loginCard" class="mt-1 text-[12.5px] text-destructive-foreground" data-testid="row-error">{{ t('errors.runner.vimeoSignInRequired.message') }}</p>
+          <template v-if="!loginCard && phase === 'error'">
           <p class="mt-0.5 flex items-start gap-1.5 text-[12.5px] font-medium text-destructive-foreground">
             <triangle-alert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
             <!-- What happened, then what to do (muted): every runner error carries both. -->
@@ -83,12 +87,15 @@
               </template>
             </span>
           </div>
-          <p v-else class="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-[12px] text-muted-foreground" :class="(phase === 'done' || phase === 'ready') && '@min-[1040px]/list:hidden'">
+          <p v-else class="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-[12px] text-muted-foreground" :class="!alreadySaved && (phase === 'done' || phase === 'ready') && '@min-[1040px]/list:hidden'">
             <template v-for="(part, index) in metaLine" :key="index">
               <span v-if="index > 0" class="nz-sep" aria-hidden="true" />
               <bdi>{{ part }}</bdi>
             </template>
           </p>
+
+          <p v-if="['galleryItemsSkipped', 'listingPartial'].includes(lastDiagnostic?.code ?? '')" class="mt-0.5 text-[12px] text-muted-foreground" role="status">{{ t(`errors.runner.${lastDiagnostic!.code}.message`) }}</p>
+          <p v-if="(group.entries?.length ?? group.attachments?.length ?? 0) >= 100" class="mt-0.5 text-[12px] text-muted-foreground" role="status">{{ t('downloads.row.listingCapped') }}</p>
 
           <LoginProfile :group-id="group.id" :show-picker="false" :tone="loginCard?.kind === 'needed' ? 'amber' : phase === 'error' ? 'error' : 'muted'" :disabled="phase === 'reading' || phase === 'downloading' || loginCard?.kind === 'needed'" class="mt-0.5" />
 
@@ -112,9 +119,30 @@
             <Button variant="outline" @click="sheet.show(group.id)">{{ t('downloads.row.options') }}</Button>
             <Button @click="download">{{ t('downloads.row.download') }}</Button>
           </template>
+          <Button v-else-if="phase === 'cancelled'" variant="outline" @click="retry"><rotate-cw />{{ t('downloads.row.retry') }}</Button>
+          <Button v-else-if="phase === 'error' && loginOwnsAction && vimeoLogin" variant="outline" @click="openPage"><ExternalLink />{{ openBrowserLabel }}</Button>
           <template v-else-if="phase === 'error' && !loginOwnsAction">
+            <Button v-if="['diskFull', 'diskSpaceUnavailable', 'fileSpace'].includes(diagnostic.code)" variant="outline" @click="changeDownloadFolder"><FolderOpen />{{ t('reliability.changeFolder') }}</Button>
             <Button v-if="errorIsFilter" variant="ghost" @click="router.push({ name: 'input-filters' })">{{ t('media.steps.error.filters') }}</Button>
-            <Button v-if="errorIsUnsupported" variant="outline" @click="openPage"><ExternalLink />{{ t('downloads.row.openBrowser') }}</Button>
+            <Button v-if="errorCanOpenBrowser" variant="outline" @click="openPage"><ExternalLink />{{ openBrowserLabel }}</Button>
+            <!-- Thanks state: same box, the border and fill fade out (a quiet label, not a greyed control).
+                 The ::after sizer holds the wider label so the row never reflows on the swap. -->
+            <Button
+              v-if="diagnostic.code === 'liveNow'"
+              variant="outline"
+              class="grid justify-items-center transition-[background-color,border-color,color,box-shadow] after:invisible after:ps-5 after:[grid-area:1/1] after:content-[attr(data-sizer)] disabled:opacity-100"
+              :class="liveRequestNoted && 'border-transparent bg-transparent text-muted-foreground shadow-none'"
+              :data-sizer="t(liveRequestNoted ? 'downloads.row.wantLiveDownload' : 'downloads.row.liveRequestNoted')"
+              :disabled="liveRequestNoted"
+              aria-live="polite"
+              @click.stop="requestLiveDownload"
+            >
+              <span :key="String(liveRequestNoted)" class="inline-flex items-center gap-1.5 [grid-area:1/1] animate-in fade-in-0 duration-150 motion-reduce:animate-none">
+                <Check v-if="liveRequestNoted" class="text-primary animate-in zoom-in-75 duration-200 motion-reduce:animate-none" aria-hidden="true" />
+                <ThumbsUp v-else aria-hidden="true" />
+                {{ t(liveRequestNoted ? 'downloads.row.liveRequestNoted' : 'downloads.row.wantLiveDownload') }}
+              </span>
+            </Button>
             <Button v-if="!errorIsPermanent" variant="outline" @click="recover"><Film v-if="recoveryIsSwitch" /><rotate-cw v-else />{{ recoveryLabel }}</Button>
           </template>
           <template v-else-if="phase === 'downloading' || phase === 'paused'">
@@ -169,7 +197,7 @@
 
           <!-- Reading for a minute: offer a fresh start next to Remove. -->
           <Button v-if="phase === 'reading' && readingStuck" variant="outline" @click="retry"><rotate-cw />{{ t('downloads.row.retry') }}</Button>
-          <tooltip v-if="phase === 'reading' || phase === 'playlist'" :content="t('downloads.row.remove')">
+          <tooltip v-if="phase === 'reading' || phase === 'playlist' || phase === 'cancelled'" :content="t('downloads.row.remove')">
             <Button
               size="icon-xs"
               variant="ghost"
@@ -220,6 +248,7 @@
 </template>
 
 <script setup lang="ts">
+import { open as chooseFolder } from '@tauri-apps/plugin-dialog';
 import { useSettingsStore } from '../../stores/settings';
 import { remoteImagesAllowed } from '../../helpers/remoteImages';
 import LoginProfile from './LoginProfile.vue';
@@ -227,10 +256,11 @@ import FileTypeIcon from './FileTypeIcon.vue';
 import { revealsInFolder } from '../../helpers/fileCategory';
 import { ROW_SELECTOR } from '../../helpers/domIds';
 import { hostOf } from '../../helpers/siteName';
+import { siteLogo } from '../../helpers/siteLogo';
 import { isPermanentError } from '../../helpers/errorOutcome';
 import { computed, nextTick, ref, toRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Copy, Ellipsis, ExternalLink, File, Film, FolderOpen, Image as ImageIcon, Images, Info, ListX, MessageSquareWarning, Music, Pause, Play, RotateCw, Trash2, TriangleAlert, Wrench, X } from '@lucide/vue';
+import { Check, Copy, Ellipsis, ExternalLink, File, Film, FolderOpen, Image as ImageIcon, Images, Info, ListX, MessageSquareWarning, Music, Pause, Play, RotateCw, ThumbsUp, Trash2, TriangleAlert, Wrench, X } from '@lucide/vue';
 import type { RouteLocationRaw } from 'vue-router';
 import { useRouter } from 'vue-router';
 import Tooltip from '@/components/ui/tooltip/Tooltip.vue';
@@ -253,10 +283,11 @@ import { useDownloadSheetStore } from '../../stores/downloadSheet';
 import { useLoginStore, type LoginCard } from '../../stores/login';
 import { useReportStore } from '../../stores/report';
 import { useMediaDiagnosticsStore } from '../../stores/media/diagnostics';
+import { countUsage } from '../../tauri/usage';
 import { downloadReportContext } from '../../helpers/reportContext';
 
 defineOptions({ inheritAttrs: false });
-const props = defineProps<{ group: Group }>();
+const props = defineProps<{ group: Group; highlighted?: boolean }>();
 const router = useRouter();
 const { compactRows, showThumbnails } = useUiPrefs();
 const group = toRef(props, 'group');
@@ -265,12 +296,20 @@ const { t } = useI18n();
 const settingsStore = useSettingsStore();
 const sheet = useDownloadSheetStore();
 const optionsStore = useMediaOptionsStore();
+async function changeDownloadFolder() {
+  const folder = await chooseFolder({ directory: true, multiple: false });
+  if (typeof folder !== 'string') return;
+  const previous = optionsStore.getOverrides(group.value.id);
+  optionsStore.setOverrides(group.value.id, { ...previous, output: { ...previous?.output, downloadDir: folder } });
+  await recover();
+}
 const playlistSummary = computed(() => {
   const count = optionsStore.getPlaylistSelection(group.value).length;
   return t('inputFilters.playlistSelection.checkedCount', { count, total: group.value.entries?.length ?? 0 }, count);
 });
 const colCls = 'hidden shrink-0 self-center truncate text-[12.5px] text-muted-foreground @min-[1040px]/list:block';
-const { phase, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, fileKind, readingStuck, processing } = useDownloadRow(group);
+const { phase, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, alreadySaved, fileKind, readingStuck, processing } = useDownloadRow(group);
+const logo = computed(() => siteLogo(group.value.url));
 /** Not known (yet): a typographic placeholder, not copy, so it needs no translation. */
 const EMPTY_CELL = '\u2014';
 const cells = computed(() => [
@@ -310,10 +349,36 @@ const diagnostic = computed<MediaDiagnostic>(() => {
   }
   return base;
 });
-const { diagnosticDisplay: errorDisplay } = useDiagnostic(diagnostic, true);
+const vimeoLogin = computed(() => diagnostic.value.code === 'signInRequired' && (hostOf(group.value.url) === 'vimeo.com' || hostOf(group.value.url).endsWith('.vimeo.com')));
+const displayDiagnostic = computed(() => vimeoLogin.value ? { ...diagnostic.value, code: 'vimeoSignInRequired' } : diagnostic.value);
+const { diagnosticDisplay: errorDisplay } = useDiagnostic(displayDiagnostic, true);
 const errorIsFilter = computed(() => diagnostic.value.code === 'rejectedByFilter');
 const errorIsPermanent = computed(() => isPermanentError(diagnostic.value.code));
-const errorIsUnsupported = computed(() => ['urlNotSupported', 'unknownUrlType'].includes(diagnostic.value.code));
+const errorCanOpenBrowser = computed(() => vimeoLogin.value || ['urlNotSupported', 'unknownUrlType', 'mediaUnavailable', 'telegramAppOnly', 'drmProtected'].includes(diagnostic.value.code));
+
+const openBrowserLabel = computed(() => {
+  if (diagnostic.value.code === 'telegramAppOnly') return t('errors.runner.telegramAppOnly.action');
+  const host = hostOf(group.value.url);
+  return t(['drmProtected', 'signInRequired'].includes(diagnostic.value.code) && (host === 'vimeo.com' || host.endsWith('.vimeo.com'))
+    ? 'downloads.row.openVimeo'
+    : 'downloads.row.openBrowser');
+});
+const liveRequestNoted = ref(false);
+watch(() => group.value.id, () => {
+  liveRequestNoted.value = false;
+});
+function requestLiveDownload(event: MouseEvent) {
+  if (liveRequestNoted.value) return;
+  // The button turns disabled: keep keyboard focus on the row instead of dropping it to the page.
+  const button = event.currentTarget as HTMLElement | null;
+  let keyboard = false;
+  try {
+    keyboard = button?.matches(':focus-visible') ?? false;
+  } catch { /* engines without :focus-visible */ }
+  liveRequestNoted.value = true;
+  if (keyboard) void nextTick(() => button?.closest('li')?.focus());
+  countUsage('want.live_download');
+}
 
 interface RowAction { key: string; label: string; icon: unknown; run: () => unknown; danger?: boolean; disabled?: boolean }
 const go = (to: RouteLocationRaw) => () => router.push(to);
@@ -327,6 +392,7 @@ const menuGroups = computed<RowAction[][]>(() => {
   }
   if (phase.value === 'downloading' && !processing.value) primary.push({ key: 'pause', label: t('downloads.row.pause'), icon: Pause, run: pause });
   if (phase.value === 'paused') primary.push({ key: 'resume', label: t('downloads.row.resume'), icon: Play, run: download });
+  if (phase.value === 'cancelled') primary.push({ key: 'retry', label: t('downloads.row.retry'), icon: RotateCw, run: retry });
   if (phase.value === 'error' && !errorIsPermanent.value && !loginOwnsAction.value) primary.push({ key: 'retry', label: recoveryLabel.value, icon: recoveryIsSwitch.value ? Film : RotateCw, run: recover });
   const more: RowAction[] = [
     { key: 'copy', label: t('downloads.row.copyLink'), icon: Copy, run: copyLink, disabled: !group.value.url },
@@ -352,7 +418,7 @@ function reportProblem() {
   });
 }
 
-const tint = computed(() => (selected.value ? 'bg-primary-soft' : (loginCard.value?.kind === 'needed' || phase.value === 'ready' || phase.value === 'playlist') ? 'bg-amber-soft' : phase.value === 'error' ? 'bg-destructive-soft' : 'hover:bg-foreground/[0.025] focus-visible:bg-primary-soft'));
+const tint = computed(() => (props.highlighted || selected.value ? 'bg-primary-soft' : (loginCard.value?.kind === 'needed' || phase.value === 'ready' || phase.value === 'playlist') ? 'bg-amber-soft' : phase.value === 'error' ? 'bg-destructive-soft' : 'hover:bg-foreground/[0.025] focus-visible:bg-primary-soft'));
 
 /** Native list keys: ↑/↓ move between rows, Enter opens (done) or starts (ready), Delete removes, Space pauses/resumes. */
 function onKey(event: KeyboardEvent) {

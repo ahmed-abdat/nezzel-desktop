@@ -202,25 +202,18 @@ with sqlite3.connect(sys.argv[1]) as db:
         .find_map(|line| parser.login_reason(line))
         .expect("real engine refusal must reach login classification")
     };
+    // Automatic login never prompts or discovers browsers for the loopback host.
     let (action, offered) = session.decide(Some(&reason), false, false, |_| {
-      vec![LoginCandidate {
-        id: browser.clone(),
-        browser: crate::runners::browsers::BrowserKind::Firefox,
-        profile: "Firefox profile".into(),
-        signed_in: false,
-        app_bound: false,
-      }]
+      panic!("unknown host must not discover browsers")
     });
-    assert_eq!(action, RetryAction::AskLogin);
+    assert_eq!(action, RetryAction::Stop);
+    assert!(offered.is_empty());
     assert!(session.browser.is_none());
     assert!(
       !context.directory.exists() || std::fs::read_dir(&context.directory).unwrap().count() == 0
     );
-    session = LoginSession::from_auth(
-      AuthSettings::default(),
-      &target,
-      Some(offered[0].id.clone()),
-    );
+    // An explicit browser choice still authorizes the cookie retry.
+    session = LoginSession::from_auth(AuthSettings::default(), &target, Some(browser.clone()));
     let (_cancel_tx, cancel) = tokio::sync::watch::channel(true);
     let scoped = crate::runners::browser_cookies::CookieAccess::prepare(
       &AuthSettings::default(),

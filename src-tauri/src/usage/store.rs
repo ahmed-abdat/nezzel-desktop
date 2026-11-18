@@ -55,6 +55,8 @@ pub struct State {
   pub since: Option<u64>,
   /// The UTC day of the last good send.
   pub usage_day: Option<u64>,
+  /// Last UTC day this install requested live downloads; survives sends and opt-out.
+  pub live_request_day: Option<u64>,
   pub counts: BTreeMap<String, u32>,
   /// Per-key counts on `today_day`, for the daily cap.
   pub today_day: u64,
@@ -85,6 +87,9 @@ impl State {
       _ => key,
     };
     let day = now / DAY_MS;
+    if key == keys::WANT_LIVE_DOWNLOAD && self.live_request_day == Some(day) {
+      return false;
+    }
     if self.today_day != day {
       self.today_day = day;
       self.today.clear();
@@ -97,6 +102,9 @@ impl State {
       return false;
     }
     self.add(key, now);
+    if key == keys::WANT_LIVE_DOWNLOAD {
+      self.live_request_day = Some(day);
+    }
     true
   }
 
@@ -134,6 +142,7 @@ impl State {
   pub fn clear(&mut self) {
     *self = State {
       usage_day: self.usage_day,
+      live_request_day: self.live_request_day,
       installed_at: self.installed_at,
       last_version: self.last_version.take(),
       offered_version: self.offered_version.take(),
@@ -295,6 +304,23 @@ mod tests {
 
   const T: u64 = 20_000 * DAY_MS + 3_600_000;
   const VIDEO: Kind = Kind::Video { height: Some(1080) };
+
+  #[test]
+  fn live_request_counts_once_per_utc_day_across_reload_send_and_opt_out() {
+    let key = "want.live_download";
+    let mut state = State::default();
+    assert!(state.count(key, T));
+    assert!(!state.count(key, T + 1));
+    assert_eq!(state.counts.get(key), Some(&1));
+    let mut state: State = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    state.sent(&state.counts.clone(), &[], T);
+    assert!(!state.count(key, T + 2));
+    state.clear();
+    assert!(!state.count(key, T + 3));
+    assert!(state.counts.is_empty());
+    assert!(state.count(key, (T / DAY_MS + 1) * DAY_MS));
+    assert_eq!(state.counts.get(key), Some(&1));
+  }
 
   #[test]
   fn unknown_keys_are_dropped_and_known_ones_counted() {

@@ -83,6 +83,8 @@ pub enum TranscodePolicy {
 #[serde(rename_all = "camelCase")]
 pub struct DownloadItem {
   pub id: String,
+  #[serde(default)]
+  pub playlist_child: bool,
   pub url: String,
   pub format: FormatOptions,
   #[serde(default)]

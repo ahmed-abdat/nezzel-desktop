@@ -7,6 +7,7 @@ import { defineComponent, h, ref } from 'vue';
 import { useDiagnostic } from '../../src/composables/useDiagnostic';
 import en from '../../src/locales/en.json';
 import ar from '../../src/locales/ar.json';
+import rustAr from '../../src-tauri/locales/ar.json';
 import fr from '../../src/locales/fr.json';
 
 type RunnerCopy = { shortMessage?: string; action?: string; message?: string };
@@ -78,6 +79,35 @@ describe('download error copy', () => {
     } finally {
       wrapper.unmount();
       i18n.global.locale.value = 'en';
+    }
+  });
+
+  it('explains the live-stream refusal naturally in Arabic in both runtimes', () => {
+    const expected = 'هذا بث مباشر. يمكنك حفظه بعد انتهاء البث.';
+    i18n.global.locale.value = 'ar';
+    try {
+      expect(i18n.global.t('errors.runner.liveNow.message')).toBe(expected);
+      expect(rustAr.errors.runner.liveNow).toBe(expected);
+    } finally { i18n.global.locale.value = 'en'; }
+  });
+
+  it('keeps story expiry and account visibility ambiguous', () => {
+    i18n.global.locale.value = 'en';
+    const wrapper = mount(defineComponent({
+      setup() {
+        const { diagnosticDisplay } = useDiagnostic(ref({ id: 'story', groupId: 'story', level: 'error', code: 'storyExpired', message: 'This content is unreachable', raw: '', component: null, timestamp: 1 }));
+        return () => h('p', diagnosticDisplay.value.message);
+      },
+    }), { global: { plugins: [i18n, createPinia()] } });
+    expect(wrapper.text()).toBe('This story has expired or isn\'t available to your account');
+    wrapper.unmount();
+  });
+
+  it('provides new link failure remedies in en/ar/fr', () => {
+    for (const messages of Object.values(runnerLocales)) {
+      for (const code of ['legalRestriction451', 'podcastFeed', 'galleryItemsSkipped', 'listingPartial', 'vimeoSignInRequired']) {
+        for (const key of ['shortMessage', 'message', 'action'] as const) expect(messages.errors.runner[code]?.[key]?.trim()).toBeTruthy();
+      }
     }
   });
 

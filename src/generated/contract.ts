@@ -60,7 +60,7 @@ export const DEFAULT_CAPTURE_SHORTCUT = 'CommandOrControl+Alt+N';
 export const FALLBACK_CAPTURE_SHORTCUT = 'CommandOrControl+Alt+Shift+D';
 
 /** Usage keys the web UI may count; Rust drops any other. */
-export const UI_USAGE_KEYS = ['paste', 'pause', 'pause_all', 'retry', 'report.opened', 'funnel.batch'] as const;
+export const UI_USAGE_KEYS = ['paste', 'pause', 'pause_all', 'retry', 'report.opened', 'funnel.batch', 'want.live_download'] as const;
 export type UiUsageKey = (typeof UI_USAGE_KEYS)[number];
 
 /** Browsers a login can come from (yt-dlp names), in the order Settings lists them. */
@@ -84,7 +84,7 @@ export const LOGIN_CODES = ['signInRequired', 'signInRequiredForBotDetection', '
 export type LoginCode = (typeof LOGIN_CODES)[number];
 
 /** Error codes the site decides: retrying the same link fails the same way. */
-export const PERMANENT_CODES = ['urlNotSupported', 'urlUnsupported', 'unknownUrlType', 'fileNotFile', 'notFound404', 'copyrightClaimed', 'channelUnavailable', 'videoNotFoundOrPrivate', 'playlistPrivateOrMissing', 'geoBlocked', 'drmProtected', 'membersOnly', 'photosOnly', 'noMediaFound', 'fileEmpty'] as const;
+export const PERMANENT_CODES = ['liveNow', 'telegramAppOnly', 'likeeUnavailable', 'profileNotSupported', 'urlNotSupported', 'urlUnsupported', 'unknownUrlType', 'fileNotFile', 'storyExpired', 'notFound404', 'copyrightClaimed', 'channelUnavailable', 'videoNotFoundOrPrivate', 'playlistPrivateOrMissing', 'legalRestriction451', 'podcastFeed', 'geoBlocked', 'drmProtected', 'membersOnly', 'photosOnly', 'noMediaFound', 'fileEmpty', 'playlistEmpty'] as const;
 export type PermanentCode = (typeof PERMANENT_CODES)[number];
 
 /** Subfolder of the download folder for file-share downloads. */
@@ -146,3 +146,6 @@ export const SITES = [
   { key: 'kwai', name: 'Kwai', hosts: ['kwai.com'], extractors: [] },
   { key: 'flickr', name: 'Flickr', hosts: ['flickr.com', 'flic.kr'], extractors: ['flickr'] },
 ] as const;
+
+// eslint-disable-next-line @stylistic/object-curly-spacing, @stylistic/quote-props, @stylistic/quotes, @stylistic/key-spacing, @stylistic/comma-spacing -- generated JSON
+export const LINK_RULES = {"aliases":[["ddinstagram.com","instagram.com"],["instagramez.com","instagram.com"],["kkinstagram.com","instagram.com"],["fixvx.com","x.com"],["fxtwitter.com","x.com"],["vxtwitter.com","x.com"],["vxtiktok.com","tiktok.com"],["tnktok.com","tiktok.com"],["rxddit.com","reddit.com"]],"instagramPaths":["p","reel","tv"],"maxWrappers":2,"scopedTrackers":[[["youtube.com","youtu.be"],["si","feature"],false],[["spotify.com"],["si"],false],[["x.com","twitter.com"],["s","t"],true]],"shorteners":["bit.ly","tinyurl.com","t.co","lnkd.in","ow.ly","buff.ly","is.gd","v.gd","rebrand.ly","cutt.ly","shorturl.at","fb.watch","youtu.be","dai.ly","redd.it","b23.tv","pin.it","flic.kr","on.soundcloud.com"],"trackers":["fbclid","gclid","igsh","igshid","mibextid","ref_src"],"wrappers":[["l.facebook.com","/l.php",["u"],false,false],["lm.facebook.com","/l.php",["u"],false,false],["l.instagram.com","/",["u"],false,false],["l.messenger.com","/l.php",["u"],false,false],["google.com","/url",["q","url"],true,false],["youtube.com","/redirect",["q"],true,false],["youtube.com","/attribution_link",["u"],true,true],["safelinks.protection.outlook.com","/",["url"],true,false],["t.umblr.com","/redirect",["z"],false,false],["href.li","/",[],false,false],["out.reddit.com","/",["url"],false,false],["linkedin.com","/safety/go",["url"],true,false],["t.me","/iv",["url"],false,false]],"youtubePaths":["shorts","embed"]} as const;

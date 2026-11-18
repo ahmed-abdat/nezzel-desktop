@@ -122,6 +122,10 @@ const failedMessage = computed(() => {
   const site = siteLabel.value ?? t('downloads.login.thisSite');
   const { reason, browser: triedBrowser } = props.card.failure;
   if (cookieRemedy.value && (reason === 'exhausted' || reason === 'refused')) return cookieRemedy.value;
+  if (props.card.failure.hint === 'browserSessionExpired' && (triedBrowser || usedBrowser.value)) {
+    const browser = browserName(triedBrowser || usedBrowser.value!);
+    return t('downloads.login.sessionExpired', { browser: isolate(browser) });
+  }
   if (props.card.failure.hint === 'browserLoginRemedy') return t('downloads.login.embeddedRemedy');
   if (props.card.failure.hint === LOGIN_APP_BOUND_REASON) return appBoundMessage.value;
   if (reason === 'exhausted') {

@@ -23,7 +23,9 @@ pub fn parse_playlist(info: YtdlpInfo, id: String) -> ParsedMedia {
     uploader: info.uploader,
     uploader_id: info.uploader_id,
     playlist_id: info.id,
-    playlist_count: i64_to_u64(info.playlist_count),
+    // Lazy enumeration omits the total; retain numbering for the entries we received.
+    playlist_count: i64_to_u64(info.playlist_count)
+      .or_else(|| info.entries.as_ref().map(|items| items.len() as u64)),
     entries,
   })
 }
@@ -31,7 +33,7 @@ pub fn parse_playlist(info: YtdlpInfo, id: String) -> ParsedMedia {
 fn playlist_entries(items: &[YtdlpEntry]) -> Vec<PlaylistEntry> {
   let mut entries = Vec::new();
 
-  for (idx, entry) in items.iter().enumerate() {
+  for (idx, entry) in items.iter().take(100).enumerate() {
     let url = if let Some(u) = &entry.url {
       u.clone()
     } else {
@@ -65,6 +67,21 @@ fn playlist_entries(items: &[YtdlpEntry]) -> Vec<PlaylistEntry> {
 mod tests {
   use super::*;
   use crate::models::ytdlp::YtdlpThumbnail;
+
+  #[test]
+  fn listing_cap_keeps_first_100_and_small_playlists_intact() {
+    for count in [2, 100, 300] {
+      let info = serde_json::from_value(serde_json::json!({
+        "_type": "playlist", "entries": (0..count).map(|i| serde_json::json!({"url": format!("https://example.com/{i}")})).collect::<Vec<_>>()
+      })).unwrap();
+      let ParsedMedia::Playlist(list) = parse_playlist(info, "row".into()) else {
+        panic!("playlist")
+      };
+      assert_eq!(list.entries.len(), count.min(100));
+      assert_eq!(list.playlist_count, Some(count as u64));
+      assert_eq!(list.entries.last().unwrap().index, count.min(100) - 1);
+    }
+  }
 
   #[test]
   fn flat_entries_keep_metadata_and_original_positions() {

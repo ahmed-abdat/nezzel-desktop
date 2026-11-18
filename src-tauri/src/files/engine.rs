@@ -294,7 +294,30 @@ impl Engine {
         .await
         .map_err(|_| Error::Network)?;
     }
-    let mut probe = Probe::from_response(self.request(url, None, cancel).await?)?;
+    let mut probe = Probe::from_response(self.request(url, None, cancel.clone()).await?)?;
+    if matches!(probe.mime.as_str(), "application/xml" | "text/xml") {
+      let mut prefix = Vec::new();
+      while prefix.len() < 64 * 1024 {
+        let chunk = tokio::select! {
+          result = probe.body.response.chunk() => result.map_err(super::client::network_error)?,
+          _ = async { let mut cancel = cancel.clone(); cancel.changed().await } => return Err(Error::Cancelled),
+        };
+        let Some(chunk) = chunk else {
+          break;
+        };
+        prefix.extend_from_slice(&chunk[..chunk.len().min(64 * 1024 - prefix.len())]);
+        if crate::resolve::html::all_tags(&String::from_utf8_lossy(&prefix)).is_some_and(|tags| {
+          tags
+            .iter()
+            .any(|tag| matches!(tag.name.as_str(), "rss" | "feed"))
+        }) {
+          return Err(Error::PodcastFeed);
+        }
+      }
+      // Non-feed XML remains downloadable. Reopen its unconsumed response.
+      drop(probe);
+      probe = Probe::from_response(self.request(url, None, cancel).await?)?;
+    }
     if self.file_row && probe.kind == Kind::Unknown {
       probe.confirm_unknown()?;
     }
@@ -305,9 +328,6 @@ impl Engine {
     mut plan: super::hosts::Plan,
     mut cancel: watch::Receiver<bool>,
   ) -> Result<Probe> {
-    if plan.folder() {
-      return Err(Error::NotFile);
-    }
     let mut url = plan.url.clone();
     for _ in 0..5 {
       let mut body = self.request(url.as_str(), None, cancel.clone()).await?;

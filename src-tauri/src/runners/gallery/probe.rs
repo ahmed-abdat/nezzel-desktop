@@ -2,9 +2,11 @@
 use super::runner::GalleryRunner;
 use crate::extract::deadline::{remaining_budget, wait_until, Interrupted, FETCH_TIMEOUT};
 use crate::models::ParsedMedia;
-use crate::parsers::gallery::{failure, gallery_deadline, parse_output, GalleryError, GalleryPost};
+use crate::parsers::gallery::{gallery_deadline, parse_output, GalleryError, GalleryPost};
 use crate::runners::{
-  browser_cookies::CookieAccess, gallery_process::execute_with_started, ytdlp_runner::YtdlpRunner,
+  browser_cookies::CookieAccess,
+  gallery_process::{execute_listing, execute_with_started},
+  ytdlp_runner::YtdlpRunner,
 };
 use crate::scheduling::{download_pipeline::DownloadEntry, group_state::subscribe_group};
 use std::time::Duration;
@@ -74,24 +76,70 @@ impl GalleryRunner {
       }
     }
     for _ in 0..3 {
+      let listing = !crate::parsers::post::single_post_url(&target);
       let mut args = self.args.clone();
-      args.extend(["-j".into(), "--".into(), target.clone()]);
+      if listing {
+        args.extend(["-o".into(), "output.jsonl=true".into()]);
+      }
+      args.extend([
+        "-j".into(),
+        "--range".into(),
+        "1-100".into(),
+        "--".into(),
+        target.clone(),
+      ]);
       if let Some(cookies) = &self._cookies {
         cookies
           .check_live_consent()
           .map_err(GalleryError::Refused)?;
       }
-      let output =
-        execute_with_started(&self.path, &args, subscribe_group(group), deadline, || {
-          if let Some(cookies) = &self._cookies {
-            cookies.announce_used();
-          }
-        })
+      let budget =
+        crate::extract::deadline::remaining_budget(deadline.min(Duration::from_secs(30)));
+      let started = || {
+        if let Some(cookies) = &self._cookies {
+          cookies.announce_used();
+        }
+      };
+      let (mut output, truncated) = if listing {
+        execute_listing(&self.path, &args, subscribe_group(group), budget, started).await?
+      } else {
+        (
+          execute_with_started(&self.path, &args, subscribe_group(group), budget, started).await?,
+          false,
+        )
+      };
+      // DataJob stores exceptions in its final array even with JSONL enabled, but
+      // does not emit them as lines. Recover that diagnostic only after an empty,
+      // completed stream; never restart enumeration after a cap or timeout.
+      let has_actionable_records = serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout)
+        .is_ok_and(|records| {
+          records
+            .iter()
+            .any(|record| matches!(record[0].as_i64(), Some(3 | 6 | -1)))
+        });
+      if listing && !truncated && output.code == 0 && !has_actionable_records {
+        let mut fallback = self.args.clone();
+        fallback.extend([
+          "-j".into(),
+          "--range".into(),
+          "1".into(),
+          "--".into(),
+          target.clone(),
+        ]);
+        output = execute_with_started(
+          &self.path,
+          &fallback,
+          subscribe_group(group),
+          crate::extract::deadline::remaining_budget(Duration::from_secs(10)),
+          started,
+        )
         .await?;
+      }
       match parse_output(output.code, &output.stdout, &output.stderr, &target) {
         Err(GalleryError::Redirect(next)) => target = next,
         Ok(mut post) => {
           post.source = source.into();
+          post.truncated = truncated;
           return Ok(post);
         }
         result => return result,
@@ -136,7 +184,7 @@ pub(super) async fn probe_ytdlp_post(
       {
         GalleryError::Login
       } else {
-        failure(&stderr)
+        crate::parsers::gallery::stderr_failure(&stderr, false)
       },
     );
   }
@@ -172,6 +220,94 @@ mod tests {
   use serde_json::json;
   use std::path::PathBuf;
 
+  #[tokio::test]
+  #[cfg(unix)]
+  async fn jsonl_empty_stream_recovers_gallery_login_exception() {
+    let runner = GalleryRunner {path:PathBuf::from("/bin/sh"), args:vec!["-c".into(),
+      r#"case "$*" in *output.jsonl=true*) printf '%s\n' '[2,{"category":"twitter","user":"NASA"}]';; *) printf '%s\n' '[[-1,{"error":"AuthenticationError","message":"Login required"}]]';; esac"#.into(), "gallery".into()], _config:Staging::new().unwrap(), _cookies:None};
+    let group = format!("gallery-jsonl-login-{}", uuid::Uuid::new_v4());
+    assert_eq!(
+      runner
+        .probe("https://x.com/NASA/media", &group)
+        .await
+        .unwrap_err(),
+      GalleryError::Login
+    );
+    crate::scheduling::group_state::remove_group(&group);
+  }
+
+  #[tokio::test]
+  #[cfg(unix)]
+  async fn recorded_listing_stream_stops_and_reaps_at_100_assets() {
+    let stage = Staging::new().unwrap();
+    let fixture: serde_json::Value = serde_json::from_slice(include_bytes!(
+      "../../parsers/fixtures/gallery-recorded-bluesky-listing.json"
+    ))
+    .unwrap();
+    let mut lines = String::new();
+    for index in 0..150 {
+      let mut record = fixture[0].clone();
+      record[1] = json!(format!("{}?id={index}", record[1].as_str().unwrap()));
+      lines.push_str(&serde_json::to_string(&record).unwrap());
+      lines.push('\n');
+    }
+    let records = stage.path.join("records");
+    std::fs::write(&records, lines).unwrap();
+    let marker = stage.path.join("pid");
+    let runner = GalleryRunner {
+      path: PathBuf::from("/bin/sh"),
+      args: vec![
+        "-c".into(),
+        "echo $$ > \"$2\"; cat \"$1\"; exec /usr/bin/tail -f /dev/null".into(),
+        "gallery".into(),
+        records.to_string_lossy().into_owned(),
+        marker.to_string_lossy().into_owned(),
+      ],
+      _config: stage,
+      _cookies: None,
+    };
+    let group = format!("gallery-stream-{}", uuid::Uuid::new_v4());
+    let post = runner
+      .probe("https://bsky.app/profile/nytimes.com/media", &group)
+      .await
+      .unwrap();
+    let pid: i32 = std::fs::read_to_string(marker)
+      .unwrap()
+      .trim()
+      .parse()
+      .unwrap();
+    assert_eq!(post.assets.len(), 100);
+    assert!(post.truncated);
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    crate::scheduling::group_state::remove_group(&group);
+  }
+
+  #[tokio::test]
+  #[cfg(unix)]
+  async fn listing_probe_sends_range_to_the_process() {
+    let runner = GalleryRunner {
+      path: PathBuf::from("/bin/sh"),
+      args: vec![
+        "-c".into(),
+        r#"case " $* " in
+        *" --range 1-100 "*) echo '[3,"https://cdn.example/photo.jpg",{"extension":"jpg"}]' ;;
+        *) echo 'ERROR: missing listing range' >&2; exit 1 ;;
+      esac"#
+          .into(),
+        "gallery".into(),
+      ],
+      _config: Staging::new().unwrap(),
+      _cookies: None,
+    };
+    let group = format!("gallery-range-{}", uuid::Uuid::new_v4());
+    let post = runner
+      .probe("https://www.pinterest.com/nasa/board/", &group)
+      .await
+      .unwrap();
+    assert_eq!(post.assets.len(), 1);
+    crate::scheduling::group_state::remove_group(&group);
+  }
+
   #[tokio::test(start_paused = true)]
   #[cfg(unix)]
   async fn probe_deadline_kills_a_stalled_gallery_child() {
@@ -206,7 +342,7 @@ mod tests {
       );
       tokio::task::yield_now().await;
     };
-    tokio::time::advance(Duration::from_secs(45)).await;
+    tokio::time::advance(Duration::from_secs(30)).await;
     let result = running.await.unwrap();
     crate::scheduling::group_state::remove_group(&group);
     assert_eq!(
@@ -215,7 +351,7 @@ mod tests {
       "deadline must reap child"
     );
     assert_eq!(result.unwrap_err(), GalleryError::Refused("fetchTimeout"));
-    assert_eq!(tokio::time::Instant::now() - start, Duration::from_secs(45));
+    assert_eq!(tokio::time::Instant::now() - start, Duration::from_secs(30));
   }
 
   #[tokio::test]

@@ -889,6 +889,50 @@ mod tests {
   }
 
   #[test]
+  fn live_request_respects_opt_out_and_persists_daily_limit() {
+    let now = 20_000 * store::DAY_MS;
+    let dir = std::env::temp_dir().join(format!("nezzel-usage-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(FILE);
+    let new_usage = || {
+      Usage::new(
+        Some(path.clone()),
+        Some("https://x.test/u".into()),
+        "0.1.0".into(),
+      )
+    };
+    let usage = new_usage();
+    usage.count_keys(&[keys::WANT_LIVE_DOWNLOAD]);
+    assert_eq!(usage.snapshot_state().live_request_day, None);
+    assert!(!path.exists());
+    usage.set_on(true);
+    assert_eq!(
+      usage.with_on(|state| state.count(keys::WANT_LIVE_DOWNLOAD, now)),
+      Some(true)
+    );
+    let usage = new_usage();
+    usage.set_on(true);
+    assert_eq!(
+      usage.with_on(|state| state.count(keys::WANT_LIVE_DOWNLOAD, now)),
+      Some(false)
+    );
+    assert_eq!(
+      usage.snapshot_state().counts.get(keys::WANT_LIVE_DOWNLOAD),
+      Some(&1)
+    );
+    usage.set_on(false);
+    usage.count_keys(&[keys::WANT_LIVE_DOWNLOAD]);
+    assert!(usage.snapshot_state().counts.is_empty());
+    usage.set_on(true);
+    assert_eq!(
+      usage.with_on(|state| state.count(keys::WANT_LIVE_DOWNLOAD, now)),
+      Some(false)
+    );
+    assert!(usage.snapshot_state().counts.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[test]
   fn usage_file_is_written_and_cleared() {
     let dir = std::env::temp_dir().join(format!("nezzel-usage-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();

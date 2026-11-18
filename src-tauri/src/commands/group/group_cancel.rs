@@ -12,6 +12,7 @@ pub fn group_cancel(
   app: tauri::AppHandle,
   group_id: String,
   discard_files: Option<bool>,
+  partial_roots: Option<Vec<String>>,
   log_state: State<'_, LogStoreState>,
   fetch_sender: State<'_, FetchSender>,
   download_sender: State<'_, DownloadSender>,
@@ -28,7 +29,11 @@ pub fn group_cancel(
     // Removed from the list (not a pause): its job records go, so a reused ID counts its own end.
     crate::usage::forget_group(&app, &group_id);
     crate::files::runner::discard_group(&group_id);
-    crate::runners::ytdlp_download::discard_group(&group_id);
+    crate::runners::ytdlp_download::discard_group(
+      &app,
+      &group_id,
+      &partial_roots.unwrap_or_default(),
+    );
   }
   records.forget(&group_id);
 

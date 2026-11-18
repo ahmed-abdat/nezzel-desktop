@@ -225,3 +225,44 @@ fn shorten(name: &str) -> String {
   }
   format!("{}{}", &stem[..cut], extension)
 }
+
+/// Bound published media names while retaining the quality, carousel/collision suffix and extension.
+pub(crate) fn limit_media_name(name: &str) -> String {
+  if name.len() <= MAX_NAME_BYTES {
+    return name.to_owned();
+  }
+  let (stem, extension) = name
+    .rfind('.')
+    .map(|dot| (&name[..dot], &name[dot..]))
+    .filter(|(_, extension)| extension.len() <= MAX_KEPT_EXTENSION_BYTES)
+    .unwrap_or((name, ""));
+  format!(
+    "{}{extension}",
+    limit_media_stem(stem, MAX_NAME_BYTES - extension.len())
+  )
+}
+
+pub(crate) fn limit_media_stem(stem: &str, budget: usize) -> String {
+  use unicode_segmentation::UnicodeSegmentation;
+  if stem.len() <= budget {
+    return stem.to_owned();
+  }
+  static SUFFIX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?:-\(\d+(?:p\d*|k)\))?(?:-\d{3,})*$").expect("media suffix regex")
+  });
+  static TRAILING_MARKS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"[\p{M}\x{200C}\x{200D}]+$").expect("trailing marks regex")
+  });
+  let suffix = SUFFIX.find(stem).map_or("", |m| m.as_str());
+  // A pathological custom suffix cannot consume the entire name budget.
+  let suffix = if suffix.len() >= budget { "" } else { suffix };
+  let title = &stem[..stem.len() - suffix.len()];
+  let cut = title
+    .grapheme_indices(true)
+    .map(|(start, cluster)| start + cluster.len())
+    .take_while(|end| *end <= budget - suffix.len())
+    .last()
+    .unwrap_or(0);
+  let title = TRAILING_MARKS.replace(&title[..cut], "");
+  format!("{title}{suffix}")
+}

@@ -48,6 +48,7 @@ const allowedCommands: Set<string> = new Set([
     'preferences_get',
     'preferences_reset',
     'group_cancel',
+    'group_sweep_partials',
     'logging_subscribe',
     'logging_unsubscribe',
     'stronghold_init',

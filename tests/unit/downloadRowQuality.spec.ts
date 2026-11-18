@@ -24,6 +24,8 @@ import { TrackType, type MediaFormat } from '../../src/tauri/types/media';
 import { useUiPrefs } from '../../src/composables/useUiPrefs';
 import { useToastStore } from '../../src/stores/toast';
 import { useMediaSizeStore } from '../../src/stores/media/size';
+import { useMediaDestinationStore } from '../../src/stores/media/destination';
+import { siteLogo } from '../../src/helpers/siteLogo';
 
 const f = (id: string, height: number, fps: number): MediaFormat => ({ id, height, fps, audioCodecs: ['mp4a'], videoCodecs: ['h264'] });
 
@@ -89,9 +91,30 @@ describe('inspector quick choices', () => {
 });
 
 describe('row quality label', () => {
-  it.each(['urlNotSupported', 'drmProtected', 'networkNameResolutionFailed'])('offers only useful recovery for %s', async (code) => {
+  it.each([['en', 'Showing the first 100 items'], ['ar', 'أول 100 عنصر فقط'], ['fr', 'Affichage des 100 premiers éléments']])('shows a listing cap in %s', async (locale, copy) => {
+    i18n.global.locale.value = locale as 'en' | 'ar' | 'fr';
+    const entries = Array.from({ length: 100 }, (_, index) => ({ index, videoUrl: `https://example.com/${index}` }));
+    const item = { id: 'cap-item', isLeader: true, url: 'https://example.com/list', audioCodecs: [], formats: [], filesize: 0, entries };
+    const group = { ...item, id: 'cap', title: 'Listing', total: 100, processed: 0, errored: 0, isCombined: false, items: { [item.id]: item } };
+    useMediaGroupStore().createGroup(group);
+    useMediaStateStore().setGroupState('cap', MediaState.playlistSelection);
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const row = mount(DownloadRow, { props: { group }, global: { plugins: [router, i18n] } });
+    try {
+      expect(row.text()).toContain(copy);
+      await row.setProps({ group: { ...group, entries: entries.slice(0, 2) } });
+      expect(row.text()).not.toContain(copy);
+    } finally {
+      row.unmount();
+      i18n.global.locale.value = 'en';
+    }
+  });
+  it.each(['urlNotSupported', 'drmProtected', 'networkNameResolutionFailed', 'telegramAppOnly'])('offers only useful recovery for %s', async (code) => {
+    const open = vi.fn();
+    installTauriMock({ 'plugin:opener|open_url': open });
     const groups = useMediaGroupStore();
-    groups.createGroup({ id: 'refusal', url: 'https://example.com/v', title: 'Clip', mediaKind: 'video', total: 1, processed: 1, errored: 1, isCombined: false,
+    groups.createGroup({ id: 'refusal', url: 'https://t.me/bbcpersian/295504', title: 'Clip', mediaKind: 'video', total: 1, processed: 1, errored: 1, isCombined: false,
       audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'refusal-item', isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats: [], filesize: 0 } } });
     useMediaStateStore().setGroupState('refusal', MediaState.error);
     useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id: 'refusal-item', groupId: 'refusal', level: 'error', code, component: null, message: '', raw: '', timestamp: 1 });
@@ -101,6 +124,12 @@ describe('row quality label', () => {
     try {
       const labels = row.findAll('button').map(button => button.text());
       expect(labels.some(label => label.includes('Try again'))).toBe(code === 'networkNameResolutionFailed');
+      if (code === 'telegramAppOnly') {
+        const button = row.findAll('button').find(button => button.text().includes('Open in Telegram'));
+        expect(button).toBeDefined();
+        await button!.trigger('click');
+        expect(open).toHaveBeenCalledWith('plugin:opener|open_url', expect.objectContaining({ url: 'https://t.me/bbcpersian/295504' }));
+      }
       if (code === 'urlNotSupported') {
         const open = row.findAll('button').find(button => button.text().includes('Open in browser'));
         expect(open).toBeDefined();
@@ -135,7 +164,7 @@ describe('row phase mapping', () => {
   it.each([
     [MediaState.fetching, 'reading'], [MediaState.fetchingList, 'reading'], [MediaState.playlistSelection, 'playlist'],
     [MediaState.configure, 'ready'], [MediaState.downloading, 'downloading'], [MediaState.downloadingList, 'downloading'],
-    [MediaState.paused, 'paused'], [MediaState.pausedList, 'paused'], [MediaState.done, 'done'], [MediaState.error, 'error'],
+    [MediaState.paused, 'paused'], [MediaState.pausedList, 'paused'], [MediaState.done, 'done'], [MediaState.error, 'error'], [MediaState.cancelled, 'cancelled'],
   ] as const)('%s -> %s', (state, phase) => {
     expect(phaseOf(state)).toBe(phase);
   });
@@ -186,6 +215,8 @@ describe('row thumbnail privacy', () => {
     const row = mount(DownloadRow, { props: { group }, global: { plugins: [router, i18n] } });
     try {
       expect(row.find('img').exists()).toBe(true);
+      // Bilibili and Reddit image hosts refuse hotlinks that carry a foreign Referer.
+      expect(row.get('img').attributes('referrerpolicy')).toBe('no-referrer');
       settings.enableProxy = true;
       settings.proxy = '';
       await nextTick();
@@ -217,6 +248,7 @@ describe('inspector thumbnail privacy', () => {
     try {
       await nextTick();
       expect(inspector.find('figure img').exists()).toBe(true);
+      expect(inspector.get('figure img').attributes('referrerpolicy')).toBe('no-referrer');
       settings.enableProxy = true;
       await nextTick();
       expect(inspector.find('figure img').exists()).toBe(false);
@@ -383,6 +415,55 @@ describe('retained download progress', () => {
 });
 
 describe('row cancellation controls', () => {
+  it.each(['en', 'ar', 'fr'] as const)('shows saved-file reuse and cancellation in %s', async (locale) => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    const open = vi.fn();
+    const reveal = vi.fn();
+    installTauriMock({ 'plugin:opener|open_path': open, 'plugin:opener|reveal_item_in_dir': reveal });
+    const groups = useMediaGroupStore();
+    const id = 'already-saved';
+    const url = 'https://youtu.be/abc';
+    groups.createGroup({ id, url, title: 'فيديو — saved clip', mediaKind: 'video', total: 1, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'saved-item', isLeader: true, url, audioCodecs: [], formats: [], filesize: 0 } } });
+    const states = useMediaStateStore();
+    states.setGroupState(id, MediaState.done);
+    const destinations = useMediaDestinationStore();
+    destinations.addDestination(id, { path: '/saved.mp4', confidence: 100, alreadyDownloaded: true });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const row = mount(DownloadRow, { props: { group: groups.findGroupById(id) }, global: { plugins: [router, i18n] } });
+    try {
+      const { t } = i18n.global;
+      expect(row.text()).toContain(t('downloads.row.alreadySaved'));
+      expect(row.get('figure svg path').attributes('d')).toBe(siteLogo(url));
+      const openButton = row.findAll('button').find(button => button.text() === t('downloads.row.open'))!;
+      expect(openButton.attributes('disabled')).toBeUndefined();
+      await openButton.trigger('click');
+      await row.get(`button[aria-label="${t('downloads.row.show')}"]`).trigger('click');
+      expect(open).toHaveBeenCalledWith('plugin:opener|open_path', expect.objectContaining({ path: '/saved.mp4' }));
+      expect(reveal).toHaveBeenCalled();
+      // A multi-file result with even one newly saved file is not an all-reused download.
+      destinations.addDestination(id, { path: '/new.mp4', confidence: 100, alreadyDownloaded: false });
+      await nextTick();
+      expect(row.text()).not.toContain(t('downloads.row.alreadySaved'));
+      // A reused stream before a fresh final merge must not label the new file as reused.
+      destinations.deleteDestinations(id);
+      destinations.addDestination(id, { path: '/stream.mp4', confidence: 90, alreadyDownloaded: true });
+      destinations.addDestination(id, { path: '/fresh.mp4', confidence: 100, alreadyDownloaded: false });
+      await nextTick();
+      expect(row.text()).not.toContain(t('downloads.row.alreadySaved'));
+      states.setGroupState(id, MediaState.cancelled);
+      await nextTick();
+      expect(row.text()).toContain(t('downloads.row.cancelledState'));
+      expect(row.text()).toContain(t('downloads.row.retry'));
+      expect(row.find(`button[aria-label="${t('downloads.row.remove')}"]`).exists()).toBe(true);
+    } finally {
+      row.unmount();
+      i18n.global.locale.value = previous;
+    }
+  });
+
   it.each(['button', 'Delete'] as const)('cancels immediately using %s', async (gesture) => {
     const cancel = vi.fn();
     installTauriMock({ group_cancel: cancel });
@@ -399,11 +480,52 @@ describe('row cancellation controls', () => {
       else await row.get('li').trigger('keydown', { key: 'Delete' });
       expect(cancel).toHaveBeenCalledWith('group_cancel', { groupId: 'cancel-row', discardFiles: true });
       expect(groups.findGroupById('cancel-row')).toBeUndefined();
+      const retained = groups.orderedGroups[0];
+      await row.setProps({ group: retained });
+      expect(row.get('li').attributes('data-phase')).toBe('cancelled');
+      expect(row.text()).toContain('Cancelled');
+      expect(row.find('button[aria-label="Pause"]').exists()).toBe(false);
+      expect(row.find('button[aria-label="Remove"]').exists()).toBe(true);
+      const retry = vi.spyOn(useMediaStore(), 'retryGroup').mockResolvedValue();
+      await row.findAll('button').find(button => button.text().includes('Try again'))!.trigger('click');
+      expect(retry).toHaveBeenCalledWith(retained.id);
     } finally { row.unmount(); }
   });
 });
 
 describe('list view search lifetime', () => {
+  it('reveals and briefly highlights a duplicate through filters, and still renders cancelled rows', async () => {
+    vi.useFakeTimers();
+    const groups = useMediaGroupStore();
+    const states = useMediaStateStore();
+    const id = 'focus-existing';
+    const url = 'https://instagram.com/p/ABC?igsh=first';
+    groups.createGroup({ id, url, title: 'Same post', mediaKind: 'image', total: 1, processed: 1, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'focus-item', isLeader: true, url, audioCodecs: [], formats: [], filesize: 0 } } });
+    states.setGroupState(id, MediaState.configure);
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ name: 'home', path: '/', component: HomeView }] });
+    await router.push('/?type=audio');
+    const view = mount(HomeView, { attachTo: document.body, global: { plugins: [router, i18n] } });
+    try {
+      downloadSearchQuery.value = 'hidden by search';
+      await useMediaStore().dispatchMediaInfoFetch('https://www.instagram.com/p/ABC/?igsh=second');
+      await flushPromises();
+      const row = view.get(`li[data-group-id="${id}"]`);
+      expect(row.classes()).toContain('bg-primary-soft');
+      expect(document.activeElement).toBe(row.element);
+      expect(router.currentRoute.value.query).toEqual({});
+      expect(downloadSearchQuery.value).toBe('');
+      await vi.advanceTimersByTimeAsync(1200);
+      expect(row.classes()).not.toContain('bg-primary-soft');
+      states.setGroupState(id, MediaState.cancelled);
+      await nextTick();
+      expect(view.get('li[data-phase=cancelled]').text()).toContain('Cancelled');
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it('clears search when sidebar type/status or screen changes', async () => {
     const router = createRouter({ history: createMemoryHistory(), routes: [{ name: 'home', path: '/', component: HomeView }, { name: 'settings', path: '/settings', component: { template: '<div />' } }] });
     await router.push('/');
@@ -423,4 +545,30 @@ describe('list view search lifetime', () => {
     } finally { view.unmount(); }
     expect(downloadSearchQuery.value).toBe('');
   });
+});
+
+it.each(['en', 'ar', 'fr'] as const)('shows retry waits instead of stale progress in %s', async (locale) => {
+  const previous = i18n.global.locale.value;
+  i18n.global.locale.value = locale;
+  const item = { id: 'waiting-item', isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats: [], filesize: 0 };
+  const group = { ...item, id: 'waiting', total: 1, processed: 1, errored: 0, isCombined: false, items: { [item.id]: item } };
+  useMediaGroupStore().createGroup(group);
+  useMediaStateStore().setState(item.id, MediaState.downloading);
+  let row!: ReturnType<typeof useDownloadRow>;
+  const wrapper = mount(defineComponent({ setup() {
+    row = useDownloadRow(ref(group));
+    return () => null;
+  } }), { global: { plugins: [i18n] } });
+  try {
+    const progress = useMediaProgressStore();
+    progress.processMediaProgressPayload({ id: item.id, groupId: group.id, category: ProgressCategory.video, percentage: 63, etaSecs: 30 });
+    progress.processMediaProgressStagePayload({ id: item.id, groupId: group.id, stage: ProgressStage.waitingNetwork });
+    expect(row.metaLine.value).toContain(i18n.global.t('reliability.waitingNetwork'));
+    progress.processMediaProgressStagePayload({ id: item.id, groupId: group.id, stage: ProgressStage.siteBusy });
+    expect(row.metaLine.value.join(' ')).toContain('30');
+    expect(row.metaLine.value.join(' ')).not.toContain('63%');
+  } finally {
+    wrapper.unmount();
+    i18n.global.locale.value = previous;
+  }
 });

@@ -4,12 +4,29 @@ use std::{
   path::{Path, PathBuf},
 };
 
+static LIVE_STAGING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
+  std::sync::LazyLock::new(Default::default);
 pub struct Staging {
   pub path: PathBuf,
 }
 impl Staging {
   pub fn new() -> Result<Self, GalleryError> {
-    let path = std::env::temp_dir().join(format!("nezzel-images-{}", uuid::Uuid::new_v4()));
+    Self::in_root(&std::env::temp_dir())
+  }
+  pub fn in_root(root: &Path) -> Result<Self, GalleryError> {
+    std::fs::create_dir_all(root).map_err(|_| GalleryError::Invalid)?;
+    if std::fs::symlink_metadata(root)
+      .map_err(|_| GalleryError::Invalid)?
+      .file_type()
+      .is_symlink()
+    {
+      return Err(GalleryError::Invalid);
+    }
+    let mut live = LIVE_STAGING.lock().unwrap_or_else(|e| e.into_inner());
+    let path = root
+      .canonicalize()
+      .map_err(|_| GalleryError::Invalid)?
+      .join(format!(".nezzel-images-{}", uuid::Uuid::new_v4()));
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
@@ -18,6 +35,7 @@ impl Staging {
       builder.mode(0o700);
     }
     builder.create(&path).map_err(|_| GalleryError::Invalid)?;
+    live.insert(path.clone());
     Ok(Self { path })
   }
   pub fn json(&self, filename: &str, value: &serde_json::Value) -> Result<PathBuf, GalleryError> {
@@ -36,7 +54,47 @@ impl Staging {
 }
 impl Drop for Staging {
   fn drop(&mut self) {
+    let mut live = LIVE_STAGING.lock().unwrap_or_else(|e| e.into_inner());
     let _ = std::fs::remove_dir_all(&self.path);
+    live.remove(&self.path);
+  }
+}
+
+/// Startup only: skip current-session staging, foreign names, and symlink roots/entries.
+pub(crate) fn sweep_image_staging(roots: &[PathBuf]) {
+  let live = LIVE_STAGING.lock().unwrap_or_else(|e| e.into_inner());
+  for root in roots {
+    if !std::fs::symlink_metadata(root).is_ok_and(|m| m.file_type().is_dir()) {
+      continue;
+    }
+    let Ok(root) = root.canonicalize() else {
+      continue;
+    };
+    let Ok(entries) = std::fs::read_dir(root) else {
+      continue;
+    };
+    for entry in entries.flatten() {
+      let path = entry.path();
+      let valid = entry
+        .file_name()
+        .to_str()
+        .and_then(|s| s.strip_prefix(".nezzel-images-"))
+        .is_some_and(|s| uuid::Uuid::parse_str(s).is_ok());
+      if !valid || live.contains(&path) || !entry.file_type().is_ok_and(|t| t.is_dir()) {
+        continue;
+      }
+      #[cfg(unix)]
+      {
+        use std::os::unix::fs::MetadataExt;
+        if !entry
+          .metadata()
+          .is_ok_and(|m| m.uid() == unsafe { libc::geteuid() } && m.mode() & 0o077 == 0)
+        {
+          continue;
+        }
+      }
+      let _ = std::fs::remove_dir_all(path);
+    }
   }
 }
 
@@ -267,6 +325,93 @@ fn finalize_with_link(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn gallery_staging_is_hidden() {
+    let root = Staging::new().unwrap();
+    let stage = Staging::in_root(&root.path).unwrap();
+    assert!(stage
+      .path
+      .file_name()
+      .unwrap()
+      .to_str()
+      .unwrap()
+      .starts_with(".nezzel-images-"));
+  }
+
+  #[test]
+  fn gallery_startup_sweep_removes_crash_orphans_and_preserves_live_and_foreign_paths() {
+    let root = Staging::new().unwrap();
+    let live = Staging::in_root(&root.path).unwrap();
+    let orphan = root
+      .path
+      .join(format!(".nezzel-images-{}", uuid::Uuid::new_v4()));
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::DirBuilderExt;
+      builder.mode(0o700);
+    }
+    builder.create(&orphan).unwrap();
+    std::fs::write(orphan.join("images.txt"), b"abandoned").unwrap();
+    let foreign = root.path.join(".nezzel-images-user-folder");
+    std::fs::create_dir(&foreign).unwrap();
+    #[cfg(unix)]
+    {
+      let link = root
+        .path
+        .join(format!(".nezzel-images-{}", uuid::Uuid::new_v4()));
+      std::os::unix::fs::symlink(&foreign, &link).unwrap();
+      let root_link = root.path.join("linked-root");
+      std::os::unix::fs::symlink(&root.path, &root_link).unwrap();
+      sweep_image_staging(&[root_link]);
+      assert!(orphan.exists());
+    }
+    sweep_image_staging(std::slice::from_ref(&root.path));
+    assert!(!orphan.exists());
+    assert!(live.path.exists());
+    assert!(foreign.exists());
+    #[cfg(unix)]
+    assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 4);
+  }
+  #[test]
+  fn image_staging_cleans_success_failure_and_cancellation() {
+    for outcome in ["success", "failure", "cancelled"] {
+      let root = Staging::new().unwrap();
+      let destination = root.path.join("final.png");
+      {
+        let stage = Staging::in_root(&root.path).unwrap();
+        std::fs::create_dir(stage.path.join("1")).unwrap();
+        let source = stage.path.join("1/asset.png");
+        std::fs::write(
+          &source,
+          include_bytes!("../../../src/assets/placeholder.png"),
+        )
+        .unwrap();
+        std::fs::write(stage.path.join("images.txt"), b"manifest").unwrap();
+        if outcome == "success" {
+          finalize(&source, &destination, || false).unwrap();
+        }
+        if outcome == "cancelled" {
+          assert!(finalize(&source, &destination, || true).is_err());
+        }
+      }
+      let files: Vec<_> = std::fs::read_dir(&root.path)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+      assert_eq!(
+        files,
+        if outcome == "success" {
+          vec![destination]
+        } else {
+          vec![]
+        },
+        "{outcome}"
+      );
+    }
+  }
+
   #[test]
   fn validates_bytes_and_never_overwrites_an_existing_file() {
     let stage = Staging::new().unwrap();

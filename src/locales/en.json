@@ -1055,6 +1055,33 @@
   },
   "errors": {
     "runner": {
+      "vimeoSignInRequired": {
+        "shortMessage": "Vimeo needs you to sign in",
+        "message": "Vimeo now needs you signed in to vimeo.com in your browser.",
+        "action": "Sign in to Vimeo in your browser"
+      },
+      "listingPartial": {
+        "shortMessage": "The listing stopped early",
+        "message": "Showing the items found before the site stopped responding.",
+        "action": "Open the page for more items"
+      },
+      "galleryItemsSkipped": {
+        "shortMessage": "Some items could not be saved",
+        "message": "The other items were saved. Some items could not be downloaded.",
+        "action": "Open the post to check the missing items"
+      },
+      "podcastFeed": {
+        "shortMessage": "This is a podcast feed",
+        "message": "This is a podcast feed. Open an episode link to save its audio.",
+        "action": "Copy an episode link"
+      },
+      "legalRestriction451": {
+        "shortMessage": "Not available for legal reasons",
+        "message": "Not available in your country for legal reasons.",
+        "action": "Open the page on the site for details"
+      },
+      "diskSpaceUnavailable": {"shortMessage": "Could not check free disk space.", "message": "Could not check free disk space.", "action": "Choose an accessible download folder."},
+      "downloadStalled": {"shortMessage": "The download stopped making progress.", "message": "The download stopped making progress.", "action": "Try again when the connection is stable."},
       "networkTimeout": {
         "shortMessage": "The connection timed out",
         "message": "The site did not respond before the connection timed out",
@@ -1105,6 +1132,26 @@
         "message": "The browser or its selected profile is no longer available",
         "action": "Choose an installed browser profile in Login settings"
       },
+      "playlistEmpty": {
+        "shortMessage": "This page has no videos to save",
+        "message": "This page has no videos to save. Open it on the site or copy an individual video link.",
+        "action": "Copy an individual video link"
+      },
+      "profileNotSupported": {
+        "shortMessage": "Profile links aren’t supported",
+        "message": "Profile links aren’t supported. Copy a post or reel link.",
+        "action": "Copy a post or reel link"
+      },
+      "telegramAppOnly": {
+        "shortMessage": "Only plays in Telegram",
+        "message": "This video only plays in the Telegram app. Telegram does not share it in the web preview.",
+        "action": "Open in Telegram"
+      },
+      "storyExpired": {
+        "shortMessage": "This story is no longer available",
+        "message": "This story has expired or isn't available to your account",
+        "action": "Open the story on Instagram to check"
+      },
       "accountAccessDenied": {
         "shortMessage": "Your account may not have access",
         "message": "The site still refused after your login was sent. Your account may not have access to this content",
@@ -1149,6 +1196,11 @@
         "shortMessage": "Not available in your country",
         "message": "This content isn’t available in your region",
         "action": "Nezzel can't change this. Try a link from another source"
+      },
+      "redditNetworkBlocked": {
+        "shortMessage": "Reddit blocked this request",
+        "message": "Reddit’s network security blocked this download. Signing in again will not fix this block.",
+        "action": "Open the post on Reddit"
       },
       "accessForbidden403": {
         "shortMessage": "The site refused this download",
@@ -1196,9 +1248,9 @@
         "action": "Update the download tools in Settings, then try again"
       },
       "drmProtected": {
-        "shortMessage": "This video is copy-protected",
-        "message": "The site protects this video against copying, so Nezzel can't save it",
-        "action": "Nezzel can't save protected videos. Watch it on the site"
+        "shortMessage": "This is protected by the site and can't be saved",
+        "message": "This is protected by the site and can't be saved.",
+        "action": "You can watch it on the site"
       },
       "embedOnly": {
         "shortMessage": "This video only plays inside another page",
@@ -1214,6 +1266,21 @@
         "shortMessage": "The site is still preparing this media",
         "message": "The site is still preparing this media. Try again later.",
         "action": "Try again later"
+      },
+      "notLive": {
+        "shortMessage": "This account is not live right now",
+        "message": "This account is not live right now. Try again when a broadcast starts.",
+        "action": "Try again when the account is live"
+      },
+      "liveNow": {
+        "shortMessage": "This is a live stream",
+        "message": "This is a live stream. Nezzel can save it after the broadcast ends.",
+        "action": "You can save it after it ends"
+      },
+      "likeeUnavailable": {
+        "shortMessage": "This Likee video cannot be saved from its link",
+        "message": "Likee only opens this video in its app now, so it cannot be saved from the link.",
+        "action": "Open the video in Likee"
       },
       "mediaUnavailable": {
         "shortMessage": "The site isn't offering this media right now",
@@ -1496,6 +1563,7 @@
       "clearFailed": "Clear failed"
     },
     "row": {
+      "listingCapped": "Showing the first 100 items",
       "downloadVideoInstead": "Download video instead",
       "retryWithBest": "Retry with Best",
       "reading": "Reading the link…",
@@ -1514,6 +1582,9 @@
       "details": "Details",
       "more": "More actions",
       "openPage": "Open the page",
+      "wantLiveDownload": "I want this feature",
+      "liveRequestNoted": "Thanks, noted",
+      "openVimeo": "Open in Vimeo",
       "openBrowser": "Open in browser",
       "perDownload": "Settings for this download",
       "saved": "Saved",
@@ -1552,6 +1623,8 @@
       "stillReading": "Still reading… {s} s",
       "readingStuck": "This site is slow to answer. Retry or remove it",
       "cancelled": "Download cancelled",
+      "cancelledState": "Cancelled",
+      "alreadySaved": "Already saved",
       "alreadyDownloaded": "Already downloaded",
       "resuming": "Resuming…",
       "cancel": "Cancel download"
@@ -1573,6 +1646,7 @@
       "notice": "Nezzel used your {browser} login for {host}",
       "noticeOwn": "Nezzel used its saved login for {host}",
       "privacy": "Browser logins are on by default. Nezzel uses only this site's cookies for the download. Protected temporary files are deleted after use; cookie data is never sent to Nezzel, crash reports or usage counts. Turn this off in Settings → Logins.",
+      "sessionExpired": "Your browser session has expired. Sign in again in {browser}, then retry",
       "embeddedRemedy": "Sign in to this site in Firefox, or add a cookies.txt file in Login settings, then retry.",
       "keychain": "macOS may ask to let Nezzel access the browser's Keychain",
       "tryAnother": "Try another browser",
@@ -1889,6 +1963,7 @@
     }
   },
   "capture": {
+    "automaticLogin": "Your browser login will be used automatically",
     "noFormats": "Open Options to review this link",
     "views": "{count} views",
     "photos": "1 photo | {n} photos",
@@ -2245,5 +2320,14 @@
     "offline": "You’re offline. Connect to the internet, then retry the tool repair.",
     "unavailable": "Downloads won’t work until the tools are repaired",
     "action": "Repair download tools"
+  },
+  "reliability": {
+    "waitingNetwork": "Waiting for connection…",
+    "siteBusy": "Site is busy, retrying in {n} s",
+    "keepAwake": "Keep computer awake",
+    "keepAwakeHint": "Prevent sleep while downloads are running.",
+    "resume": "Resume {n} download | Resume {n} downloads",
+    "dismiss": "Dismiss",
+    "changeFolder": "Change folder"
   }
 }

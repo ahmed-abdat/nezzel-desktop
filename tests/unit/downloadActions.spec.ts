@@ -154,7 +154,8 @@ describe('download row recovery', () => {
     try {
       actions.cancel();
       expect(cancelled).toHaveBeenCalledWith('group_cancel', { groupId: 'cancel-toast', discardFiles: true });
-      expect(groups.orderedGroups).toHaveLength(0);
+      expect(groups.orderedGroups).toHaveLength(1);
+      expect(useMediaStateStore().getGroupState(groups.orderedGroups[0].id)).toBe(MediaState.cancelled);
       const toast = useToastStore().toasts.at(-1)!;
       expect(toast).toMatchObject({ message: 'Download cancelled', duration: 5000, action: { label: 'Undo' } });
       toast.action!.run();

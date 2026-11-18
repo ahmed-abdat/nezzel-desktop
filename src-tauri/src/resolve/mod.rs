@@ -73,12 +73,14 @@ pub enum Resolution {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Failure {
+  TelegramAppOnly,
   Network,
   Timeout,
 }
 impl Failure {
   pub fn code(self) -> &'static str {
     match self {
+      Self::TelegramAppOnly => "telegramAppOnly",
       Self::Network => "networkNameResolutionFailed",
       Self::Timeout => "networkTimeout",
     }
@@ -90,6 +92,8 @@ pub enum Reason {
   PhotosOnly,
   NoMedia,
   Removed,
+  Unavailable,
+  Login,
   SiteNotSupported,
 }
 impl Reason {
@@ -98,6 +102,8 @@ impl Reason {
       Self::PhotosOnly => "photosOnly",
       Self::NoMedia => "noMediaFound",
       Self::Removed => "notFound404",
+      Self::Unavailable => "mediaUnavailable",
+      Self::Login => "signInRequired",
       Self::SiteNotSupported => "urlNotSupported",
     }
   }
@@ -191,6 +197,109 @@ async fn read_site<T: http::Transport>(url: &str, transport: &T) -> Verdict {
   } else {
     Verdict::NoMatch
   }
+}
+
+pub(crate) fn facebook_share(raw: &str) -> bool {
+  facebook::Identity::parse(raw)
+    .is_some_and(|identity| identity.short && identity.url.path().starts_with("/share/"))
+}
+
+pub(crate) fn facebook_photo_share(raw: &str) -> bool {
+  facebook::Identity::parse(raw)
+    .is_some_and(|identity| identity.short && identity.url.path().starts_with("/share/p/"))
+}
+
+pub(crate) fn facebook_post_target(raw: &str) -> bool {
+  facebook::Identity::parse(raw)
+    .is_some_and(|identity| !identity.short && identity.url.path().contains("/posts/"))
+}
+
+/// --ignore-no-formats-error retains the post URL even when Facebook exposes photos only.
+pub(crate) fn facebook_photo_redirect(source: &str, info: &serde_json::Value) -> Option<String> {
+  if !facebook_photo_share(source) || !info.get("formats")?.as_array()?.is_empty() {
+    return None;
+  }
+  let target = info.get("webpage_url")?.as_str()?;
+  facebook_post_target(target).then(|| target.to_owned())
+}
+
+/// A profile is not an individual Instagram post; reject it before any engine or login probe.
+pub(crate) fn instagram_profile(raw: &str) -> bool {
+  let Ok(url) = reqwest::Url::parse(raw) else {
+    return false;
+  };
+  let path = url.path().trim_matches('/');
+  let parts: Vec<_> = path.split('/').collect();
+  if url
+    .host_str()
+    .is_some_and(|host| crate::sites::host_is(host, "instagram.com"))
+    && matches!(url.scheme(), "https" | "http")
+    && (matches!(parts.as_slice(), [user, "reels" | "tagged"] if !user.is_empty())
+      || matches!(parts.as_slice(), ["explore", "tags", tag] if !tag.is_empty()))
+  {
+    return true;
+  }
+  matches!(url.scheme(), "https" | "http")
+    && url
+      .host_str()
+      .is_some_and(|host| crate::sites::host_is(host, "instagram.com"))
+    && !path.is_empty()
+    && path
+      .bytes()
+      .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.'))
+    && !matches!(
+      path,
+      "accounts"
+        | "explore"
+        | "direct"
+        | "stories"
+        | "reels"
+        | "reel"
+        | "p"
+        | "tv"
+        | "share"
+        | "about"
+        | "developer"
+        | "legal"
+    )
+}
+
+pub(crate) fn unsupported_profile(raw: &str) -> bool {
+  if instagram_profile(raw) {
+    return true;
+  }
+  let Ok(url) = reqwest::Url::parse(raw) else {
+    return false;
+  };
+  let host = url.host_str().unwrap_or_default();
+  let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
+  if (crate::sites::host_is(host, "facebook.com")
+    && matches!(parts.as_slice(), [page, "videos" | "reels" | "photos"] if !page.is_empty()))
+    || (host == "t.me"
+      && matches!(parts.as_slice(), [channel] if !channel.is_empty() && !channel.starts_with('+')))
+  {
+    return true;
+  }
+  matches!(url.scheme(), "https" | "http")
+    && url.host_str().is_some_and(threads::is_host)
+    && matches!(url.path().trim_matches('/').split('/').collect::<Vec<_>>().as_slice(),
+      [user] | [user, "replies" | "media" | "reposts"] if user.starts_with('@') && user.len() > 1)
+}
+
+/// yt-dlp may discover the wrapper only after its own cookie-bearing redirects.
+pub(crate) fn reddit_media_redirect(source: &str, stderr: &str) -> Option<String> {
+  if !reddit::is_post_url(source) {
+    return None;
+  }
+  stderr.lines().find_map(|line| {
+    let line = line.trim();
+    if !line.starts_with("ERROR:") {
+      return None;
+    }
+    let (_, target) = line.split_once("Unsupported URL:")?;
+    let target = target.trim();
+    reddit::media_target(target).map(|_| target.to_owned())
+  })
 }
 
 fn bilibili_player(raw: &str) -> Option<String> {
@@ -373,6 +482,7 @@ pub struct ResolvedInput {
   pub source_page: Option<String>,
   original_retried: bool,
   vimeo_impersonated: bool,
+  rumble_impersonated: bool,
   // A single budget; impersonation records only the chosen transport.
   facebook_retried: bool,
   facebook_impersonated: bool,
@@ -385,6 +495,7 @@ impl ResolvedInput {
       source_page: None,
       original_retried: false,
       vimeo_impersonated: false,
+      rumble_impersonated: false,
       facebook_retried: false,
       facebook_impersonated: false,
     }
@@ -418,7 +529,7 @@ impl ResolvedInput {
     if let Some(page) = &self.source_page {
       args.extend(["--referer", page.as_str()]);
     }
-    if self.vimeo_impersonated || self.facebook_impersonated {
+    if self.vimeo_impersonated || self.facebook_impersonated || self.rumble_impersonated {
       args.extend(["--impersonate", "chrome"]);
     }
     args.extend(["--", self.url.as_str()]);
@@ -451,9 +562,24 @@ impl ResolvedInput {
     true
   }
 
+  pub(crate) fn retry_rumble_403(&mut self, stderr: &str) -> bool {
+    if self.rumble_impersonated
+      || !stderr.to_ascii_lowercase().contains("http error 403")
+      || !reqwest::Url::parse(&self.url).ok().is_some_and(|url| {
+        url
+          .host_str()
+          .is_some_and(|host| crate::sites::host_is(host, "rumble.com"))
+      })
+    {
+      return false;
+    }
+    self.rumble_impersonated = true;
+    true
+  }
+
   pub(crate) fn impersonation_unavailable(&self, stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
-    self.vimeo_impersonated
+    (self.vimeo_impersonated || self.rumble_impersonated)
       && lower.contains("impersonat")
       && ["not available", "unavailable", "not found", "not supported"]
         .iter()
@@ -521,3 +647,10 @@ impl ResolvedInput {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) async fn threads_session<T: http::Transport>(url: &str, transport: &T) -> Resolution {
+  match tokio::time::timeout(Duration::from_secs(20), threads::read(url, transport)).await {
+    Ok(verdict) => verdict.resolution(url),
+    Err(_) => resolution_timeout(url),
+  }
+}

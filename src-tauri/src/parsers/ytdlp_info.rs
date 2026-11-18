@@ -95,7 +95,39 @@ pub fn parse_ytdlp_info_for_url(
   }
   Ok(match detect_info_type(&info) {
     InfoType::Livestream => parse_livestream(info, id),
-    InfoType::Playlist => parse_playlist(info, id),
+    InfoType::Playlist => {
+      let media = parse_playlist(info, id);
+      if matches!(&media, ParsedMedia::Playlist(list) if list.entries.is_empty()) {
+        let account_feed = source
+          .and_then(|s| reqwest::Url::parse(s).ok())
+          .is_some_and(|url| {
+            url
+              .host_str()
+              .is_some_and(|host| crate::sites::host_is(host, "youtube.com"))
+              && url.path().starts_with("/feed/")
+          });
+        // These roots list albums/videos as page links that yt-dlp does not enumerate.
+        let profile_root = source
+          .and_then(|s| reqwest::Url::parse(s).ok())
+          .is_some_and(|url| {
+            let host = url.host_str().unwrap_or_default();
+            (crate::sites::host_is(host, "bandcamp.com") && matches!(url.path(), "" | "/"))
+              || (crate::sites::host_is(host, "rumble.com")
+                && (url.path().starts_with("/user/") || url.path().starts_with("/c/")))
+          });
+        return Err(
+          if account_feed {
+            "signInRequired"
+          } else if profile_root {
+            "profileNotSupported"
+          } else {
+            "playlistEmpty"
+          }
+          .into(),
+        );
+      }
+      media
+    }
     InfoType::Single => {
       let mut media = parse_single(info, id);
       if let ParsedMedia::Single(single) = &mut media {
@@ -158,6 +190,36 @@ pub(crate) fn caption_title(raw: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn empty_listings_fail_and_youtube_feeds_request_login() {
+    for (source, code) in [
+      ("https://www.youtube.com/feed/history", "signInRequired"),
+      (
+        "https://www.youtube.com/feed/subscriptions",
+        "signInRequired",
+      ),
+      ("https://artist.bandcamp.com/", "profileNotSupported"),
+      (
+        "https://rumble.com/user/SpiderPlayers",
+        "profileNotSupported",
+      ),
+      ("https://artist.bandcamp.com/album/none", "playlistEmpty"),
+      (
+        "https://youtube.com.evil.test/feed/history",
+        "playlistEmpty",
+      ),
+    ] {
+      for entries in [serde_json::json!([]), serde_json::json!([{}])] {
+        let info = serde_json::json!({"_type":"playlist", "entries":entries});
+        assert_eq!(
+          parse_ytdlp_info_for_url(&info.to_string(), "row".into(), Some(source)).unwrap_err(),
+          code,
+          "{source}"
+        );
+      }
+    }
+  }
+
   use super::*;
   use serde_json::{json, Value};
 
@@ -302,6 +364,27 @@ mod tests {
     assert_eq!(
       (post.thumbnail, post.attachments[0].thumbnail.clone()),
       (None, None)
+    );
+  }
+
+  #[test]
+  fn bilibili_http_thumbnail_is_emitted_as_https() {
+    // Recorded Bilibili thumbnail: the hdslb.com CDN is https-capable but yt-dlp reports http.
+    let thumb = "http://i2.hdslb.com/bfs/archive/49267ce20bc246be6304bf369a3ded0256854c23.jpg";
+    let mut info = json!({"id":"BV1", "title":"clip", "url":"https://cdn.example/v.mp4", "ext":"mp4", "thumbnail":thumb});
+    let single = parse_ytdlp_info(&info.to_string(), "row".into()).unwrap();
+    info["_type"] = json!("playlist");
+    info["webpage_url"] = json!("https://www.bilibili.com/video/BV1");
+    info["entries"] = json!([{"id":"a", "url":"https://cdn.example/a.mp4", "thumbnail":thumb}]);
+    let playlist = parse_ytdlp_info(&info.to_string(), "row".into()).unwrap();
+    let expected = thumb.replacen("http://", "https://", 1);
+    assert_eq!(
+      serde_json::to_value(&single).unwrap()["thumbnail"],
+      expected
+    );
+    assert_eq!(
+      serde_json::to_value(&playlist).unwrap()["entries"][0]["thumbnail"],
+      expected
     );
   }
 

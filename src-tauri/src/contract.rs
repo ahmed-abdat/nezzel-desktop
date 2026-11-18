@@ -259,6 +259,18 @@ pub fn render_ts() -> String {
   );
   ts.doc("Known sites (`sites.rs`): display name, hosts (the host or a subdomain), yt-dlp extractor keys.");
   ts.sites();
+  use crate::links::normalize as links;
+  let rules = serde_json::json!({
+    "aliases": links::ALIASES, "trackers": links::TRACKERS,
+    "shorteners": links::SHORTENERS, "wrappers": links::WRAPPERS,
+    "maxWrappers": links::MAX_WRAPPERS,
+    "scopedTrackers": links::SCOPED_TRACKERS,
+    "instagramPaths": links::INSTAGRAM_POST_PATHS, "youtubePaths": links::YOUTUBE_VIDEO_PATHS,
+  });
+  let _ = writeln!(
+    ts.0,
+    "\n// eslint-disable-next-line @stylistic/object-curly-spacing, @stylistic/quote-props, @stylistic/quotes, @stylistic/key-spacing, @stylistic/comma-spacing -- generated JSON\nexport const LINK_RULES = {rules} as const;"
+  );
   ts.0
 }
 

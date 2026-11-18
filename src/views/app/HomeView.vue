@@ -1,5 +1,9 @@
 <template>
   <div class="flex min-h-full flex-col">
+    <div v-if="mediaStore.restoreCount" class="flex flex-wrap items-center gap-2 border-b border-hairline px-4 py-3" role="status">
+      <Button @click="mediaStore.resumeSavedDownloads">{{ t('reliability.resume', { n: count(mediaStore.restoreCount) }, mediaStore.restoreCount) }}</Button>
+      <Button variant="ghost" @click="mediaStore.dismissSavedDownloads">{{ t('reliability.dismiss') }}</Button>
+    </div>
     <!-- Empty: one calm moment with a single call to action (the field lives in the toolbar). -->
     <div v-if="!hasAny" class="flex flex-1 flex-col items-center justify-center px-8 py-12 text-center animate-in fade-in-0 duration-200">
       <img :src="nezzelMark" alt="" class="size-16" />
@@ -91,7 +95,7 @@
           <Button variant="ghost" class="-my-1 h-6 px-2 font-normal" @click="removeRows(shownFailed.map(row => row.id))">{{ t('downloads.list.clearFailed') }}</Button>
         </header>
         <ul>
-          <download-row v-for="row in shownFailed" :key="row.id" :group="row.group" />
+          <download-row v-for="row in shownFailed" :key="row.id" :group="row.group" :highlighted="highlightedId === row.id" />
         </ul>
       </section>
 
@@ -105,7 +109,7 @@
           </template>
         </header>
         <ul>
-          <download-row v-for="row in shownNeedsYou" :key="row.id" :group="row.group" />
+          <download-row v-for="row in shownNeedsYou" :key="row.id" :group="row.group" :highlighted="highlightedId === row.id" />
         </ul>
       </section>
 
@@ -115,7 +119,7 @@
           <h2 id="ledger-active" class="flex-1">{{ t('downloads.sections.active') }} <span class="tnum ms-1 font-normal">{{ count(shownActive.length) }}</span></h2>
         </header>
         <ul>
-          <download-row v-for="row in shownActive" :key="row.id" :group="row.group" />
+          <download-row v-for="row in shownActive" :key="row.id" :group="row.group" :highlighted="highlightedId === row.id" />
         </ul>
       </section>
 
@@ -130,7 +134,7 @@
           </Tooltip>
         </header>
         <ul>
-          <download-row v-for="row in shownFinished" :key="row.id" :group="row.group" />
+          <download-row v-for="row in shownFinished" :key="row.id" :group="row.group" :highlighted="highlightedId === row.id" />
         </ul>
       </section>
 
@@ -150,7 +154,7 @@
 
 <script setup lang="ts">
 import { Input, type InputApi } from '../../components/ui/input';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { Search as SearchIcon, X } from '@lucide/vue';
@@ -190,6 +194,33 @@ const { clearFinished, removeRows } = useListRemoval();
 const { reportGroups } = useDownloadReports();
 const hidden = useListVisibilityStore();
 const mediaStore = useMediaStore();
+const highlightedId = ref<string | null>(null);
+let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+watch(() => mediaStore.duplicateFocus, async (request, _previous, onCleanup) => {
+  if (!request) return;
+  let cancelled = false;
+  onCleanup(() => {
+    cancelled = true;
+  });
+  query.value = '';
+  if (Object.keys(route.query).length) await router.replace({ name: 'home' });
+  await nextTick();
+  if (cancelled || mediaStore.duplicateFocus !== request) return;
+  const row = [...document.querySelectorAll<HTMLElement>('li[data-group-id]')].find(row => row.dataset.groupId === request.id);
+  if (!row) {
+    mediaStore.duplicateFocus = null;
+    return;
+  }
+  row.scrollIntoView?.({ block: 'center' });
+  row.focus({ preventScroll: true });
+  highlightedId.value = request.id;
+  mediaStore.duplicateFocus = null;
+  clearTimeout(highlightTimer);
+  highlightTimer = setTimeout(() => {
+    highlightedId.value = null;
+  }, 1000);
+}, { immediate: true, flush: 'post' });
+onBeforeUnmount(() => clearTimeout(highlightTimer));
 const optionsStore = useMediaOptionsStore();
 const { defaultChoice, compactRows, showThumbnails } = useUiPrefs();
 const isStarting = ref(false);

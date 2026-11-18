@@ -3,9 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useI18n } from 'vue-i18n';
 import { emptyDetails, type CaptureOffer } from '../captureTypes';
-import { failReason, type FailAction } from '../helpers/captureFailure';
+import { canUseAutomaticLogin, failReason, type FailAction } from '../helpers/captureFailure';
 import { isKnownAudioSite } from '../helpers/captureChoices';
 import { fileCategory } from '../helpers/fileCategory';
+import { siteForHost, siteLogo } from '../helpers/siteLogo';
 import { formatDuration } from '../helpers/units';
 import { useLocaleNumber } from './useLocaleNumber';
 import type { Settings } from '../tauri/types/config';
@@ -35,22 +36,27 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   const slow = ref(false);
   const thumbFailed = ref(false);
   const faviconFailed = ref(false);
+  const auth = ref<Settings['auth']>();
   let unlisten: UnlistenFn | undefined;
   let slowTimer: ReturnType<typeof setTimeout> | undefined;
   let snapshotTimer: ReturnType<typeof setInterval> | undefined;
 
   const details = computed(() => offer.value.details ?? emptyDetails());
   const failure = computed(() => failReason(offer.value.reason));
+  const automaticLogin = computed(() => offer.value.failed && canUseAutomaticLogin(offer.value.reason, auth.value));
+  const failed = computed(() => offer.value.failed && !automaticLogin.value);
   const fileKind = computed(() => details.value.mediaKind === 'file' ? fileCategory(offer.value.title || offer.value.url) : undefined);
   const isPhotos = computed(() => ['image', 'carousel', 'mixed'].includes(details.value.mediaKind ?? ''));
   const isPlaylist = computed(() => offer.value.feed || details.value.mediaKind === 'playlist');
   const choicesLoading = computed(() => !!offer.value.url && !offer.value.read && !offer.value.failed
     && !isPlaylist.value && !isKnownAudioSite(offer.value.url));
-  /** The site's own favicon (the same host the link points to; nothing goes to a third party). */
+  const logo = computed(() => siteLogo(offer.value.url));
+  /** Unknown sites only: the site's own favicon, when remote images are allowed. */
   const favicon = computed(() => {
-    if (!offer.value.remoteImages) return null;
+    if (logo.value || !offer.value.remoteImages) return null;
     try {
       const url = new URL(offer.value.url);
+      if (siteForHost(url.hostname)) return null;
       return url.protocol === 'https:' ? `${url.origin}/favicon.ico` : null;
     } catch {
       return null;
@@ -85,6 +91,7 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
 
   async function syncAppearance() {
     const settings = await invoke<Settings>('config_get');
+    auth.value = settings?.auth;
     applyAppearance(settings.appearance);
   }
 
@@ -92,13 +99,15 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   async function refresh() {
     const ask = ++asked;
     const value = await invoke<CaptureOffer>('capture_snapshot');
+    if (value.id !== offer.value.id) await syncAppearance().catch(() => {
+      auth.value = undefined;
+    });
     if (ask === asked) apply(value);
   }
   function apply(value: CaptureOffer) {
     // Typing in the bar replaces this offer: its own late answers must not bring the old link back.
     if (editing.value && value.id === offer.value.id) return;
     if (value.id !== offer.value.id) {
-      void syncAppearance().catch(() => {});
       hooks.onNewOffer?.(value, editing.value);
       editing.value = false;
     }
@@ -113,15 +122,20 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
 
   /** One action at a time: a double Enter must not start the download twice. */
   async function act(action: CaptureWindowAction, choice?: CaptureChoice) {
-    // A failed read never offers Download (it would fail again): Enter does nothing there.
-    if (action === 'download' && offer.value.failed) return;
+    // An anonymous login refusal can continue through the authenticated main-window fetch.
+    if (action === 'download' && failed.value) return;
     if (action === 'download' && isPlaylist.value) {
       action = 'options';
     }
     if (action !== 'dismiss' && action !== 'report' && (!offer.value.url || offer.value.resolving || editing.value || acting.value)) return;
     if (action !== 'dismiss') acting.value = true;
+    const id = offer.value.id;
     try {
-      await invoke('capture_action', { id: offer.value.id, action, choice: choice ?? null });
+      if (action === 'download' && automaticLogin.value) {
+        await syncAppearance();
+        if (failed.value || offer.value.id !== id || editing.value) return;
+      }
+      await invoke('capture_action', { id, action, choice: choice ?? null });
     } catch {
       if (action !== 'dismiss') error.value = 'action';
     } finally {
@@ -169,5 +183,5 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
     clearInterval(snapshotTimer);
   });
 
-  return { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, fileKind, isPhotos, isPlaylist, choicesLoading, favicon, bestParts, facts, act, onFail, start };
+  return { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, failed, automaticLogin, fileKind, isPhotos, isPlaylist, choicesLoading, logo, favicon, bestParts, facts, act, onFail, start };
 }

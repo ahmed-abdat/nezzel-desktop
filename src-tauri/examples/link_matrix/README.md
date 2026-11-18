@@ -137,9 +137,9 @@ pipeline with terminal app code `noMediaFound`; `gone` requires `notFound404` or
 `geoBlocked`. Both require no saved artifacts; earlier fallback codes, ambiguous
 private/unavailable codes, cancellation and timeouts cannot satisfy them. `file`
 requires a nonempty regular output with magic matching its suffix (PDF, ZIP,
-EXE/DLL, MSI, 7z, RAR, gzip/tgz, bzip2, xz, ustar); unknown types fail closed. For a public file without a supported magic signature (for example TXT, CSV or source code), put an independently checked `sha256=<64 hex digits>` token in `note`. That row must match the entire file digest; an incorrect digest, malformed token or empty output fails. This does not relax unannotated rows.
+EXE/DLL, MSI, 7z, RAR, gzip/tgz, bzip2, xz, ustar), OOXML ZIPs containing `[Content_Types].xml` (DOCX/XLSX/PPTX), or MP4/MOV `ftyp`. TXT, CSV, JSON and extensionless text must be nonempty UTF-8 without binary control characters. Other types fail closed. For an unsupported type, put an independently checked `sha256=<64 hex digits>` token in `note`. That row must match the entire file digest; an incorrect digest, malformed token or empty output fails.
 LOGIN and GONE on other expectations require explicit diagnostic/error evidence;
-403 and 429 remain FAIL. A timeout remains a harness-budget failure.
+Explicit `accessForbidden403`, `telegramAppOnly` and `storyExpired` expectations require that exact terminal app code. An unexpected 403 or any 429 remains FAIL. A timeout remains a harness-budget failure.
 
 Media PASS requires no fatal app event, nonempty final files, ffprobe stream validation,
 and matching expected kinds/counts. Every request must produce new verified files;

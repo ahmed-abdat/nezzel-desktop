@@ -135,7 +135,15 @@ pub fn plan(input: &str, export: Export) -> Option<Plan> {
       }
       id = value.to_owned();
       let doc = doc.to_owned();
+      // A pasted export link already names its format; the setting only covers edit and view links.
+      let explicit = match segments.get(3..) {
+        Some(["export"]) => query(&url, "format"),
+        Some(["export", format]) => Some((*format).to_owned()),
+        _ => None,
+      }
+      .filter(|f| (1..=5).contains(&f.len()) && f.bytes().all(|b| b.is_ascii_alphanumeric()));
       let format = match (export, doc.as_str()) {
+        _ if explicit.is_some() => explicit.as_deref().unwrap_or("pdf"),
         (Export::Pdf, _) => "pdf",
         (Export::Office, "document") => "docx",
         (Export::Office, "spreadsheets") => "xlsx",
@@ -526,10 +534,6 @@ impl Plan {
     self.size = value["size"]
       .as_u64()
       .or_else(|| value["size"].as_str().and_then(|s| s.parse().ok()));
-  }
-  pub(crate) fn folder(&self) -> bool {
-    matches!(self.host, Host::Dropbox)
-      && (self.url.path().starts_with("/scl/fo/") || self.url.path().starts_with("/sh/"))
   }
   pub(crate) fn native_export(&self) -> bool {
     matches!(self.host, Host::Docs)

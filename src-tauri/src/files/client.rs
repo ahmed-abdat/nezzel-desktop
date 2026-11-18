@@ -34,6 +34,7 @@ fn cause_class(debug: &str) -> &'static str {
     .map_or("other", |(_, class)| class)
 }
 pub(crate) fn network_error(error: reqwest::Error) -> Error {
+  let stalled = error.is_timeout() && !error.is_connect();
   let kind = if error.is_timeout() && error.is_connect() {
     "connect_timeout"
   } else if error.is_timeout() {
@@ -57,7 +58,11 @@ pub(crate) fn network_error(error: reqwest::Error) -> Error {
   }
   let cause = cause_class(&format!("{:?}", error.without_url()));
   tracing::warn!(error_kind = kind, io_kind = ?io_kind, cause_class = cause, "File HTTP request failed");
-  Error::Network
+  if stalled {
+    Error::Stalled
+  } else {
+    Error::Network
+  }
 }
 #[derive(Clone, Copy, Default)]
 enum AddressPolicy {
@@ -179,7 +184,7 @@ impl Client {
   fn pinned_client(&self, url: &Url, addresses: &[SocketAddr]) -> Result<reqwest::Client> {
     crate::net::pinned_builder(url.host_str().ok_or(Error::Address)?, addresses)
       .connect_timeout(Duration::from_secs(15))
-      .read_timeout(Duration::from_secs(30))
+      .read_timeout(Duration::from_secs(60))
       .build()
       .map_err(network_error)
   }

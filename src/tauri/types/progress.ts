@@ -53,6 +53,8 @@ export enum ProgressCategory {
 export enum ProgressStage {
   queued = 'queued',
   initializing = 'initializing',
+  waitingNetwork = 'waitingNetwork',
+  siteBusy = 'siteBusy',
   downloading = 'downloading',
   merging = 'merging',
   remuxing = 'remuxing',

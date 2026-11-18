@@ -143,7 +143,7 @@ pub fn matches_expected(
     "video" => videos > 0,
     "audio" => audio > 0 && videos == 0,
     "gif" => images + videos > 0,
-    "unknown" => images + videos + audio > 0,
+    "playlist" | "login-playlist" | "unknown" => images + videos + audio > 0,
     _ => false,
   }
 }
@@ -200,8 +200,55 @@ pub fn matches_error(expected: &str, codes: &[&str], error: &str) -> bool {
   match expected {
     "gone" => matches!(code, "notFound404" | "geoBlocked"),
     "none" => code == "noMediaFound",
-    _ => false,
+    "password" => code == "videoPasswordRequired",
+    "accessForbidden403" | "telegramAppOnly" | "storyExpired" => code == expected,
+    // `code:a|b`: the link can't be saved; the row passes when the app ends with one of these
+    // honest diagnostics (DRM, sign-in needed, not live, ...).
+    _ => expected
+      .strip_prefix("code:")
+      .is_some_and(|list| !code.is_empty() && list.split('|').any(|c| c == code)),
   }
+}
+
+/// Section downloads force ffmpeg's HTTP client instead of the normal YouTube downloader.
+pub fn section_ffmpeg_403(url: &str, evidence: &str) -> bool {
+  let youtube = reqwest::Url::parse(url).ok().is_some_and(|url| {
+    url.host_str().is_some_and(|host| {
+      host == "youtu.be" || host == "youtube.com" || host.ends_with(".youtube.com")
+    })
+  });
+  let lower = evidence.to_ascii_lowercase();
+  youtube
+    && lower.contains("[https @")
+    && lower.contains("403")
+    && lower.contains("ffmpeg exited with code 8")
+}
+
+/// Extension-less downloads (GitHub release binaries): Mach-O (thin, fat, universal), ELF, PE or a shebang script.
+fn is_executable_magic(bytes: &[u8]) -> bool {
+  [
+    &b"\xcf\xfa\xed\xfe"[..],
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xfe\xed\xfa\xce",
+    b"\xca\xfe\xba\xbe",
+    b"\x7fELF",
+    b"MZ",
+    b"#!",
+  ]
+  .iter()
+  .any(|m| bytes.starts_with(m))
+}
+
+/// Per-link harness deadline floor. File rows (Drive, Dropbox, archive.org downloads of tens of MB)
+/// get 900 s; everything else keeps 180 s. Gallery listings can still raise it further.
+pub fn row_deadline_floor(expected: &str) -> std::time::Duration {
+  std::time::Duration::from_secs(if expected == "file" { 900 } else { 180 })
+}
+
+/// Still images and plain files are not time-sliced: the 15 s AV preview section makes ffmpeg fail on them.
+pub fn use_preview_section(expected: &str) -> bool {
+  !matches!(expected, "file" | "image" | "photo" | "photos" | "carousel")
 }
 
 pub fn verify_file(path: &std::path::Path, checksum: Option<&str>) -> Result<(), String> {
@@ -245,9 +292,33 @@ pub fn verify_file(path: &std::path::Path, checksum: Option<&str>) -> Result<(),
     .to_ascii_lowercase();
   let matches = match extension.as_str() {
     "pdf" => bytes.starts_with(b"%PDF-"),
-    "zip" => [b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"]
+    "zip" | "apk" | "jar" | "aab" | "npz" => [b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"]
       .iter()
       .any(|m| bytes.starts_with(*m)),
+    "docx" | "xlsx" | "pptx" => {
+      bytes.starts_with(b"PK\x03\x04")
+        && zip::ZipArchive::new(file.try_clone().map_err(|e| e.to_string())?)
+          .is_ok_and(|mut archive| archive.by_name("[Content_Types].xml").is_ok())
+    }
+    "mp4" | "mov" => bytes.len() >= 12 && bytes.get(4..8) == Some(b"ftyp"),
+    // bencode dictionary: d8:announce... ; harness-only signature, no parsing.
+    "torrent" => bytes.first() == Some(&b'd') && bytes.windows(8).any(|w| w == b"announce"),
+    // UDIF images vary (bzip2/zlib/raw, "koly" trailer); any non-empty file is accepted.
+    "dmg" => !bytes.is_empty(),
+    "txt" | "csv" | "json" | "" if extension.is_empty() && is_executable_magic(&bytes) => true,
+    "txt" | "csv" | "json" | "" => {
+      use std::io::{BufRead, Seek, SeekFrom};
+      file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+      // Validate all bytes, including UTF-8 split across a read boundary and binary tails.
+      !bytes.is_empty()
+        && std::io::BufReader::new(file).lines().all(|line| {
+          line.is_ok_and(|line| {
+            line
+              .chars()
+              .all(|c| !c.is_control() || matches!(c, '\t' | '\x0c'))
+          })
+        })
+    }
     "exe" | "dll" => bytes.starts_with(b"MZ"),
     "msi" => bytes.starts_with(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"),
     "7z" => bytes.starts_with(b"7z\xbc\xaf\x27\x1c"),
@@ -321,6 +392,32 @@ mod tests {
   }
 
   #[test]
+  fn file_signatures_cover_apk_dmg_macho_torrent_and_form_feeds() {
+    let dir = std::env::temp_dir().join(format!("lm-sig-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, bytes, want) in [
+      ("a.apk", &b"PK\x03\x04rest"[..], true),
+      ("a.dmg", b"BZh11AY&SY", true),
+      ("yt-dlp_macos", b"\xca\xfe\xba\xbe\0\0\0\x02", true),
+      ("thin", b"\xcf\xfa\xed\xfe\x07\0", true),
+      ("a.torrent", b"d8:announce20:http://x/announce", true),
+      ("rfc.txt", b"line\n\x0cpage two\n", true),
+      ("bad.torrent", b"<html>", false),
+      ("bad.apk", b"<html>", false),
+      ("bin", b"\0\x01\x02", false),
+    ] {
+      let path = dir.join(name);
+      std::fs::write(&path, bytes).unwrap();
+      assert_eq!(verify_file(&path, None).is_ok(), want, "{name}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(
+      !use_preview_section("image") && !use_preview_section("file") && use_preview_section("video")
+    );
+    assert!(row_deadline_floor("file") > row_deadline_floor("video"));
+  }
+
+  #[test]
   fn verdict_requires_files_of_every_expected_kind_and_explicit_count() {
     for (expected, count, images, videos, audio, want) in [
       ("video", None, 1, 0, 0, false),
@@ -332,6 +429,9 @@ mod tests {
       ("mixed", None, 1, 0, 0, false),
       ("mixed", None, 1, 1, 1, true),
       ("unknown", None, 0, 0, 0, false),
+      ("playlist", None, 1, 2, 0, true),
+      ("playlist", None, 0, 0, 0, false),
+      ("login-playlist", None, 0, 1, 0, true),
     ] {
       assert_eq!(
         matches_expected(expected, count, expected == "mixed", images, videos, audio),
@@ -342,11 +442,61 @@ mod tests {
   }
 
   #[test]
+  fn section_forbidden_is_harness_noise_only_with_ffmpeg_evidence() {
+    let evidence = "[https @ 0x123] HTTP error 403 Forbidden\nERROR: ffmpeg exited with code 8";
+    assert!(section_ffmpeg_403(
+      "https://youtube.com/watch?v=1",
+      evidence
+    ));
+    assert!(!section_ffmpeg_403(
+      "https://youtube.com.evil.test/watch?v=1",
+      evidence
+    ));
+    assert!(!section_ffmpeg_403(
+      "https://youtube.com/watch?v=1",
+      "HTTP error 403 Forbidden"
+    ));
+    assert!(!section_ffmpeg_403("https://vimeo.com/1", evidence));
+  }
+
+  #[test]
+  fn expected_code_list_accepts_only_the_named_terminal_codes() {
+    assert!(matches_error(
+      "code:drmProtected|signInRequired",
+      &["signInRequired"],
+      "x"
+    ));
+    assert!(!matches_error("code:drmProtected", &["unknown"], "x"));
+    assert!(!matches_error("code:", &[""], "x"));
+    assert!(!matches_error(
+      "code:drmProtected",
+      &["drmProtected"],
+      "Harness per-link deadline: 180 seconds"
+    ));
+  }
+
+  #[test]
   fn expected_absence_requires_the_terminal_honest_code() {
     for (expected, code, error, want) in [
+      (
+        "accessForbidden403",
+        "accessForbidden403",
+        "fetch failed",
+        true,
+      ),
+      (
+        "accessForbidden403",
+        "signInRequired",
+        "fetch failed",
+        false,
+      ),
+      ("telegramAppOnly", "telegramAppOnly", "fetch failed", true),
+      ("storyExpired", "storyExpired", "fetch failed", true),
       ("gone", "notFound404", "fetch failed", true),
       ("gone", "geoBlocked", "fetch failed", true),
       ("none", "noMediaFound", "fetch failed", true),
+      ("password", "videoPasswordRequired", "fetch failed", true),
+      ("password", "accessForbidden403", "fetch failed", false),
       ("gone", "videoNotFoundOrPrivate", "fetch failed", false),
       ("gone", "mediaUnavailable", "fetch failed", false),
       ("gone", "noMediaFound", "fetch failed", false),
@@ -410,6 +560,15 @@ mod tests {
       ("bz2", b"BZh9payload", true),
       ("xz", b"\xfd7zXZ\0payload", true),
       ("tar", tar.as_slice(), true),
+      ("mp4", b"\0\0\0\x18ftypisom\0\0\0\0isommp42", true),
+      ("mov", b"\0\0\0\x14ftypqt  \0\0\0\0qt  ", true),
+      ("mp4", b"<html>blocked</html>", false),
+      ("txt", "ملف تجريبي\n".as_bytes(), true),
+      ("csv", b"name,value\na,1\n", true),
+      ("", b"#!/usr/bin/env python3\n", true),
+      ("txt", b"hello\0world", false),
+      ("txt", b"\xff", false),
+      ("txt", b"", false),
       ("pdf", b"", false),
       ("pdf", b"<html>not a PDF</html>", false),
       ("pdf", b"PK\x03\x04wrong kind", false),
@@ -420,11 +579,36 @@ mod tests {
     .into_iter()
     .enumerate()
     {
-      let path = root.join(format!("{index}.{extension}"));
+      let path = root.join(if extension.is_empty() {
+        format!("fixture-{index}")
+      } else {
+        format!("{index}.{extension}")
+      });
       std::fs::write(&path, bytes).unwrap();
       let got = verify_file(&path, None).is_ok();
       std::fs::remove_file(path).unwrap();
       assert_eq!(got, want, "{extension}, fixture {index}");
+    }
+    for extension in ["docx", "xlsx", "pptx"] {
+      for has_types in [false, true] {
+        use std::io::Write;
+        let path = root.join(format!("office.{extension}"));
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        zip
+          .start_file(
+            if has_types {
+              "[Content_Types].xml"
+            } else {
+              "other.xml"
+            },
+            zip::write::SimpleFileOptions::default(),
+          )
+          .unwrap();
+        zip.write_all(b"<Types/>").unwrap();
+        zip.finish().unwrap();
+        assert_eq!(verify_file(&path, None).is_ok(), has_types, "{extension}");
+        std::fs::remove_file(path).unwrap();
+      }
     }
     assert!(verify_file(&root, None).is_err());
     assert!(verify_file(&root.join("missing.pdf"), None).is_err());
@@ -440,7 +624,7 @@ mod tests {
       Some("0000000000000000000000000000000000000000000000000000000000000000")
     )
     .is_err());
-    assert!(verify_file(&text, None).is_err());
+    assert!(verify_file(&text, None).is_ok());
     std::fs::remove_file(&text).unwrap();
     std::fs::remove_dir(root).unwrap();
   }

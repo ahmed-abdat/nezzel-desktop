@@ -82,7 +82,10 @@ export async function startCaptureDelivery() {
         if (!(CAPTURE_CLAIMS as readonly string[]).includes(message.action)) return;
         const groupId = captureGroupId(message.id);
         // An existing row is one focus adopted; Rust sends the click that upgrades it once.
-        if (!groups.findGroupById(groupId)) media.createCaptureGroup(groupId, message.url);
+        if (media.createCaptureGroup(groupId, message.url, message.choice ?? undefined) !== groupId) {
+          void getCurrentWindow().unminimize().then(() => getCurrentWindow().show()).then(() => getCurrentWindow().setFocus()).catch(() => {});
+          return;
+        }
         if (message.action === 'download') {
           void media.downloadPreparedGroup(groupId, message.choice ?? undefined).then((result) => {
             if (result === 'playlist') openPicker(groupId);

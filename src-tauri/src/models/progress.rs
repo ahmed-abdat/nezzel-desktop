@@ -64,6 +64,8 @@ pub enum ProgressCategory {
 #[serde(rename_all = "camelCase")]
 pub enum ProgressStage {
   Initializing,
+  WaitingNetwork,
+  SiteBusy,
   Downloading,
   Merging,
   Remuxing,

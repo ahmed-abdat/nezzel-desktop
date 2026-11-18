@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia';
+import { computed, onScopeDispose, ref, watch } from 'vue';
+import { readQueue, writeQueue, type SavedDownload } from '../../helpers/queueRecovery';
 import { ProgressStage } from '../../tauri/types/progress';
 import type { MediaDestinationPayload } from '../../tauri/types/destination';
 import type { LibraryDisplay, LibraryRecord } from '../../tauri/types/library';
 import { libraryPathKey } from '../../helpers/folderPath';
-import { normalizePastedUrl } from '../../helpers/url';
+import { normalizePastedUrl, pendingUrlKey } from '../../helpers/url';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 import { MediaState, useMediaStateStore } from './state';
@@ -15,6 +17,7 @@ import { DownloadOptions, DownloadOverrides, MediaAddPayload, MediaItem, TrackTy
 import { useMediaSizeStore } from './size.ts';
 import { useMediaDiagnosticsStore } from './diagnostics.ts';
 import { useSettingsStore } from '../settings.ts';
+import { usePreferencesStore } from '../preferences';
 import { useListVisibilityStore } from '../listVisibility';
 import { useLoginStore } from '../login';
 import { Group } from '../../tauri/types/group.ts';
@@ -54,6 +57,102 @@ export const useMediaStore = defineStore('media', () => {
   const diagnosticsStore = useMediaDiagnosticsStore();
   const settingsStore = useSettingsStore();
   const { defaultChoice } = useUiPrefs();
+  const duplicateFocus = ref<{ id: string } | null>(null);
+
+  const pendingRestore = ref<SavedDownload[]>(readQueue());
+  const restoreCount = computed(() => pendingRestore.value.reduce((sum, row) => sum + Object.values(row.group.items).filter(item => !item.entries).length, 0));
+  const startupSweep = invoke('group_sweep_partials', {
+    saved: pendingRestore.value.flatMap(row => Object.values(row.group.items).filter(item => !item.entries).map(item => [row.group.id, item.id])),
+    roots: pendingRestore.value.flatMap(row => row.overrides?.output?.downloadDir ? [row.overrides.output.downloadDir] : []),
+  }).catch(error => console.warn('Partial cleanup deferred', error));
+  let restoring = false;
+  let persistTimer: ReturnType<typeof setTimeout> | undefined;
+  function saveQueue() {
+    if (restoring) return;
+    clearTimeout(persistTimer);
+    persistTimer = undefined;
+    const rows: SavedDownload[] = [];
+    for (const group of groupStore.orderedGroups) {
+      const options = optionsStore.getOptions(group.id);
+      if (!options) continue;
+      const items = Object.fromEntries(Object.entries(group.items).filter(([, item]) => {
+        const state = stateStore.getState(item.id);
+        return !!item.entries || (state != null && [MediaState.downloading, MediaState.downloadingList, MediaState.paused, MediaState.pausedList].includes(state));
+      }));
+      if (!Object.values(items).some(item => !item.entries)) continue;
+      const overrides = optionsStore.getOverrides(group.id);
+      const paths = usePreferencesStore().preferences.paths;
+      const fileRoot = settingsStore.settings.output.downloadDir;
+      const filesFolder = group.mediaKind === 'file' && fileRoot ? `${fileRoot.replace(/[\\/]$/, '')}/Files` : undefined;
+      const downloadDir = overrides?.output?.downloadDir || filesFolder || (options.trackType === TrackType.audio ? paths.audioDownloadDir : paths.videoDownloadDir) || settingsStore.settings.output.downloadDir;
+      rows.push({ group: { ...group, items }, options, overrides: { ...overrides, output: { ...overrides?.output, ...(downloadDir ? { downloadDir } : {}) } },
+        encodings: optionsStore.getEncodings(group.id), tracks: optionsStore.getTracks(group.id),
+        attachmentIds: group.attachments?.length ? optionsStore.getAttachmentSelection(group.id) : undefined });
+    }
+    const ids = new Set(rows.map(row => row.group.id));
+    writeQueue([...pendingRestore.value.filter(row => !ids.has(row.group.id)), ...rows]);
+  }
+  watch(() => [groupStore.groups, stateStore.itemStates, optionsStore.groupOptions, optionsStore.groupOverrides,
+    optionsStore.groupEncodings, optionsStore.groupTracks, optionsStore.groupAttachmentSelections], () => {
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(saveQueue, 500);
+  }, { deep: true, flush: 'post' });
+  globalThis.addEventListener?.('beforeunload', saveQueue);
+  onScopeDispose(() => {
+    clearTimeout(persistTimer);
+    globalThis.removeEventListener?.('beforeunload', saveQueue);
+  });
+
+  async function resumeSavedDownloads() {
+    if (restoring) return;
+    restoring = true;
+    const rows = pendingRestore.value;
+    pendingRestore.value = [];
+    for (const row of rows) {
+      groupStore.createGroup(row.group);
+      optionsStore.setOptions(row.group.id, row.options);
+      if (row.overrides) optionsStore.setOverrides(row.group.id, row.overrides);
+      if (row.encodings) optionsStore.setEncodings(row.group.id, row.encodings);
+      if (row.tracks) optionsStore.setTracks(row.group.id, row.tracks);
+      if (row.attachmentIds) optionsStore.setAttachmentSelection(row.group.id, row.attachmentIds);
+      for (const item of Object.values(row.group.items)) stateStore.setState(item.id, row.group.isCombined ? MediaState.pausedList : MediaState.paused);
+    }
+    restoring = false;
+    saveQueue();
+    for (const row of rows) await downloadGroup(row.group.id, row.options);
+  }
+  async function dismissSavedDownloads() {
+    await startupSweep;
+    const rows = pendingRestore.value;
+    pendingRestore.value = [];
+    saveQueue();
+    for (const row of rows) {
+      await invoke('group_cancel', { groupId: row.group.id, discardFiles: true,
+        partialRoots: row.overrides?.output?.downloadDir ? [row.overrides.output.downloadDir] : [] });
+    }
+  }
+
+  // Capture choices stay provisional until metadata supplies formats (Options must not apply early).
+  const pendingCaptureKinds = new Map<string, TrackType>();
+
+  /** Pending rows own their source and chosen kind; audio and video may be queued separately. */
+  function reusePendingGroup(url: string, trackType?: TrackType) {
+    const defaultTrack = optionsStore.getGlobalOptions()?.trackType ?? (defaultChoice.value === 'audio' ? TrackType.audio : TrackType.both);
+    const incomingAudio = (trackType ?? defaultTrack) === TrackType.audio;
+    const key = pendingUrlKey(url);
+    const existing = groupStore.orderedGroups.find((group) => {
+      const state = stateStore.getGroupState(group.id);
+      const existingTrack = optionsStore.getOptions(group.id)?.trackType ?? pendingCaptureKinds.get(group.id) ?? defaultTrack;
+      return state != null && ![MediaState.done, MediaState.error, MediaState.cancelled].includes(state)
+        && pendingUrlKey(group.url) === key
+        && (existingTrack === TrackType.audio) === incomingAudio;
+    });
+    if (existing) {
+      useListVisibilityStore().show([existing.id]);
+      duplicateFocus.value = { id: existing.id };
+    }
+    return existing;
+  }
   const removedLibraryPaths = new Set<string>();
   let libraryLoad: Promise<void> | undefined;
   const libraryGroupsByPath = new Map<string, Set<string>>();
@@ -212,7 +311,6 @@ export const useMediaStore = defineStore('media', () => {
   }
 
   const pendingReadyGroups = new Map<string, PendingReadyGroup[]>();
-  const recentCaptures = new Map<string, { groupId: string; createdAt: number }>();
 
   function resolvePendingReadyGroup(groupId: string, resolvedIds: string[], playlistOnly = false) {
     const pending = pendingReadyGroups.get(groupId) ?? [];
@@ -233,7 +331,8 @@ export const useMediaStore = defineStore('media', () => {
   function finalizePlaylistGroup(group: Group) {
     const splitThreshold = settingsStore.settings.performance.splitPlaylistThreshold;
     const overrides = optionsStore.getOverrides(group.id);
-    if (group.total < splitThreshold) {
+    // Keep the playlist row so skipped-child messages remain visible.
+    if (group.total < splitThreshold && group.errored === 0) {
       const selectedOptions = optionsStore.getOptions(group.id);
       const newGroups = groupStore.splitGroup(group);
       if (selectedOptions) {
@@ -455,19 +554,18 @@ export const useMediaStore = defineStore('media', () => {
   }
 
   /** A captured link's row; `groupId` comes from its capture id, so a later claim on it finds the same row. */
-  function createCaptureGroup(groupId: string, url: string) {
+  function createCaptureGroup(groupId: string, url: string, choice?: CaptureChoice) {
+    const trackType = (choice?.kind ?? defaultChoice.value) === 'audio' ? TrackType.audio : TrackType.both;
+    if (groupStore.findGroupById(groupId)) {
+      if (choice) pendingCaptureKinds.set(groupId, trackType);
+      return groupId;
+    }
+    const existing = reusePendingGroup(url, trackType);
+    if (existing) return existing.id;
     const group = createMediaInfoGroup(url, true, false, groupId);
-    recentCaptures.set(url, { groupId: group.id, createdAt: Date.now() });
+    pendingCaptureKinds.set(group.id, trackType);
     void notifyGroup(NotificationKind.QueueAdded, group);
     return group.id;
-  }
-
-  function hasRecentCapture(url: string) {
-    const capture = recentCaptures.get(url);
-    if (!capture) return false;
-    if (Date.now() - capture.createdAt < 5000 && groupStore.findGroupById(capture.groupId)) return true;
-    recentCaptures.delete(url);
-    return false;
   }
 
   async function fetchMediaInfoForGroup(groupId: string) {
@@ -521,6 +619,8 @@ export const useMediaStore = defineStore('media', () => {
     skipPlaylistSelection: boolean = false,
     preparedItem?: MediaItem,
   ) {
+    const existing = reusePendingGroup(url);
+    if (existing) return existing.id;
     const group = createMediaInfoGroup(url, fromShortcut, skipPlaylistSelection);
     const groupId = group.id;
 
@@ -577,10 +677,11 @@ export const useMediaStore = defineStore('media', () => {
     fromShortcut: boolean = false,
     skipPlaylistSelection: boolean = false,
   ): Promise<string[]> {
+    const existingIds = new Set(groupStore.groupOrder);
     const results = await Promise.allSettled(
       urls.map(url => dispatchMediaInfoFetch(url, fromShortcut, skipPlaylistSelection)),
     );
-    return results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+    return [...new Set(results.flatMap(result => result.status === 'fulfilled' && !existingIds.has(result.value) ? [result.value] : []))];
   }
 
   async function addUrlBatchAndDownload(
@@ -589,6 +690,7 @@ export const useMediaStore = defineStore('media', () => {
     skipPlaylistSelection: boolean = false,
   ): Promise<string[]> {
     const initialGroupIds = await addUrlBatch(urls, fromShortcut, skipPlaylistSelection);
+    if (initialGroupIds.length === 0) return [];
     const readyGroupIds = [...new Set(
       (await Promise.all(initialGroupIds.map(groupId => waitForGroupReady(groupId)))).flat(),
     )];
@@ -614,6 +716,7 @@ export const useMediaStore = defineStore('media', () => {
         ? optionsForCaptureChoice(choice, group.formats ?? [], sourceKind)
         : defaultDownloadOptions({ ...group, mediaKind: sourceKind }, optionsStore.getOptions(id), defaultChoice.value));
     }
+    pendingCaptureKinds.delete(groupId);
     return ready;
   }
 
@@ -632,6 +735,7 @@ export const useMediaStore = defineStore('media', () => {
     options: DownloadOptions,
     origin?: 'batch',
   ) {
+    await startupSweep;
     const group = groupStore.findGroupById(groupId);
     if (!group) return;
     const prior = stateStore.getGroupState(groupId);
@@ -652,7 +756,7 @@ export const useMediaStore = defineStore('media', () => {
     };
 
     if (itemsWithoutLeader.length === 0) return;
-    const hasAttachments = itemsWithoutLeader.some(item => !!item.attachments?.length);
+    const hasAttachments = !!group.attachments?.length || itemsWithoutLeader.some(item => !!item.attachments?.length);
     const attachmentIds = hasAttachments ? optionsStore.getAttachmentSelection(groupId) : undefined;
     if (attachmentIds?.length === 0) return;
 
@@ -667,6 +771,7 @@ export const useMediaStore = defineStore('media', () => {
         if (!item.entries) progressStore.processMediaProgressStagePayload({ id: item.id, groupId, stage: ProgressStage.queued });
       });
 
+    saveQueue();
     try {
       await invoke<string>('media_download', cloneMediaData({
         groupId,
@@ -677,14 +782,17 @@ export const useMediaStore = defineStore('media', () => {
           url: item.url,
           format: resolvedOptions,
           fetchEngine: item.fetchEngine,
+          playlistChild: item.playlistChild ?? false,
           resolvedUrl: item.resolvedUrl,
           mediaKind: item.mediaKind,
-          ...(item.attachments?.length ? { attachmentIds, attachments: item.attachments } : {}),
+          attachmentIds,
+          ...(item.attachments?.length ? { attachments: item.attachments } : {}),
           subtitleInventory: item.subtitleInventory,
           overrides,
           templateContext: {
             values: {
               ...buildTemplateContext(item, group, overrides),
+              filesize: String(sizeStore.getSize(item.id, resolvedOptions)?.size || item.filesize || 0),
               enriched_title: item.title ?? undefined,
               ...(item.attachments?.length || (item.resolvedUrl && item.resolvedUrl !== item.url)
                 ? { title: item.title ?? undefined, fulltitle: item.title ?? undefined, uploader: item.uploader ?? undefined }
@@ -790,7 +898,7 @@ export const useMediaStore = defineStore('media', () => {
     }
   }
 
-  /** Stop through the same removal path as the list; Undo starts a fresh engine generation. */
+  /** Retain a cancelled snapshot under fresh IDs so late engine events cannot revive it. */
   function cancelDownload(id: string) {
     const original = groupStore.findGroupById(id);
     if (!original) return;
@@ -802,32 +910,37 @@ export const useMediaStore = defineStore('media', () => {
     const tracks = cloneMediaData(optionsStore.getTracks(id));
     const overrides = cloneMediaData(optionsStore.getOverrides(id));
     const attachments = optionsStore.getAttachmentSelection(id);
+    const position = groupStore.groupOrder.indexOf(id);
     const cancellation = deleteGroup(id);
+    // Retire the engine generation immediately, keeping the row in its original list position.
+    group.id = uuidv4();
+    group.items = Object.fromEntries(Object.values(group.items).map((item) => {
+      const itemId = uuidv4();
+      const state = itemStates.get(item.id);
+      stateStore.setState(itemId, !item.isLeader && state === MediaState.done ? MediaState.done : MediaState.cancelled);
+      return [itemId, { ...item, id: itemId, groupId: group.id }];
+    }));
+    groupStore.groups[group.id] = group;
+    groupStore.groupOrder.splice(position, 0, group.id);
+    for (const destination of destinations) destinationStore.addDestination(group.id, destination);
+    if (options) optionsStore.setOptions(group.id, options);
+    if (encodings) optionsStore.setEncodings(group.id, encodings);
+    if (tracks) optionsStore.setTracks(group.id, tracks);
+    if (overrides) optionsStore.setOverrides(group.id, overrides);
+    optionsStore.setAttachmentSelection(group.id, attachments);
     let restored = false;
     return async () => {
       if (restored) return false;
       restored = true;
       await cancellation;
-      // Old jobs may still emit events while stopping. Never reuse their IDs.
-      group.id = uuidv4();
-      group.items = Object.fromEntries(Object.values(group.items).map((item) => {
-        const itemId = uuidv4();
-        const state = itemStates.get(item.id);
-        if (state) stateStore.setState(itemId, state);
-        return [itemId, { ...item, id: itemId, groupId: group.id }];
-      }));
-      groupStore.createGroup(group);
-      for (const destination of destinations) destinationStore.addDestination(group.id, destination);
-      if (options) optionsStore.setOptions(group.id, options);
-      if (encodings) optionsStore.setEncodings(group.id, encodings);
-      if (tracks) optionsStore.setTracks(group.id, tracks);
-      if (overrides) optionsStore.setOverrides(group.id, overrides);
-      optionsStore.setAttachmentSelection(group.id, attachments);
+      // A subsequent Retry or Remove wins over an old toast's Undo.
+      if (stateStore.getGroupState(group.id) !== MediaState.cancelled || useListVisibilityStore().isHidden(group.id)) return false;
       return downloadGroup(group.id, options ?? getDownloadOptions(group.id));
     };
   }
 
   function deleteGroup(id: string, removeHistory = true) {
+    pendingCaptureKinds.delete(id);
     rejectPendingReadyGroup(id, new Error('Download was removed'));
     // Even when the row is already gone, a login card may still wait for it.
     useLoginStore().forgetGroup(id);
@@ -873,13 +986,14 @@ export const useMediaStore = defineStore('media', () => {
   }
 
   return {
+    restoreCount, resumeSavedDownloads, dismissSavedDownloads,
+    duplicateFocus,
     loadLibrary,
     processMediaDestinationPayload,
     processMediaAddPayload,
     finalizePlaylistGroup,
     dispatchMediaInfoFetch,
     createCaptureGroup,
-    hasRecentCapture,
     fetchMediaInfoForGroup,
     retryGroup,
     expandPlaylistGroup,

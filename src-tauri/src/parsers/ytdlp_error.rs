@@ -132,7 +132,8 @@ pub fn network_down(code: &str, message: &str) -> bool {
   ) {
     return true;
   }
-  let lower = message.to_ascii_lowercase();
+  // A URL in an info line must not read as a transport failure.
+  let lower = redact_urls(message).to_ascii_lowercase();
   [
     "network is unreachable",
     "network unreachable",
@@ -141,6 +142,8 @@ pub fn network_down(code: &str, message: &str) -> bool {
     "nodename nor servname",
     "temporary failure in name resolution",
     "getaddrinfo failed",
+    "could not resolve host",
+    "could not contact dns servers",
   ]
   .iter()
   .any(|needle| lower.contains(needle))
@@ -165,6 +168,48 @@ pub(crate) mod stage_hint {
     ]
     .iter()
     .any(|hint| message.contains(hint))
+  }
+
+  pub(crate) fn video_only_component(component: &str) -> bool {
+    matches!(
+      component
+        .to_ascii_lowercase()
+        .split(':')
+        .next()
+        .unwrap_or_default(),
+      "bilibili"
+        | "bilibili player"
+        | "bilibili multi"
+        | "youtube"
+        | "dailymotion"
+        | "rumble"
+        | "rumbleembed"
+        | "vimeo"
+        | "twitch"
+        | "ted"
+        | "kick"
+        | "streamable"
+        | "odysee"
+    )
+  }
+
+  pub(crate) fn video_only_url(url: &reqwest::Url) -> bool {
+    use crate::sites::SiteId;
+    matches!(
+      url.host_str().and_then(crate::sites::site_of),
+      Some(
+        SiteId::Bilibili
+          | SiteId::YouTube
+          | SiteId::Dailymotion
+          | SiteId::Rumble
+          | SiteId::Vimeo
+          | SiteId::Twitch
+          | SiteId::Ted
+          | SiteId::Kick
+          | SiteId::Streamable
+          | SiteId::Odysee
+      )
+    )
   }
 
   /// The requested selection failed; other formats may still exist.
@@ -352,73 +397,89 @@ impl YtdlpErrorParser {
     self.login_reason_with_cookies(line, false)
   }
 
+  fn facebook_share_http400(&self, event: &DiagnosticEvent) -> bool {
+    matches!(event.level, DiagnosticLevel::Error)
+      && self
+        .source_url
+        .as_ref()
+        .is_some_and(|url| crate::resolve::facebook_share(url.as_str()))
+      && event
+        .message
+        .to_ascii_lowercase()
+        .contains("http error 400")
+  }
+
+  /// A named cookie is only a candidate session. These responses show it was not accepted.
+  fn session_expired(&self, stderr: &str, has_cookies: bool) -> bool {
+    has_cookies && stderr.lines().filter_map(|line| self.parse_line(line)).any(|event| {
+      let lower = event.message.to_ascii_lowercase();
+      ["session has expired", "session expired", "invalid session", "cookies are no longer valid", "redirected to login page", "redirected to a login page"].iter().any(|signal| lower.contains(signal))
+        // Facebook emits this default login error after detecting login_form/loginbutton.
+        || event.component.as_deref().is_some_and(|component| component.eq_ignore_ascii_case("facebook"))
+          && lower.starts_with("this video is only available for registered users")
+    })
+  }
+
   pub fn login_reason_with_cookies(&self, line: &str, used_cookies: bool) -> Option<String> {
+    if self.session_expired(line, used_cookies) {
+      return Some("signInRequired".into());
+    }
     self
       .parse_line(line)
       .filter(|e| {
         matches!(e.level, DiagnosticLevel::Error)
-          && (matches!(
-            e.code.as_str(),
-            "signInRequired" | "signInRequiredForBotDetection" | "membersOnly"
-          ) || !used_cookies
-            && e.code == "unableToExtractInitialData"
-            && self.source_url.as_ref().is_some_and(|url| {
-              let host = url.host_str().unwrap_or_default();
-              let component = e.component.as_deref().unwrap_or_default();
-              (component.eq_ignore_ascii_case("facebook")
-                && e.message.to_ascii_lowercase().contains("cannot parse data")
-                && crate::sites::host_is(host, "facebook.com"))
-                || (component.eq_ignore_ascii_case("instagram:user")
-                  && e
-                    .message
-                    .to_ascii_lowercase()
-                    .contains("unable to extract data")
-                  && crate::sites::host_is(host, "instagram.com")
-                  && {
-                    let path = url.path().trim_matches('/');
-                    !path.is_empty()
-                      && path
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.'))
-                      && !matches!(
-                        path,
-                        "accounts"
-                          | "explore"
-                          | "direct"
-                          | "stories"
-                          | "reels"
-                          | "reel"
-                          | "p"
-                          | "tv"
-                          | "share"
-                      )
-                  })
-            }))
+          && !(used_cookies && self.missing_story(e))
+          && ((!used_cookies && self.facebook_share_http400(e))
+            || matches!(
+              e.code.as_str(),
+              "signInRequired" | "signInRequiredForBotDetection" | "membersOnly"
+            )
+            || !used_cookies
+              && e.code == "unableToExtractInitialData"
+              && self.source_url.as_ref().is_some_and(|url| {
+                let host = url.host_str().unwrap_or_default();
+                let component = e.component.as_deref().unwrap_or_default();
+                component.eq_ignore_ascii_case("facebook")
+                  && e.message.to_ascii_lowercase().contains("cannot parse data")
+                  && crate::sites::host_is(host, "facebook.com")
+              }))
       })
-      .map(|e| e.code)
+      .map(|e| {
+        if self.facebook_share_http400(&e) {
+          "signInRequired".into()
+        } else {
+          e.code
+        }
+      })
+  }
+
+  fn missing_story(&self, event: &DiagnosticEvent) -> bool {
+    matches!(event.level, DiagnosticLevel::Error)
+      && event.component.as_deref().is_some_and(|c| c.eq_ignore_ascii_case("instagram:story") || c.eq_ignore_ascii_case("Instagram"))
+      && event.message.to_ascii_lowercase().contains("this content is unreachable")
+      && self.source_url.as_ref().is_some_and(|url| {
+        let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
+        url.host_str().is_some_and(|host| crate::sites::host_is(host, "instagram.com"))
+          && matches!(parts.as_slice(), ["stories", user, id] if !user.is_empty() && *user != "highlights" && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+      })
   }
 
   pub fn cookie_fetch_failure(&self, stderr: &str, has_cookies: bool) -> CookieFetchFailure {
     if !has_cookies {
       return CookieFetchFailure::Other;
     }
+    if self.session_expired(stderr, has_cookies) {
+      return CookieFetchFailure::Refused;
+    }
     let mut failure = CookieFetchFailure::Other;
     for event in stderr.lines().filter_map(|line| self.parse_line(line)) {
       if !matches!(event.level, DiagnosticLevel::Error) {
         continue;
       }
-      let lower = event.message.to_ascii_lowercase();
-      if [
-        "session has expired",
-        "session expired",
-        "invalid session",
-        "cookies are no longer valid",
-      ]
-      .iter()
-      .any(|needle| lower.contains(needle))
-      {
-        return CookieFetchFailure::Refused;
+      if self.missing_story(&event) {
+        continue;
       }
+      let lower = event.message.to_ascii_lowercase();
       // Instagram appends generic login/cookie advice to empty and throttled responses.
       // That advice does not establish whether a supplied session was accepted.
       if lower.contains("empty media response")
@@ -444,6 +505,28 @@ impl YtdlpErrorParser {
 
   pub fn parse_fetch_line(&self, line: &str, has_cookies: bool) -> Option<DiagnosticEvent> {
     let mut event = self.parse_line(line)?;
+    if self.facebook_share_http400(&event) {
+      event.code = if has_cookies {
+        "unableToExtractInitialData"
+      } else {
+        "signInRequired"
+      }
+      .into();
+    }
+    if has_cookies && self.missing_story(&event) {
+      event.code = "storyExpired".into();
+    } else if event.code == "unableToExtractInitialData"
+      && event
+        .component
+        .as_deref()
+        .is_some_and(|c| c.eq_ignore_ascii_case("instagram:user"))
+      && self
+        .source_url
+        .as_ref()
+        .is_some_and(|url| crate::resolve::instagram_profile(url.as_str()))
+    {
+      event.code = "profileNotSupported".into();
+    }
     if !has_cookies
       && event.code == "unableToExtractInitialData"
       && self.login_reason_with_cookies(line, false).is_some()
@@ -466,17 +549,80 @@ impl YtdlpErrorParser {
         CookieFetchFailure::Refused => "accountAccessDenied".into(),
       };
     }
+    if self.session_expired(line, has_cookies) {
+      event.code = "signInRequired".into();
+    }
     event.message = redact_diagnostic(&event.message);
     event.raw = redact_diagnostic(&event.raw);
     Some(event)
   }
 
   pub fn parse_lines(&self, lines: Vec<&str>, has_cookies: bool) -> Vec<DiagnosticEvent> {
+    let expired = lines
+      .iter()
+      .any(|line| self.session_expired(line, has_cookies));
+    // Only the tool's own warning/error lines count; a SponsorBlock outage says nothing about the page.
+    let offline = lines
+      .iter()
+      .filter_map(|line| self.parse_line(line))
+      .any(|event| {
+        !event
+          .component
+          .as_deref()
+          .is_some_and(|c| c.eq_ignore_ascii_case("SponsorBlock"))
+          && network_down("", &event.message)
+      });
+    // BiliIntl logs its refusal as a WARNING, then dies on a bare Python error.
+    let bili_refused = lines.iter().any(|line| line.contains("BiliIntl said:"));
     let mut events = Vec::with_capacity(lines.len());
     for line in lines {
-      if let Some(event) = self.parse_fetch_line(line, has_cookies) {
+      if let Some(mut event) = self.parse_fetch_line(line, has_cookies) {
+        if bili_refused
+          && matches!(event.level, DiagnosticLevel::Error)
+          && event.code == "unknown"
+          && event
+            .message
+            .contains("'NoneType' object is not subscriptable")
+        {
+          event.code = "unableToExtractIdOrInfo".into();
+        }
+        if expired
+          && matches!(event.level, DiagnosticLevel::Error)
+          && matches!(
+            event.code.as_str(),
+            "unknown"
+              | "unableToExtractInitialData"
+              | "unableToExtractIdOrInfo"
+              | "accountAccessDenied"
+              | "signInRequired"
+          )
+        {
+          event.code = "signInRequired".into();
+        }
+        if offline
+          && matches!(event.level, DiagnosticLevel::Error)
+          && matches!(
+            event.code.as_str(),
+            "unknown" | "unableToExtractInitialData" | "unableToExtractIdOrInfo"
+          )
+        {
+          event.code = "networkNameResolutionFailed".into();
+        }
         events.push(event);
       }
+    }
+    if self.source_url.as_ref().is_some_and(|url| {
+      url
+        .host_str()
+        .is_some_and(|host| crate::sites::host_is(host, "odysee.com"))
+    }) && events.iter().any(|event| event.code == "rateLimited429")
+    {
+      events.retain(|event| {
+        !matches!(
+          event.code.as_str(),
+          "mediaUnavailable" | "notFound404" | "videoNotFoundOrPrivate"
+        )
+      });
     }
     events
   }
@@ -528,7 +674,37 @@ impl YtdlpErrorParser {
     static LINKEDIN_NO_VIDEO: LazyLock<Regex> = LazyLock::new(|| {
       Regex::new(r"(?i)^(?:[0-9]+:\s*)?Unable to extract video(?:\s*;|\s*$)").unwrap()
     });
-    let code = if matched_code == "unknown"
+    let vimeo = self.source_url.as_ref().is_some_and(|url| {
+      url
+        .host_str()
+        .is_some_and(|host| crate::sites::host_is(host, "vimeo.com"))
+    });
+    let podtrac_removed = self.source_url.as_ref().is_some_and(|url| {
+      url
+        .host_str()
+        .is_some_and(|host| crate::sites::host_is(host, "podtrac.com"))
+    }) && message.to_ascii_lowercase().contains("redirect loop");
+    let code = if podtrac_removed {
+      "notFound404"
+    } else if vimeo
+      && ((matched_code == "drmProtected" && message.to_ascii_lowercase().contains("skd:"))
+        || matched_code == "accessForbidden403")
+    {
+      "signInRequired"
+    } else if matches!(
+      matched_code,
+      "unknown" | "unableToExtractIdOrInfo" | "noMediaFound"
+    ) && stage_hint::no_formats(&message)
+      && (component
+        .as_deref()
+        .is_some_and(stage_hint::video_only_component)
+        || self
+          .source_url
+          .as_ref()
+          .is_some_and(stage_hint::video_only_url))
+    {
+      "mediaUnavailable"
+    } else if matched_code == "unknown"
       && matches!(level, DiagnosticLevel::Error)
       && component
         .as_deref()
@@ -538,6 +714,15 @@ impl YtdlpErrorParser {
       // An inconclusive post reader can leave this to yt-dlp. Missing video does not prove
       // a photo post, and it does not mean photo downloads are unsupported.
       "imageSourceUnavailable"
+    } else if matched_code == "urlNotSupported"
+      && self.source_url.as_ref().is_some_and(|url| {
+        url
+          .host_str()
+          .is_some_and(|host| crate::sites::host_is(host, "facebook.com"))
+          && url.path().starts_with("/stories/")
+      })
+    {
+      "signInRequired"
     } else if matched_code == "urlNotSupported" && self.is_photo_refusal(&message) {
       "photosOnly"
     } else if matched_code == "urlUnsupported" && self.source_url.is_some() {
@@ -760,6 +945,226 @@ mod tests {
   }
 
   #[test]
+  fn recorded_retest_errors_reach_the_live_parser_with_specific_codes() {
+    for (source, line, code) in [
+      (
+        "https://vimeo.com/76979871",
+        "[hls @ 0x123] Unable to open key file skd://drm",
+        "signInRequired",
+      ),
+      (
+        "https://netflix.com/watch/123",
+        "[hls @ 0x123] Unable to open key file skd://drm",
+        "drmProtected",
+      ),
+      (
+        "https://vimeo.com/channels/staffpicks/1233455330",
+        "ERROR: HTTP Error 451: Unavailable For Legal Reasons",
+        "legalRestriction451",
+      ),
+      (
+        "https://www.facebook.com/stories/123",
+        "ERROR: Unsupported URL: https://www.facebook.com/stories/123",
+        "signInRequired",
+      ),
+      (
+        "https://gofile.io/d/example",
+        "ERROR: [Piracy] This website is no longer supported",
+        "urlNotSupported",
+      ),
+      (
+        "https://space.bilibili.com/1",
+        "ERROR: Request is blocked by server (412)",
+        "rateLimited429",
+      ),
+      (
+        "https://www.bilibili.tv/en/video/1",
+        "ERROR: BiliIntl said: Unknown error",
+        "unableToExtractIdOrInfo",
+      ),
+      (
+        "https://audiomack.com/artist/song/song",
+        "ERROR: Failed to parse JSON",
+        "unableToExtractIdOrInfo",
+      ),
+      (
+        "https://dts.podtrac.com/redirect.mp3/audio",
+        "ERROR: 302 redirect loop",
+        "notFound404",
+      ),
+    ] {
+      let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap())
+        .with_source_url(source);
+      assert_eq!(
+        parser.parse_fetch_line(line, false).unwrap().code,
+        code,
+        "{source}"
+      );
+      if code == "signInRequired" {
+        assert_eq!(parser.login_reason(line).as_deref(), Some(code));
+      }
+    }
+    let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap())
+      .with_source_url("https://odysee.com/@nasa/clip");
+    let events = parser.parse_lines(
+      vec![
+        "ERROR: HTTP Error 429: Too Many Requests",
+        "ERROR: Video unavailable. This video has been removed",
+      ],
+      false,
+    );
+    assert!(events.iter().any(|e| e.code == "rateLimited429"));
+    assert!(!events.iter().any(|e| e.code == "mediaUnavailable"));
+  }
+
+  #[test]
+  fn bilibili_tv_bare_python_error_after_its_warning_is_an_extraction_failure() {
+    let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
+    let events = parser.parse_lines(
+      vec![
+        "WARNING: [BiliIntl] Unable to download video formats: BiliIntl said: Unknown error",
+        "ERROR: 'NoneType' object is not subscriptable",
+      ],
+      false,
+    );
+    assert_eq!(events.last().unwrap().code, "unableToExtractIdOrInfo");
+    let events = parser.parse_lines(vec!["ERROR: 'NoneType' object is not subscriptable"], false);
+    assert_eq!(events.last().unwrap().code, "unknown");
+  }
+
+  #[test]
+  fn only_real_offline_lines_rewrite_the_final_error() {
+    let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
+    for lines in [
+      vec![
+        "WARNING: [SponsorBlock] Unable to communicate with SponsorBlock API: Failed to resolve 'sponsor.ajay.app' ([Errno 8] nodename nor servname provided, or not known)",
+        "ERROR: [youtube] abc: Unable to extract data",
+      ],
+      vec![
+        "WARNING: [generic] Falling back on https://connection-refused.example/x",
+        "ERROR: [youtube] abc: Unable to extract data",
+      ],
+    ] {
+      assert_eq!(parser.parse_lines(lines, false).last().unwrap().code, "unknown");
+    }
+  }
+
+  #[test]
+  fn dns_warning_turns_a_vague_final_error_into_a_network_code() {
+    let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
+    let events = parser.parse_lines(
+      vec![
+        "WARNING: [tiktok:user] real.mauritanie: Unable to download user webpage: Failed to perform, curl: (6) Could not resolve host: www.tiktok.com (Could not contact DNS servers).",
+        "ERROR: [tiktok:user] real.mauritanie: Unable to extract secondary user ID",
+      ],
+      false,
+    );
+    assert_eq!(events.last().unwrap().code, "networkNameResolutionFailed");
+    assert!(network_down(
+      "",
+      "Failed to perform, curl: (6) Could not resolve host: www.tiktok.com"
+    ));
+  }
+
+  #[test]
+  fn expired_cookies_and_login_page_redirects_require_signing_in_again() {
+    let parser = YtdlpErrorParser::new(
+      "row",
+      "group",
+      DiagnosticMatcher::from_json(include_str!("../diagnostic_rules.json")).unwrap(),
+    )
+    .with_source_url("https://www.facebook.com/page/posts/123");
+    for stderr in [
+      "ERROR: [facebook] Session has expired",
+      "ERROR: [facebook] This video is only available for registered users. Use --cookies",
+      "WARNING: [facebook] Redirected to login page\nERROR: [facebook] Cannot parse data",
+    ] {
+      let events = parser.parse_lines(stderr.lines().collect(), true);
+      assert_eq!(
+        events
+          .iter()
+          .find(|event| matches!(event.level, DiagnosticLevel::Error))
+          .unwrap()
+          .code,
+        "signInRequired",
+        "{stderr}"
+      );
+      assert_eq!(
+        parser.cookie_fetch_failure(stderr, true),
+        CookieFetchFailure::Refused
+      );
+      let mut stage = crate::extract::chain::StageResult::<()>::new(
+        crate::extract::outcome::StageId::Ytdlp,
+        crate::extract::outcome::Confidence::Medium,
+      );
+      stage.record_code("signInRequired", "", false, std::time::Instant::now());
+      stage.record_diagnostics(&events, true, std::time::Instant::now());
+      assert_eq!(
+        crate::extract::precedence::final_code(&stage.attempts),
+        Some("signInRequired")
+      );
+    }
+    assert_eq!(
+      parser
+        .parse_fetch_line("ERROR: [facebook] Cannot parse data", true)
+        .unwrap()
+        .code,
+      "unableToExtractInitialData"
+    );
+  }
+
+  #[test]
+  fn authenticated_missing_instagram_story_is_not_an_account_refusal() {
+    for (url, cookies, message, expected) in [
+      (
+        "https://www.instagram.com/stories/fruits_zipper/3570766765028588805/",
+        true,
+        "This content is unreachable",
+        "storyExpired",
+      ),
+      (
+        "https://www.instagram.com/stories/fruits_zipper/3570766765028588805/",
+        false,
+        "This content is unreachable",
+        "signInRequired",
+      ),
+      (
+        "https://www.instagram.com/stories/highlights/123/",
+        true,
+        "This content is unreachable",
+        "accountAccessDenied",
+      ),
+      (
+        "https://www.instagram.com/p/abc/",
+        true,
+        "This content is unreachable",
+        "accountAccessDenied",
+      ),
+      (
+        "https://www.instagram.com/stories/fruits_zipper/3570766765028588805/",
+        true,
+        "You need to log in to access this content",
+        "accountAccessDenied",
+      ),
+    ] {
+      let parser = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap())
+        .with_source_url(url);
+      let line = format!("ERROR: [instagram:story] 3570766765028588805: {message}");
+      assert_eq!(
+        parser.parse_fetch_line(&line, cookies).unwrap().code,
+        expected
+      );
+      if expected == "storyExpired" {
+        assert!(parser.login_reason_with_cookies(&line, cookies).is_none());
+        assert_eq!(
+          parser.cookie_fetch_failure(&line, cookies),
+          CookieFetchFailure::Other
+        );
+      }
+    }
+  }
+
+  #[test]
   fn urls_and_extractor_ids_cannot_trigger_login_or_transient_classification() {
     let parser = YtdlpErrorParser::new(
       "item",
@@ -946,7 +1351,7 @@ ERROR: Unsupported URL: https://hackertube.org/";
       ("ERROR: [generic] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized", "unknown"),
       ("ERROR: [facebook] 123: Cannot parse data; please report this issue", "unableToExtractInitialData"),
       ("ERROR: [instagram:user] porsche: Unable to extract data; please report this issue", "unableToExtractInitialData"),
-      ("ERROR: [likee] 123: Unable to extract video info; please report this issue", "unableToExtractIdOrInfo"),
+      ("ERROR: [likee] 123: Unable to extract video info; please report this issue", "likeeUnavailable"),
       ("ERROR: Unable to extract data", "unknown"),
       ("ERROR: [generic] 123: Unable to extract data", "unknown"),
       ("ERROR: Unable to extract video info", "unknown"),
@@ -987,6 +1392,22 @@ ERROR: Unsupported URL: https://hackertube.org/";
       ("ERROR: [youtube] Video unavailable. YouTube is requiring a captcha challenge before playback", "blockedGeneric"),
       ("ERROR: [Instagram] There is no video in this post", "photosOnly"),
       ("ERROR: [Bluesky] No video could be found in this post", "photosOnly"),
+      ("ERROR: [youtube] aaaaaaaaaaa: This video is unavailable", "mediaUnavailable"),
+      ("ERROR: [youtube] abc: Video unavailable. This video is not available", "mediaUnavailable"),
+      ("ERROR: [youtube] abc: This video is not available", "mediaUnavailable"),
+      ("ERROR: [youtube] abc: This video is private", "videoNotFoundOrPrivate"),
+      ("ERROR: [youtube] abc: Private video", "videoNotFoundOrPrivate"),
+      ("ERROR: [youtube] abc: Private video. Sign in if you've been granted access", "signInRequired"),
+      ("ERROR: [youtube] abc: This video is private. Sign in to view it", "signInRequired"),
+      ("ERROR: [dailymotion] x2iuewm: Not found.", "mediaUnavailable"),
+      ("ERROR: ffmpeg exited with code 196", "networkTimeout"),
+      ("ERROR: ffmpeg exited with code 251", "networkTimeout"),
+      ("ERROR: ffmpeg exited with code 202", "networkTimeout"),
+      ("ERROR: ffmpeg exited with code 2510", "unknown"),
+      ("ERROR: [twitter] 2119833829389041896: Unable to download JSON metadata: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')) (caused by ProtocolError('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')))", "networkTimeout"),
+      ("ERROR: [tiktok] 1: Unable to download webpage: Failed to perform, curl: (56) Recv failure: Connection reset by peer.", "networkTimeout"),
+      ("ERROR: [TikTok] 7674597752415735072: Unable to download webpage: Failed to perform, curl: (6) Could not resolve host: www.tiktok.com (Could not contact DNS servers). See https://curl.se/libcurl/c/libcurl-errors.html", "networkNameResolutionFailed"),
+      ("ERROR: [BiliBili] BV13x41117TL: No video formats found!", "mediaUnavailable"),
       ("ERROR: [twitter] Requested tweet is unavailable", "mediaUnavailable"),
       ("ERROR: [twitter] Video #2 is unavailable", "mediaUnavailable"),
       ("ERROR: [twitter] Broadcast no longer exists", "videoNotFoundOrPrivate"),
@@ -1000,6 +1421,9 @@ ERROR: Unsupported URL: https://hackertube.org/";
       ("ERROR: [twitter:spaces] Twitter Space not started yet", "livestreamNotStarted"),
       ("ERROR: [vimeo] This live event is scheduled for 2030-01-01T00:00:00Z", "livestreamNotStarted"),
       ("ERROR: [LinkedIn] This live event has not yet started", "livestreamNotStarted"),
+      ("ERROR: [youtube] oPgE-ECuJEs: This live event will begin in 27 hours.", "livestreamNotStarted"),
+      ("ERROR: [youtube] abc: This live event will begin in a few moments.", "livestreamNotStarted"),
+      ("ERROR: [facebook] HttpError: '404 Not Found' for 'https://www.facebook.com/photo/?fbid=&set=a.1'", "notFound404"),
       ("ERROR: [Reddit] This video is processing", "mediaNotReady"),
       ("ERROR: [twitter:spaces] Twitter Space ended but not downloadable yet", "mediaNotReady"),
       ("ERROR: [Reddit] No media found", "noMediaFound"),
@@ -1187,12 +1611,46 @@ ERROR: Unsupported URL: https://hackertube.org/";
   }
 
   #[test]
-  fn drm_protected_formats_say_so() {
+  fn protected_services_and_offline_channels_keep_honest_diagnostics() {
+    for (line, code) in [
+      (
+        "ERROR: [generic] This site is known to use DRM protection. It will NOT be supported.",
+        "drmProtected",
+      ),
+      (
+        "ERROR: [TikTokLive] user: The channel is not currently live",
+        "notLive",
+      ),
+      (
+        "ERROR: [twitch:stream] user: The channel is not currently live",
+        "notLive",
+      ),
+      ("ERROR: [Kick] user: The channel is offline", "notLive"),
+    ] {
+      let parser = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap());
+      assert_eq!(
+        parser.parse_fetch_line(line, false).unwrap().code,
+        code,
+        "{line}"
+      );
+    }
+  }
+
+  #[test]
+  fn diagnostic_drm_protected_formats_say_so() {
     let parser = YtdlpErrorParser::new(
       "item",
       "group",
       DiagnosticMatcher::from_json(include_str!("../diagnostic_rules.json")).unwrap(),
     );
+    for line in [
+      "ERROR: [vimeo] 123: This video is DRM protected",
+      "ERROR: [vimeo] 123: This video is protected by DRM",
+      "ERROR: [generic] This video is DRM protected",
+    ] {
+      let event = parser.parse_line(line).expect("diagnostic");
+      assert_eq!(event.code, "drmProtected", "{line}");
+    }
     let event = parser
       .parse_line("ERROR: This format is DRM protected; Try selecting another format with --format or add --check-formats to automatically fallback to the next best format")
       .expect("diagnostic");
@@ -1281,6 +1739,41 @@ ERROR: Unsupported URL: https://hackertube.org/";
     assert_eq!(event.code, INPUT_FILTER_SKIPPED_CODE);
     assert_eq!(event.message, "Skipped by advanced input filter");
   }
+
+  #[test]
+  fn facebook_share_http400_enters_login_without_relabeling_other_hosts() {
+    for (url, cookies, expected) in [
+      (
+        "https://www.facebook.com/share/p/1CZNGZQHZA/",
+        false,
+        "signInRequired",
+      ),
+      (
+        "https://www.facebook.com/share/p/1CZNGZQHZA/",
+        true,
+        "unableToExtractInitialData",
+      ),
+      (
+        "https://www.facebook.com.evil.test/share/p/1CZNGZQHZA/",
+        false,
+        "unknown",
+      ),
+      ("https://www.facebook.com/page/posts/123/", false, "unknown"),
+    ] {
+      let parser = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap())
+        .with_source_url(url);
+      let line =
+        "ERROR: [generic] 1CZNGZQHZA: Unable to download webpage: HTTP Error 400: Bad Request";
+      assert_eq!(
+        parser.parse_fetch_line(line, cookies).unwrap().code,
+        expected
+      );
+      assert_eq!(
+        parser.login_reason_with_cookies(line, cookies).is_some(),
+        expected == "signInRequired"
+      );
+    }
+  }
   #[test]
   fn facebook_parse_wall_enters_login_only_for_anonymous_facebook_sources() {
     for (source, cookies, expected) in [
@@ -1296,6 +1789,16 @@ ERROR: Unsupported URL: https://hackertube.org/";
         "https://facebook.com/permalink.php?story_fbid=123&id=42",
         false,
         true,
+      ),
+      (
+        "https://facebook.com/story.php?story_fbid=123&id=42",
+        true,
+        false,
+      ),
+      (
+        "https://facebook.com/permalink.php?story_fbid=123&id=42",
+        true,
+        false,
       ),
       ("https://m.facebook.com/watch?v=1", true, false),
       ("https://facebook.com.evil.example/watch?v=1", false, false),
@@ -1334,18 +1837,18 @@ ERROR: Unsupported URL: https://hackertube.org/";
   }
 
   #[test]
-  fn instagram_profile_parse_failure_suggests_login_only_for_anonymous_profiles() {
+  fn instagram_profile_parse_failure_never_suggests_login() {
     let line = "ERROR: [instagram:user] porsche: Unable to extract data";
     for (url, cookies, expected) in [
       (
         "https://www.instagram.com/porsche/",
         false,
-        "signInRequired",
+        "profileNotSupported",
       ),
       (
         "https://www.instagram.com/porsche/",
         true,
-        "unableToExtractInitialData",
+        "profileNotSupported",
       ),
       (
         "https://www.instagram.com/p/example/",

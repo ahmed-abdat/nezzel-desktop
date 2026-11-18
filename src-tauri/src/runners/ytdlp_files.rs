@@ -91,38 +91,53 @@ impl PendingFiles {
         }
         _ => url.to_owned(),
       });
-      let published = publish_file(
-        &source,
-        &anchor.join(relative),
-        &media,
-        receipts,
-        &cancelled,
-      )?;
-      // Saved subtitles/thumbnails follow the primary's collision suffix.
       let stem = source
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or(io::ErrorKind::InvalidData)?;
+      let matching_sidecars: Vec<_> = sidecars
+        .iter()
+        .filter_map(|sidecar| {
+          if primary_paths.contains(sidecar)
+            || published_sidecars.contains(sidecar)
+            || sidecar.parent() != source.parent()
+          {
+            return None;
+          }
+          let suffix = sidecar
+            .file_name()?
+            .to_str()?
+            .strip_prefix(stem)?
+            .strip_prefix('.')?;
+          Some((sidecar, format!(".{suffix}")))
+        })
+        .collect();
+      let mut target = anchor.join(relative);
+      if let Some(longest) = matching_sidecars
+        .iter()
+        .map(|(_, suffix)| suffix.len())
+        .max()
+      {
+        let extension = source
+          .extension()
+          .and_then(|s| s.to_str())
+          .ok_or(io::ErrorKind::InvalidData)?;
+        // Leave room for both the primary and sidecar collision counters (-9999).
+        let budget = 200usize
+          .checked_sub(longest.max(extension.len() + 1) + 10)
+          .filter(|budget| *budget > 0)
+          .ok_or(io::ErrorKind::InvalidData)?;
+        let bounded = crate::files::sanitize::limit_media_stem(stem, budget);
+        target.set_file_name(format!("{bounded}.{extension}"));
+      }
+      let published = publish_file(&source, &target, &media, receipts, &cancelled)?;
+      // Every sidecar keeps its full suffix and follows the primary's collision suffix.
       let new_stem = published
         .path
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or(io::ErrorKind::InvalidData)?;
-      for sidecar in &sidecars {
-        if primary_paths.contains(sidecar) || published_sidecars.contains(sidecar) {
-          continue;
-        }
-        if sidecar.parent() != source.parent() {
-          continue;
-        }
-        let Some(suffix) = sidecar
-          .file_name()
-          .and_then(|n| n.to_str())
-          .and_then(|n| n.strip_prefix(stem))
-          .filter(|s| s.starts_with('.'))
-        else {
-          continue;
-        };
+      for (sidecar, suffix) in matching_sidecars {
         if cancelled() {
           return Err(io::ErrorKind::Interrupted.into());
         }
@@ -290,13 +305,9 @@ fn publish_file(
     let name = if number == 0 {
       name.to_owned()
     } else {
-      let suffix = format!("-{number:03}{extension}");
-      let mut end = stem.len().min(255usize.saturating_sub(suffix.len()));
-      while !stem.is_char_boundary(end) {
-        end -= 1;
-      }
-      format!("{}{suffix}", &stem[..end])
+      format!("{stem}-{number:03}{extension}")
     };
+    let name = crate::files::sanitize::limit_media_name(&name);
     let path = parent.join(&name);
     let receipt = receipt_path(receipts, &path)?;
     let legacy = legacy_receipt(&path)?;
@@ -441,6 +452,90 @@ fn copy_to_new_file(
 mod tests {
   use super::*;
   use crate::runners::gallery_files::Staging;
+
+  #[test]
+  fn published_names_fit_200_bytes_preserving_quality_and_collision_suffixes() {
+    let root = Staging::new().unwrap();
+    let source = root.path.join("source");
+    let receipts = root.path.join("receipts");
+    for title in ["a".repeat(230), "فيديو".repeat(24), "🎥".repeat(60)] {
+      let target = root.path.join(format!("{title}-(1080p).mp4"));
+      for (id, suffix) in [("one", "-(1080p).mp4"), ("two", "-(1080p)-001.mp4")] {
+        fs::write(&source, id).unwrap();
+        let published = publish_file(&source, &target, id, &receipts, &|| false).unwrap();
+        let name = published.path.file_name().unwrap().to_str().unwrap();
+        assert!(name.len() <= 200, "{} bytes", name.len());
+        assert!(name.ends_with(suffix), "{name}");
+      }
+    }
+  }
+
+  #[test]
+  fn long_media_and_multipart_sidecars_share_one_bounded_stem() {
+    let root = Staging::new().unwrap();
+    let stage = root.path.join("stage");
+    fs::create_dir(&stage).unwrap();
+    let source = stage.join(format!("{}-(1080p).mp4", "a".repeat(220)));
+    fs::write(&source, "video").unwrap();
+    for suffix in ["en.vtt", "ar.vtt", "info.json", "ar.srt"] {
+      fs::write(source.with_extension(suffix), suffix).unwrap();
+    }
+    let pending = PendingFiles(vec![(source, Some("fixture".into()), Some("one".into()))]);
+    let PublishOutcome::Files(files) = pending
+      .publish(
+        &stage,
+        &root.path.join("saved"),
+        "fixture",
+        &root.path.join("receipts"),
+        || false,
+      )
+      .unwrap()
+    else {
+      panic!("filtered")
+    };
+    for suffix in ["mp4", "en.vtt", "ar.vtt", "info.json", "ar.srt"] {
+      let path = files[0].path.with_extension(suffix);
+      assert!(path.file_name().unwrap().len() <= 200);
+      assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        if suffix == "mp4" { "video" } else { suffix }
+      );
+    }
+  }
+
+  #[test]
+  fn media_name_cut_keeps_complete_graphemes_and_trims_trailing_marks() {
+    use crate::files::sanitize::limit_media_name;
+    for (prefix_len, cluster, expected_len) in [
+      (194, "a\u{301}", 194),
+      (192, "ا\u{64e}", 194),
+      (194, "\u{200c}", 193),
+      (194, "\u{200d}", 193),
+      (193, "\u{fe0f}", 193),
+      (191, "👩‍👩‍👧‍👦", 191),
+      (191, "🇲🇷", 191),
+    ] {
+      let name = format!(
+        "{}{}{}.mp4",
+        "x".repeat(prefix_len),
+        cluster,
+        "z".repeat(40)
+      );
+      let bounded = limit_media_name(&name);
+      assert_eq!(
+        bounded,
+        format!(
+          "{}.mp4",
+          if cluster == "ا\u{64e}" {
+            format!("{}ا", "x".repeat(prefix_len))
+          } else {
+            "x".repeat(expected_len)
+          }
+        ),
+        "{cluster}"
+      );
+    }
+  }
 
   #[test]
   fn unsupported_rename_uses_exclusive_copy_for_initial_and_final_publication() {

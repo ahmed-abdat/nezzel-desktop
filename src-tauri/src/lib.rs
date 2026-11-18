@@ -11,6 +11,7 @@ mod extract;
 pub mod files;
 mod i18n;
 mod library;
+mod links;
 mod logging;
 mod media_types;
 mod menu;
@@ -144,8 +145,6 @@ pub fn run() {
       handle.manage(DownloadRecords::default());
       handle.manage(library::Library::default());
 
-      runners::ytdlp_download::sweep_download_partials(handle);
-
       // setup dispatchers
       let cfg_snapshot = handle.state::<SharedConfig>().load();
       let max_concurrency = cfg_snapshot.performance.max_concurrency;
@@ -243,6 +242,7 @@ pub fn run() {
         crate::runners::login::notice::media_login_notice,
         crate::runners::transport::engine_availability,
         group_cancel,
+        commands::group::group_sweep_partials,
         logging_subscribe,
         logging_unsubscribe,
         config_get,

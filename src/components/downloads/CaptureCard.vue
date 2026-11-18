@@ -17,7 +17,8 @@
     <!-- Card part keeps the closed window height minus the 1px borders whether or not the format list is open; the list grows the window below it. -->
     <div class="flex shrink-0 flex-col p-3" :style="{ height: `${CAPTURE_CARD_SIZE.height - 2}px` }">
     <div class="mb-2 flex h-5 items-center gap-2">
-      <img v-if="favicon && !faviconFailed" :src="favicon" alt="" class="size-4 shrink-0 rounded-sm" @error="faviconFailed = true" />
+      <svg v-if="logo" viewBox="0 0 24 24" fill="currentColor" class="size-4 shrink-0" aria-hidden="true"><path :d="logo" /></svg>
+      <img v-else-if="favicon && !faviconFailed" :src="favicon" alt="" class="size-4 shrink-0 rounded-sm" @error="faviconFailed = true" />
       <ClipboardCheck v-else class="size-4 shrink-0 text-primary" aria-hidden="true" />
       <p class="min-w-0 flex-1 text-[12px] font-medium text-muted-foreground"><bdi class="block truncate">{{ offer.site || t('capture.copiedLink') }}</bdi></p>
       <tooltip :content="t('capture.dismiss')">
@@ -28,7 +29,8 @@
     </div>
     <p v-if="offer.feed" class="text-[12.5px] text-foreground/80 text-pretty" role="status" data-testid="capture-feed">{{ t('capture.feedPage') }}</p>
     <p v-else-if="error" class="text-[12.5px] text-destructive" role="alert">{{ t(error === 'action' ? 'capture.actionFailed' : 'capture.failed') }}</p>
-    <template v-else-if="offer.read && !offer.failed">
+    <p v-else-if="automaticLogin" class="text-[12.5px] text-muted-foreground" role="status" data-testid="capture-automatic-login">{{ t('capture.automaticLogin') }}</p>
+    <template v-else-if="offer.read && !failed">
       <div class="flex min-w-0 items-start gap-2.5">
         <img v-if="offer.remoteImages && details.thumbnail && !thumbFailed" :src="details.thumbnail" alt="" class="h-12 w-16 shrink-0 rounded-md object-cover" referrerpolicy="no-referrer" @error="thumbFailed = true" />
         <div class="min-w-0 flex-1">
@@ -39,10 +41,10 @@
         </div>
       </div>
     </template>
-    <CaptureFailure v-else-if="offer.failed" :reason="failure" :site="offer.site" />
+    <CaptureFailure v-else-if="failed" :reason="failure" :site="offer.site" />
     <p v-else class="text-[12.5px] text-muted-foreground" role="status">{{ slow ? t('capture.stillReading') : t('capture.loading') }}</p>
     <div class="mt-auto flex items-center justify-end gap-1.5">
-      <CaptureFailActions v-if="offer.failed" :reason="failure" :busy="acting" @act="onFail" />
+      <CaptureFailActions v-if="failed" :reason="failure" :busy="acting" @act="onFail" />
       <template v-else>
         <Button variant="ghost" size="sm" class="-ms-2 me-auto px-2 text-muted-foreground" :disabled="!offer.url || acting" @click="act('options')">{{ t('capture.options') }}</Button>
         <!-- Download best | ▾: one tap stays the fastest path; ▾ opens every format the link offers. -->
@@ -112,7 +114,7 @@ import { CAPTURE_CARD_SIZE, type CaptureChoice } from '@/generated/contract';
 
 const { t, locale } = useI18n();
 const panel = ref<HTMLElement>();
-const { offer, error, acting, slow, thumbFailed, faviconFailed, details, failure, isPlaylist, choicesLoading, favicon, facts, act, onFail, start } = useCaptureOffer();
+const { offer, error, acting, slow, thumbFailed, faviconFailed, details, failure, failed, automaticLogin, isPlaylist, choicesLoading, logo, favicon, facts, act, onFail, start } = useCaptureOffer();
 
 const rtl = computed(() => localeDirection(locale.value) === 'rtl');
 /** The card's format menu only contains known formats. */
