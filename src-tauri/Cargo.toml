@@ -91,7 +91,7 @@ wl-clipboard-rs = "0.9"
 # macOS: focus only the quick bar (activation without raising every window). Already in the tree through tao.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSResponder", "NSRunningApplication", "NSWindow"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSResponder", "NSRunningApplication", "NSWindow", "NSWorkspace"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Variant", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }

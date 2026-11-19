@@ -5,10 +5,11 @@ Nezzel Desktop is free and open source, with no ads. Everything you save is proc
 ## What goes over the network
 
 - **Saving media:** requests go from your computer to the site you're saving from and its content servers. Before handing a link to yt-dlp, Nezzel may read the public page itself (Facebook, LinkedIn, Telegram, Reddit, Threads, Snapchat, Vimeo) to find the media. These requests go only to the site of the link you gave it.
-- **Download tools:** yt-dlp, ffmpeg, ffprobe, Deno, gallery-dl and aria2 come inside the installer, so nothing is downloaded on first run. Each bundled file is checked against a SHA-256 hash pinned at build time.
+- **Download tools:** yt-dlp, ffmpeg, ffprobe, Deno, gallery-dl and aria2 come inside the installer, so nothing is downloaded on first run. Each bundled file is checked against a SHA-256 hash pinned at build time. If a tool is missing or damaged, Nezzel downloads it again from its publisher (GitHub, or `ffmpeg.martin-riedl.de` for ffmpeg and ffprobe on macOS) and checks it against the same kind of pinned hash.
 - **Tool updates:** while **Update download tools automatically** is on (the default), Nezzel checks the yt-dlp releases on GitHub at most once a day (and once more whenever you press **Try now** on the notice that the tools could not update) and checks a new version against the SHA-256 list published with that release.
 - **App updates:** while **Update Nezzel automatically** is on (the default), Nezzel checks `github.com/ahmed-abdat/nezzel-desktop/releases` for a newer version when it starts. Updates are signed, and the app checks the signature before installing. Portable, Microsoft Store and Snap builds skip this check.
-- GitHub sees your IP address for these requests. No cookies, account or device identifiers are sent with them.
+- **SponsorBlock:** off by default. If you turn on skipping or marking sponsor segments under **Settings → Advanced**, yt-dlp asks the SponsorBlock service (`sponsor.ajay.app`) about that video.
+- GitHub (or the server a tool is downloaded from) sees your IP address for these requests. No cookies, account or device identifiers are sent with them.
 
 ## Crash and error reports
 

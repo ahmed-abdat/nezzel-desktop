@@ -403,6 +403,9 @@ pub struct CaptureState {
   /// Whether the main window had focus when the quick bar opened; when it didn't, closing the
   /// bar gives focus back to the app the user came from instead of raising the main window.
   pub(super) main_was_focused: AtomicBool,
+  /// macOS: the app that was frontmost when the quick bar opened (None: unknown, or Nezzel itself).
+  #[cfg(target_os = "macos")]
+  pub(super) previous_app: Mutex<Option<objc2::rc::Retained<objc2_app_kit::NSRunningApplication>>>,
   pub(super) main_is_focused: AtomicBool,
   /// Everything sent to the main window, until it pulls past it (`capture_pull`).
   pub(super) pending: Mutex<Outbox>,
@@ -435,6 +438,8 @@ impl Default for CaptureState {
       data_control: tokio::sync::OnceCell::new(),
       wl_paste: tokio::sync::OnceCell::new(),
       main_was_focused: AtomicBool::new(false),
+      #[cfg(target_os = "macos")]
+      previous_app: Mutex::default(),
       main_is_focused: AtomicBool::new(false),
       pending: Mutex::default(),
     }

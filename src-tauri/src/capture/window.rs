@@ -214,12 +214,24 @@ pub(super) fn offer_with(
   } else {
     let _ = native.center();
   }
-  if window.focusable() && !native.is_visible().unwrap_or(false) {
-    let focused = app
-      .get_webview_window("main")
-      .and_then(|main| main.is_focused().ok())
-      .unwrap_or(false);
-    state.main_was_focused.store(focused, Ordering::Relaxed);
+  if window.focusable() {
+    let opening = !native.is_visible().unwrap_or(false);
+    if opening {
+      let focused = app
+        .get_webview_window("main")
+        .and_then(|main| main.is_focused().ok())
+        .unwrap_or(false);
+      state.main_was_focused.store(focused, Ordering::Relaxed);
+    }
+    // The app to give focus back to; a bar left open keeps it until the user is in another app.
+    #[cfg(target_os = "macos")]
+    {
+      let frontmost = frontmost_other_app();
+      let mut previous = state.previous_app.lock().unwrap();
+      if opening || frontmost.is_some() {
+        *previous = frontmost;
+      }
+    }
   }
   native.show().map_err(|_| "capture unavailable")?;
   tracing::debug!(window = label, host = %value.site, "Capture window shown");
@@ -536,6 +548,37 @@ pub(super) fn place_card(app: &AppHandle, window: &WebviewWindow, logical_height
   let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
+/// The frontmost app before the quick bar takes focus; None when that is Nezzel itself or unknown.
+#[cfg(target_os = "macos")]
+fn frontmost_other_app() -> Option<objc2::rc::Retained<objc2_app_kit::NSRunningApplication>> {
+  use objc2_app_kit::{NSRunningApplication, NSWorkspace};
+  let own = NSRunningApplication::currentApplication();
+  NSWorkspace::sharedWorkspace()
+    .frontmostApplication()
+    .filter(|app| *app != own)
+}
+
+/// Gives focus back to the app the bar opened over by activating it. Not `app.hide()`: a hidden app is
+/// unhidden by the next bar's activation, which shows every window, so the main window jumped in front of
+/// the browser behind the bar (#77). Falls back to hiding when that app is gone.
+#[cfg(target_os = "macos")]
+fn return_to_app(app: &AppHandle) {
+  use objc2_app_kit::NSApplicationActivationOptions;
+  let previous = app
+    .state::<CaptureState>()
+    .previous_app
+    .lock()
+    .unwrap()
+    .take();
+  let returned = previous.is_some_and(|previous| {
+    !previous.isTerminated()
+      && previous.activateWithOptions(NSApplicationActivationOptions::empty())
+  });
+  if !returned {
+    let _ = app.hide();
+  }
+}
+
 /// Hides a capture window after the user acted in it. The focusable bar, opened over another app, gives
 /// focus back to that app: macOS makes the main window key when the focused bar hides, pulling Nezzel
 /// over the browser. `keep_app_in_front` ("Options", which shows the main window) skips that.
@@ -549,13 +592,22 @@ pub(super) fn close_after_action(
   // Read before hiding: the main window's focus event from the hide would flip the flag.
   let return_to_previous_app =
     window.focusable() && !keep_app_in_front && !state.main_was_focused.load(Ordering::Relaxed);
-  let _ = native.hide();
+  // macOS: hide, then return, in one main-thread turn, so no Nezzel window can take focus after the return.
   #[cfg(target_os = "macos")]
   if return_to_previous_app {
-    let _ = app.hide();
+    let (app, bar) = (app.clone(), native.clone());
+    let queued = native.run_on_main_thread(move || {
+      let _ = bar.hide();
+      return_to_app(&app);
+    });
+    // Not queued (event loop gone): still hide the bar below.
+    if queued.is_ok() {
+      return;
+    }
   }
   #[cfg(not(target_os = "macos"))]
   let _ = return_to_previous_app;
+  let _ = native.hide();
 }
 
 #[cfg(test)]
