@@ -36,7 +36,7 @@ You only see qualities the site really offers. Your library keeps a list of what
 
 Download the installer for your system from the [latest release](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). Its tools (yt-dlp, ffmpeg and the rest) come inside the installer, so nothing is downloaded on first start. After that Nezzel keeps them and itself up to date; you can turn both off in Settings.
 
-- **macOS:** the beta isn't signed by Apple yet. Open the app once, then go to System Settings → Privacy & Security and click **Open Anyway** (older macOS: right-click the app → Open). Or run `xattr -dr com.apple.quarantine /Applications/Nezzel.app` in Terminal.
+- **macOS:** the app isn't signed by Apple yet. Open the app once, then go to System Settings → Privacy & Security and click **Open Anyway** (older macOS: right-click the app → Open). Or run `xattr -dr com.apple.quarantine /Applications/Nezzel.app` in Terminal.
 - **Windows:** SmartScreen may warn about an unknown publisher. Click **More info → Run anyway**.
 - **Linux:** on Ubuntu or Debian, install the `.deb` (`sudo apt install ./Nezzel_*.deb`). On Fedora, install the `.rpm` (`sudo dnf install ./Nezzel-*.rpm`). On any other distro, make the AppImage executable (`chmod +x Nezzel*.AppImage`) and run it. The `.deb` and `.rpm` need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later), because the Linux builds are made on Ubuntu 22.04.
 
@@ -62,7 +62,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 **Does Nezzel send anything to a server?** Crash and error reports go to our own Sentry project, and anonymous daily usage counts (features used, sites by domain only, never links or file names) go to our own server. Both are on by default and have a switch in Settings. Details in [PRIVACY.md](PRIVACY.md).
 
-**Why does my OS warn me when I install it?** The beta isn't code-signed yet. See [Install](#install) for the one-time step.
+**Why does my OS warn me when I install it?** The app isn't code-signed yet. See [Install](#install) for the one-time step.
 
 **Where are my files?** In `Downloads/Nezzel` unless you pick another folder in Settings. Removing an item from the list never deletes the file.
 
@@ -76,7 +76,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 انسخ الرابط، فيلتقطه Nezzel تلقائيًا (أو الصقه في خانة الرابط)، ثم اختر الجودة واضغط «تنزيل». تُحفظ الملفات في مجلد ‎`Downloads/Nezzel`‎.
 
-حمّل التطبيق من [صفحة الإصدارات](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). النسخة التجريبية غير موقّعة بعد، لذلك قد يحذّرك النظام عند فتحها أول مرة: في macOS افتح «إعدادات النظام ← الخصوصية والأمن» واضغط «فتح على أي حال»، وفي Windows اضغط «More info» ثم «Run anyway».
+حمّل التطبيق من [صفحة الإصدارات](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). التطبيق غير موقّع بعد، لذلك قد يحذّرك النظام عند فتحها أول مرة: في macOS افتح «إعدادات النظام ← الخصوصية والأمن» واضغط «فتح على أي حال»، وفي Windows اضغط «More info» ثم «Run anyway».
 
 لا يوجد خادم لـ Nezzel. تُرسَل تقارير الأعطال والأخطاء إلى مشروعنا في Sentry (في الاتحاد الأوروبي) وهي مفعّلة افتراضيًا، دون الروابط أو أسماء الملفات أو المسارات أو الكوكيز، ويمكنك إيقافها من الإعدادات أو من شاشة الترحيب. ولا يقرأ ملفات تعريف الارتباط (الكوكيز) من متصفحك إلا بعد موافقتك، ولا يمرّر إلا كوكيز الموقع الذي طلبها. التفاصيل في [PRIVACY.md](PRIVACY.md).
 
