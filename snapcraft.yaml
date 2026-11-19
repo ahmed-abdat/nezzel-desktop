@@ -1,7 +1,7 @@
 name: nezzel
 title: Nezzel
 base: core24
-version: '3.2.1'
+version: '0.1.0'
 license: 'AGPL-3.0-or-later'
 website: 'https://github.com/ahmed-abdat/nezzel-desktop'
 issues: 'https://github.com/ahmed-abdat/nezzel-desktop/issues'

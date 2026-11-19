@@ -48,26 +48,3 @@ src-tauri/binaries/ffmpeg-*
 src-tauri/binaries/ffprobe-*
 src-tauri/binaries/deno-*
 src-tauri/binaries/linux-tools/
-
-# Internal files kept out of the public repository
-AGENTS.md
-CLAUDE.md
-.claude/
-.codex/
-.mcp.json
-.agents/
-.impeccable/
-PRODUCT.md
-DESIGN.md
-report.md
-research/
-url-import-test.csv
-docs/OPEN_DECISIONS.md
-docs/improve/
-docs/untangle/
-scripts/login-check.sh
-scripts/public-export.sh
-.public-exclude
-*.pyc
-.eslintcache
-DECISIONS.md

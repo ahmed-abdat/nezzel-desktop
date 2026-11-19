@@ -15,7 +15,7 @@ The command above runs anonymously. For a local login run, add:
 ```
 
 For an anonymous nightly job on Ubuntu or in a Linux container, use
-[`scripts/link-nightly.sh` and its setup instructions](../../../docs/link-nightly.md).
+`scripts/link-nightly.sh` and its setup instructions.
 The harness accepts `LINK_MATRIX_BIN_DIR` (yt-dlp, ffmpeg, ffprobe, deno) and
 `LINK_MATRIX_RESOURCES_DIR` (gallery-dl plus gallery-dl.sha256). These override
 the local macOS app paths and compile-time resource directory. Linux still needs
