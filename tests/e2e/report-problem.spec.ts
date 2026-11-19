@@ -39,7 +39,8 @@ test('a failed row shows Details and a Report control without opening a menu', a
   });
   const links = page.getByTestId('row-error-links');
   await links.getByTestId('row-error-details').click();
-  await expect(links.getByTestId('row-error-raw')).toBeVisible();
+  await expect(page.getByText('Technical details')).toBeVisible();
+  await page.goBack();
   await links.getByTestId('row-error-report').click();
   await expect(page.getByTestId('report-dialog')).toBeVisible();
 });

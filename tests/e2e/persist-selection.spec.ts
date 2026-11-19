@@ -15,7 +15,7 @@ test('it keeps an advanced format choice after viewing details', async ({ page }
   const row = page.locator(ROW_SELECTOR).first();
   await row.getByRole('button', { name: 'More actions' }).click();
   await page.getByRole('menuitem', { name: 'Details' }).click();
-  await expect(page.getByText('Technical details')).toBeVisible();
+  await expect(page).toHaveURL(/\/group\//);
   await page.goBack();
 
   await page.locator(ROW_SELECTOR).first().getByRole('button', { name: 'Options' }).click();

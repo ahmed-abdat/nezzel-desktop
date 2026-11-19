@@ -15,21 +15,14 @@ test('it shows how many links are ready', async ({ page }) => {
 
 test('Download all in a filtered view covers only the links it shows', async ({ page }) => {
   await page.goto('/');
-  for (const url of ['https://example.com/song1', 'https://example.com/song2', 'https://example.com/clip']) {
+  for (const url of ['https://example.com/song1', 'https://example.com/song2', 'https://example.com/single-image']) {
     await page.fill('#queue-url-input', url);
     await page.keyboard.press('Enter');
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.keyboard.press('Escape');
   }
-  await page.evaluate(async () => {
-    // @ts-ignore
-    const { useMediaGroupStore } = await import('/src/stores/media/group.ts');
-    // @ts-ignore
-    const { useMediaOptionsStore } = await import('/src/stores/media/options.ts');
-    const [song1, song2] = Object.keys(useMediaGroupStore().groups);
-    for (const id of [song1, song2]) useMediaOptionsStore().setOptions(id, { trackType: 'audio', id: 'audio' });
-  });
   await expect(page.getByText('3 links ready')).toBeVisible();
-  await page.getByRole('link', { name: /Audio/ }).click();
+  // Type views hide rows that still need a click, so narrow the list with search.
+  await page.getByRole('searchbox').fill('Test Video');
   await expect(page.getByText('2 links ready')).toBeVisible();
 });

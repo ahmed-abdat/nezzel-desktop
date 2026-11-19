@@ -76,7 +76,7 @@ impl ResumeRouter {
             let group = entry.group_id.clone();
             self.send(&group, Work::Fetch(entry));
           }
-          DispatchRequest::Cleanup { group_id } => self.send(&group_id, Work::Stopped("Login required: fetch retry released")),
+          DispatchRequest::Cleanup { group_id, .. } => self.send(&group_id, Work::Stopped("Login required: fetch retry released")),
           _ => {}
         },
         Some(request) = download.recv() => if let DispatchRequest::Pipeline(DownloadRequest::Resume(entry)) = request {
