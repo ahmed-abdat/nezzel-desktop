@@ -10,7 +10,7 @@ test('fresh profile: welcome, Get started, then the main list', async ({ page, c
   const welcome = page.getByTestId('welcome');
   // The first page of a cold dev server compiles every module.
   await expect(welcome).toBeVisible({ timeout: 20_000 });
-  await expect(welcome).toHaveAccessibleName('Save videos, audio, photos and files from any link');
+  await expect(welcome).toHaveAccessibleName('Save videos, audio, photos and files from a link');
   await expect(welcome).toBeFocused();
   await expect(welcome.getByRole('switch', { name: 'Show a card when I copy a link' })).toBeChecked();
   await expect(welcome.getByRole('switch', { name: 'Start with my computer' })).toBeChecked();
