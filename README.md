@@ -17,10 +17,12 @@ Free and open source. No ads. In English, Arabic and French.
 
 [Website](https://nezzel.hululsoft.mr) · [Nezzel for Android](https://github.com/ahmed-abdat/nezzel) · [العربية](#بالعربية) · [Français](#en-français) · [Developers](#for-developers)
 
-<a href=".github/assets/list-en-light.png"><img src=".github/assets/list-en-light.png" width="48%" alt="Download list with finished, running and failed downloads"></a>&nbsp;
-<a href=".github/assets/options-en-dark.png"><img src=".github/assets/options-en-dark.png" width="48%" alt="Quality options for a video, dark theme"></a><br>
-<a href=".github/assets/list-ar-dark.png"><img src=".github/assets/list-ar-dark.png" width="48%" alt="Download list in Arabic, dark theme"></a>&nbsp;
-<a href=".github/assets/options-ar-light.png"><img src=".github/assets/options-ar-light.png" width="48%" alt="Quality options in Arabic"></a>
+<img src=".github/assets/demo-quickbar.gif" width="528" alt="The quick bar opens over another app, reads a copied YouTube link and offers best quality, audio only or 720p">
+
+<br>
+
+<a href=".github/assets/app-ar-light-list.png"><img src=".github/assets/app-ar-light-list.png" width="48%" alt="Download list in Arabic, light theme, with one running and three finished downloads"></a>&nbsp;
+<a href=".github/assets/app-ar-dark-list.png"><img src=".github/assets/app-ar-dark-list.png" width="48%" alt="Download list in Arabic, dark theme"></a>
 
 </div>
 
@@ -31,6 +33,10 @@ Free and open source. No ads. In English, Arabic and French.
 3. Choose a quality, or audio only, and click **Download**. Files go to `Downloads/Nezzel`.
 
 You only see qualities the site really offers. Your library keeps a list of what you saved.
+
+<div align="center">
+<img src=".github/assets/demo-parallel.gif" width="640" alt="Three downloads running at the same time in the download list, each with its own progress bar">
+</div>
 
 ## Install
 

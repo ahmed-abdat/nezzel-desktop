@@ -4,5 +4,5 @@
     <path d="M44 22v20M35 34l9 9 9-9M33 50h22"/>
   </g>
   <text x="72" y="34" fill="#FFFFFF" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="21" font-weight="700">Download</text>
-  <text x="72" y="54" fill="#BFE9E0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13">Latest release · macOS, Windows, Linux</text>
+  <text x="72" y="54" fill="#BFE9E0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13">macOS · Windows · Linux</text>
 </svg>
