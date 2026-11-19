@@ -70,25 +70,15 @@ const localeAliases: Record<string, Locale> = {
   'nb-NO': 'nb',
 };
 
+/** Fully translated locales: the only ones offered and auto-picked. The others stay loaded for upstream merges and old configs. */
+export const offeredLocales: ReadonlySet<Locale> = new Set<Locale>(['en', 'ar', 'fr']);
+
 export function getDefaultLocale(): Locale {
   for (const code of detectBrowserLanguageCodes()) {
-    if (code in availableLocales) {
-      return code as Locale;
-    }
-
-    if (code in localeAliases) {
-      return localeAliases[code];
-    }
-
     const baseCode = code.split('-')[0];
-
-    if (baseCode in availableLocales) {
-      return baseCode as Locale;
-    }
-
-    if (baseCode in localeAliases) {
-      return localeAliases[baseCode];
-    }
+    const match = [code in availableLocales ? code as Locale : undefined, localeAliases[code], baseCode in availableLocales ? baseCode as Locale : undefined, localeAliases[baseCode]]
+      .find(locale => locale !== undefined);
+    if (match && offeredLocales.has(match)) return match;
   }
 
   return 'en';

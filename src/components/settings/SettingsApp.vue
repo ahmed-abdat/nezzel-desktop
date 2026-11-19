@@ -32,7 +32,7 @@
       </settings-row>
       <settings-row bare as="fieldset" :disabled="!canShowNotifications">
         <legend class="float-start mb-1 w-full text-[13px]" :class="!canShowNotifications && 'opacity-50'">{{ t('prefs.adv.app.notifyWhich') }}</legend>
-        <div class="grid grid-cols-1 gap-x-8 sm:grid-cols-2" :class="!canShowNotifications && 'opacity-50'">
+        <div class="clear-both grid grid-cols-1 gap-x-8 sm:grid-cols-2" :class="!canShowNotifications && 'opacity-50'">
           <label v-for="(label, kind) in notificationKindLabels" :key="kind" class="flex min-h-7 cursor-pointer items-center gap-2.5 text-[13px]">
             <Checkbox :model-value="!isDisabled(kind as NotificationKind)" :disabled="!canShowNotifications" @update:model-value="setDisabled(kind as NotificationKind, !$event)" />
             <span>{{ label }}</span>

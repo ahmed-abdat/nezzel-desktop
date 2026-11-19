@@ -1941,7 +1941,7 @@
         "size": "Afficher la taille tout de suite",
         "sizeHint": "Récupère la taille dès qu’un lien est ajouté. Utilise un peu plus de données",
         "aria2": "Accélérer les fichiers directs (aria2)",
-        "aria2Hint": "Utilise aria2 pour les liens de fichiers simples. Laissez activé sauf en cas d’échec"
+        "aria2Hint": "Utilise aria2 pour les liens de fichiers simples. Activez-le si les gros fichiers se téléchargent lentement"
       },
       "sb": {
         "note": "YouTube uniquement. Utilise des données communautaires pour sauter ou marquer les messages de sponsors, les intros et les rappels d’abonnement",

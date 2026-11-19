@@ -28,8 +28,11 @@ fn reset_user_config(config: &mut crate::state::config_models::Config) {
   let notice_shown = config.auth.browser_login_notice_shown;
   // A user who switched browser logins off keeps them off across a Settings reset.
   let opted_out = crate::runners::login::consent::global_consent(&config.auth) == Some(false);
+  // Privacy choices are the user's, not a preference: a reset never turns reports or counts back on.
+  let privacy = config.privacy.clone();
   *config = crate::state::config_models::Config::default();
   config.auth.browser_login_notice_shown = notice_shown;
+  config.privacy = privacy;
   if opted_out {
     config.auth.browser_login_consent = Some(false);
     config.auth.always_use_browser_logins = false;
@@ -91,5 +94,21 @@ mod tests {
     let mut fresh = Config::default();
     reset_user_config(&mut fresh);
     assert_eq!(fresh.auth.browser_login_consent, Some(true));
+  }
+
+  #[test]
+  fn reset_keeps_the_privacy_opt_outs() {
+    let mut config = Config::default();
+    config.privacy.send_reports = false;
+    config.privacy.send_usage = false;
+    reset_user_config(&mut config);
+    assert!(
+      !config.privacy.send_reports,
+      "reset cannot turn crash reports back on"
+    );
+    assert!(
+      !config.privacy.send_usage,
+      "reset cannot turn usage counts back on"
+    );
   }
 }

@@ -207,20 +207,21 @@ fn resolve_locale_from_sources(
     }
   }
 
-  if let Some(sys) = sys_locale::get_locale() {
-    let norm = normalize_locale_code(&sys);
+  sys_locale::get_locale()
+    .and_then(|sys| system_locale(locales, &sys))
+    .unwrap_or_else(|| FALLBACK_LOCALE.to_string())
+}
 
-    if locales.contains_key(&norm) {
-      return norm;
-    }
-    if let Some(primary) = norm.split('-').next() {
-      if locales.contains_key(primary) {
-        return primary.to_string();
-      }
-    }
-  }
+/// Fully translated locales; the system language only auto-picks these (matches `offeredLocales` in src/i18n.ts).
+const OFFERED_LOCALES: [&str; 3] = ["en", "ar", "fr"];
 
-  FALLBACK_LOCALE.to_string()
+fn system_locale(locales: &HashMap<String, Value>, sys: &str) -> Option<String> {
+  let norm = normalize_locale_code(sys);
+  let primary = norm.split('-').next().unwrap_or_default().to_string();
+  [norm, primary]
+    .into_iter()
+    .find(|code| locales.contains_key(code))
+    .filter(|code| OFFERED_LOCALES.contains(&code.as_str()))
 }
 
 fn select_plural_variant(raw: &str, count: i64) -> String {
@@ -265,5 +266,25 @@ fn select_plural_variant(raw: &str, count: i64) -> String {
         parts[parts.len() - 1].to_string()
       }
     }
+  }
+}
+
+#[cfg(test)]
+mod offered_locale_tests {
+  use super::*;
+
+  #[test]
+  fn system_language_picks_only_fully_translated_locales() {
+    let locales: HashMap<String, Value> = ["en", "ar", "fr", "de"]
+      .into_iter()
+      .map(|code| (code.to_string(), Value::Null))
+      .collect();
+    assert_eq!(system_locale(&locales, "ar-MR").as_deref(), Some("ar"));
+    assert_eq!(system_locale(&locales, "fr-FR").as_deref(), Some("fr"));
+    assert_eq!(
+      system_locale(&locales, "de-DE"),
+      None,
+      "partial locale falls back to English"
+    );
   }
 }

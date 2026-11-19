@@ -73,7 +73,6 @@ const askEach = computed({
 });
 
 const folder = computed(() => settings.value.output.downloadDir ?? '');
-const languages = appLanguageOptions();
 const systemLanguage = computed(() => languageOptionsLookup.get(getDefaultLocale())?.nativeName ?? getDefaultLocale());
 const choiceOptions = computed(() => [
   { value: 'best', label: t('sheet.best') },
@@ -85,7 +84,7 @@ const cardPositionOptions = computed(() => (['automatic', 'top-start', 'top-end'
 })));
 const languageSelectOptions = computed(() => [
   { value: 'system', label: t('settings.appearance.language.options.system', { language: systemLanguage.value }) },
-  ...languages.map(option => ({ value: option.value, label: option.label })),
+  ...appLanguageOptions(settings.value.appearance.language).map(option => ({ value: option.value, label: option.label })),
 ]);
 const themeOptions = computed(() => [
   { value: 'system', label: t('settings.appearance.theme.options.system', { theme: unref(systemTheme) === 'dark' ? t('settings.appearance.theme.options.dark') : t('settings.appearance.theme.options.light') }) },

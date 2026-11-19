@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applyDocumentLocale, getDefaultLocale, type Locale } from '../../src/i18n';
+import { appLanguageOptions } from '../../src/helpers/languageOptions';
 import { i18n } from '../../src/i18n';
 import { mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
@@ -147,6 +148,8 @@ describe('locale direction', () => {
     [['ar'], 'ar'],
     [['fr-FR', 'en'], 'fr'],
     [['xx'], 'en'],
+    [['de-DE'], 'en'],
+    [['de-DE', 'ar'], 'ar'],
   ])('picks %j -> %s from the system languages', (languages, expected) => {
     vi.stubGlobal('navigator', { languages, language: languages[0] });
     expect(getDefaultLocale()).toBe(expected);
@@ -213,5 +216,11 @@ describe('Arabic playlist selection counts', () => {
       expect(i18n.global.t('inputFilters.playlistSelection.applySelection', { count }, count)).toBe(selected);
       expect(i18n.global.t('inputFilters.playlistSelection.applyFull', { count }, count)).toBe(all);
     } finally { i18n.global.locale.value = previous; }
+  });
+
+  it('offers en/ar/fr, plus a saved partial language until the user switches away', () => {
+    expect(appLanguageOptions().map(option => option.value).sort()).toEqual(['ar', 'en', 'fr']);
+    expect(appLanguageOptions('de').map(option => option.value).sort()).toEqual(['ar', 'de', 'en', 'fr']);
+    expect(appLanguageOptions('system').map(option => option.value).sort()).toEqual(['ar', 'en', 'fr']);
   });
 });

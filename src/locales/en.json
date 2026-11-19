@@ -1937,7 +1937,7 @@
         "size": "Show file sizes right away",
         "sizeHint": "Looks up sizes as soon as a link is added. Uses a little more data",
         "aria2": "Faster direct-file downloads (aria2)",
-        "aria2Hint": "Uses aria2 for plain file links. Leave on unless downloads fail"
+        "aria2Hint": "Uses aria2 for plain file links. Turn on if large files download slowly"
       },
       "sb": {
         "note": "YouTube only. Uses community data to skip or mark sponsor messages, intros and reminders to subscribe",
