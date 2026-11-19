@@ -13,19 +13,24 @@
       {{ open && openLabel ? openLabel : label }}
       <ChevronDown v-if="variant === 'more'" class="size-3.5 transition-transform duration-150" :class="open && 'rotate-180'" aria-hidden="true" />
     </button>
-    <div v-show="open" :id="panelId" :class="variant === 'more' ? 'self-stretch border-t border-hairline' : 'mt-1'">
+    <div v-show="open" :id="panelId" ref="panel" :class="variant === 'more' ? 'self-stretch border-t border-hairline' : 'mt-1'">
       <slot />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, useId } from 'vue';
+import { computed, ref, useId, useTemplateRef } from 'vue';
 import { ChevronDown, ChevronRight } from '@lucide/vue';
+import { useOpenOnReveal } from '../../composables/useSettingsReveal';
 
 const props = withDefaults(defineProps<{ label: string; openLabel?: string; variant?: 'heading' | 'more' }>(), { variant: 'heading' });
 const open = ref(false);
 const panelId = useId();
+// Settings search opens the disclosure that holds the row it jumps to.
+useOpenOnReveal(useTemplateRef<HTMLElement>('panel'), () => {
+  open.value = true;
+});
 
 const focusRing = 'outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]';
 const triggerClass = computed(() =>

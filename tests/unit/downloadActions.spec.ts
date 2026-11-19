@@ -259,4 +259,38 @@ describe('download row recovery', () => {
     toast.action!.run();
     expect(useListVisibilityStore().isHidden(id)).toBe(true);
   });
+
+  it('reports a rejected page opener', async () => {
+    const open = vi.fn().mockRejectedValue(new Error('opener unavailable'));
+    installTauriMock({ 'plugin:opener|open_url': open });
+    const { actions, wrapper } = actionsFor({ id: 'page', url: 'https://example.com/video' } as Group);
+    try {
+      await actions.openPage();
+      await flushPromises();
+      expect(open).toHaveBeenCalledOnce();
+      expect(useToastStore().toasts).toMatchObject([{ message: i18n.global.t('downloads.row.openPageFailed'), style: 'error' }]);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('offers removal when Show after a refused delete cannot reveal the file', async () => {
+    installTauriMock({
+      'plugin:dialog|message': () => i18n.global.t('downloads.row.deleteConfirm.ok.trash'),
+      'media_trash_file': () => Promise.reject('changed'),
+      'plugin:opener|reveal_item_in_dir': () => Promise.reject('missing'),
+    });
+    resetPlatformForTests(Platform.MacOS);
+    vi.spyOn(useMediaDestinationStore(), 'getPrimaryDestination').mockReturnValue({ path: '/gone.mp4', confidence: 100 });
+    const { actions, wrapper } = actionsFor({ id: 'changed-file' } as Group);
+    try {
+      await actions.deleteFile();
+      const refused = useToastStore().toasts.at(-1)!;
+      expect(refused.action?.label).toBe(i18n.global.t('downloads.row.show'));
+      await refused.action!.run();
+      await flushPromises();
+      const missing = useToastStore().toasts.at(-1)!;
+      expect(missing).toMatchObject({ message: 'File not found', style: 'error', action: { label: 'Remove from list' } });
+      missing.action!.run();
+      expect(useListVisibilityStore().isHidden('changed-file')).toBe(true);
+    } finally { wrapper.unmount(); }
+  });
 });

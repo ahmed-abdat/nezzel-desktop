@@ -4,7 +4,7 @@
     <span class="min-w-0 flex-1">
       <span id="wl-key-l" class="wl-label">{{ t('welcome.shortcut.label') }}</span>
       <small v-if="ready" id="wl-key-d" class="wl-help">
-        <i18n-t keypath="welcome.shortcut.help" scope="global">
+        <i18n-t :keypath="quickText.welcomeHelp" scope="global">
           <template #keys><span class="wl-keys" dir="ltr"><Kbd v-for="k in keys" :key="k">{{ k }}</Kbd></span></template>
         </i18n-t>
       </small>
@@ -38,6 +38,8 @@ import { DEFAULT_CAPTURE_SHORTCUT, isReservedShortcut, shortcutKeys } from '../.
 import { useSettingsStore } from '../../stores/settings';
 import { useCaptureShortcut } from '../../composables/useCaptureShortcut';
 import { useCapturePlatform } from '../../composables/useCapturePlatform';
+import { usePlatform } from '../../composables/usePlatform';
+import { quickDownloadText } from '../../helpers/quickDownloadText';
 
 const props = defineProps<{ mac: boolean }>();
 const { t } = useI18n();
@@ -46,6 +48,8 @@ const settings = useSettingsStore();
 // The OS result: `active` is what the user presses now (a fallback when the default was taken).
 const capture = useCaptureShortcut();
 const platform = useCapturePlatform();
+const os = usePlatform().platform;
+const quickText = computed(() => quickDownloadText(os.value));
 const status = computed(() => ({ seq: capture.seq, failed: capture.failed }));
 const failed = computed(() => capture.failed);
 const active = computed(() => settings.settings.input.globalShortcuts && !!(capture.active ?? settings.settings.input.captureShortcut));

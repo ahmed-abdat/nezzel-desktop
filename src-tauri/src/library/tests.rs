@@ -16,7 +16,7 @@ async fn missing_library_returns_errors_without_panicking() {
   .unwrap();
   let entry = DownloadEntry::from((item, "group".to_owned()));
 
-  assert!(persist_completion(app.handle(), &entry).is_err());
+  assert!(persist_completion(app.handle(), &entry, None).is_err());
   assert!(library_list(app.handle().clone(), Some(true))
     .await
     .is_err());
@@ -427,6 +427,8 @@ fn display_and_failed_rows_persist_reload_roundtrip_table() {
       fps: height.map(|_| 60),
       track_type: Some(track),
       attachment_summary: (photos + videos > 0).then_some(AttachmentSummary { photos, videos }),
+      sponsor_removed_secs: None,
+      playlist: None,
     };
     let expected = serde_json::to_value(&row).unwrap();
     let mut index = Index::default();
@@ -474,4 +476,35 @@ fn successful_completion_replaces_failure_and_rejects_late_failure_for_same_item
   assert!(rows.iter().any(|r| r.paths == success.paths));
   assert!(rows.iter().any(|r| r.paths == second.paths));
   assert_ne!(rows[0].id, rows[1].id);
+}
+
+#[test]
+fn sponsor_removed_time_is_set_at_completion_and_absent_in_legacy_display() {
+  let item: crate::models::DownloadItem = serde_json::from_value(serde_json::json!({
+    "id": "item",
+    "url": "https://example.com/video",
+    "format": { "trackType": "both" },
+    "templateContext": { "values": {} }
+  }))
+  .unwrap();
+  let entry = DownloadEntry::from((item, "group".to_owned()));
+  let mut display = LibraryDisplay::default();
+  apply_engine_facts(&mut display, &entry, Some(103));
+  let json = serde_json::to_value(&display).unwrap();
+  assert_eq!(json["sponsorRemovedSecs"], 103);
+  assert_eq!(
+    serde_json::from_value::<LibraryDisplay>(json)
+      .unwrap()
+      .sponsor_removed_secs,
+    Some(103)
+  );
+  apply_engine_facts(&mut display, &entry, None);
+  assert!(serde_json::to_value(&display)
+    .unwrap()
+    .get("sponsorRemovedSecs")
+    .is_none());
+  // library.json written before this field existed.
+  let legacy: LibraryDisplay =
+    serde_json::from_str(r#"{"duration":42.0,"height":1080,"fps":60,"trackType":"both"}"#).unwrap();
+  assert_eq!(legacy.sponsor_removed_secs, None);
 }

@@ -6,6 +6,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { clearMocks } from '@tauri-apps/api/mocks';
 import { installTauriMock } from '../utils/tauriMock.ts';
 import { useListVisibilityStore } from '../../src/stores/listVisibility';
+import { useToastStore } from '../../src/stores/toast';
+import { i18n } from '../../src/i18n';
 import { useMediaStore } from '../../src/stores/media/media';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
@@ -14,6 +16,7 @@ import { useMediaOptionsStore } from '../../src/stores/media/options';
 import { useMediaProgressStore } from '../../src/stores/media/progress';
 import { ProgressStage } from '../../src/tauri/types/progress';
 import { useMediaStateStore, MediaState } from '../../src/stores/media/state';
+import { usePlaylistStore } from '../../src/stores/media/playlist';
 import { useSettingsStore } from '../../src/stores/settings';
 import { useWatchClipboardStore } from '../../src/stores/watchClipboard';
 import { useUiPrefs } from '../../src/composables/useUiPrefs';
@@ -388,6 +391,32 @@ describe('media store', () => {
     expect(useMediaStateStore().getGroupState('library:failure')).toBe(MediaState.fetching);
   });
 
+  it.each(['failed', 'finished'] as const)('reports one error when removing %s history fails', async (kind) => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const remove = vi.fn().mockRejectedValue(new Error('unable to save library'));
+    installTauriMock({
+      library_list: () => [{ id: 'saved', paths: kind === 'failed' ? [] : ['/downloads/a.mp4'], url: 'https://example.com/a', title: 'Saved', kind: 'video', size: 1, completedAt: 1, errorCode: kind === 'failed' ? 'networkTimeout' : undefined }],
+      library_remove: remove,
+    });
+    try {
+      const store = useMediaStore();
+      await store.loadLibrary();
+      expect(remove).not.toHaveBeenCalled();
+      expect(useToastStore().toasts).toEqual([]);
+      store.deleteGroup('library:saved');
+      await vi.advanceTimersByTimeAsync(0);
+      await flushPromises();
+      expect(remove).toHaveBeenCalledExactlyOnceWith('library_remove', kind === 'failed' ? { paths: [], ids: ['saved'] } : { paths: ['/downloads/a.mp4'] });
+      expect(useMediaGroupStore().findGroupById('library:saved')).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith('Unable to remove local download history');
+      expect(useToastStore().toasts).toMatchObject([{ message: i18n.global.t('downloads.historyRemoveFailed'), style: 'error' }]);
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('recovers legacy audio labels and photo counts from saved files', async () => {
     installTauriMock({ library_list: () => [
       { id: 'audio', paths: ['/downloads/a.mp3'], url: '', title: 'Audio', kind: 'audio', size: 1, completedAt: 1 },
@@ -728,32 +757,155 @@ describe('media store', () => {
     });
   });
 
-  it.each([
-    { total: 2, threshold: 3, groups: 2 },
-    { total: 3, threshold: 3, groups: 1 },
-    { total: 4, threshold: 3, groups: 1 },
-  ])('finalizes $total items with split threshold $threshold into $groups groups', ({ total, threshold, groups }) => {
-    useSettingsStore().settings.performance.splitPlaylistThreshold = threshold;
+  function readPlaylist(groupId: string, entries: EntryItem[], urls = entries.map(entry => entry.videoUrl)) {
     const groupStore = useMediaGroupStore();
-    const group = createPlaylistGroup('group-1', total);
-    for (const entry of group.entries!) {
-      const id = `item-${entry.index}`;
-      group.items[id] = {
-        id, groupId: group.id, url: entry.videoUrl, title: `Item ${entry.index + 1}`,
-        audioCodecs: [], formats: [], filesize: 0,
-      };
-    }
+    const group = createPlaylistGroup(groupId, entries.length);
+    group.entries = entries;
+    group.items.leader.entries = entries;
+    group.items = { leader: { ...group.items.leader, id: `${groupId}-leader` } };
+    urls.forEach((url, i) => {
+      const id = `${groupId}-item-${i}`;
+      group.items[id] = { id, groupId, url, title: `Item ${i + 1}`, audioCodecs: [], formats: [], filesize: 0 };
+    });
     groupStore.createGroup(group);
-
     useMediaStore().finalizePlaylistGroup(group);
+    return group;
+  }
+  const childrenOf = (parentId: string) => useMediaGroupStore().orderedGroups.filter(g => g.parentId === parentId);
 
-    const result = groupStore.orderedGroups;
-    expect(result).toHaveLength(groups);
-    expect(result.flatMap(g => Object.values(g.items).filter(item => !item.entries).map(item => item.url))).toEqual(
-      group.entries!.map(entry => entry.videoUrl),
-    );
-    expect(result.map(g => g.total)).toEqual(groups === 1 ? [total] : Array(total).fill(1));
-    for (const g of result) expect(useMediaStateStore().getGroupState(g.id)).toBe(MediaState.configure);
+  it.each([2, 60])('splits every playlist (%i entries) into downloads under one parent, in order', (total) => {
+    const group = readPlaylist('pl', createEntries(total));
+    const children = childrenOf('pl');
+    expect(children).toHaveLength(total);
+    expect(children.map(child => child.parentIndex)).toEqual([...Array(total).keys()]);
+    expect(children.map(child => Object.values(child.items)[0].url)).toEqual(group.entries!.map(entry => entry.videoUrl));
+    expect(usePlaylistStore().findPlaylist('pl')).toMatchObject({ id: 'pl', count: total, title: 'Playlist' });
+    for (const child of children) expect(useMediaStateStore().getGroupState(child.id)).toBe(MediaState.configure);
+  });
+
+  it('keeps every row when a playlist lists the same video twice, and the same link in two playlists', () => {
+    const entries = [
+      { index: 0, videoUrl: 'https://example.com/v=a' },
+      { index: 1, videoUrl: 'https://example.com/v=b' },
+      { index: 2, videoUrl: 'https://example.com/v=a' },
+    ];
+    readPlaylist('one', entries);
+    readPlaylist('two', entries.slice(0, 2));
+    expect(childrenOf('one').map(child => child.parentIndex)).toEqual([0, 1, 2]);
+    expect(childrenOf('two').map(child => child.parentIndex)).toEqual([0, 1]);
+  });
+
+  it('a one-entry playlist becomes a plain row (no parent)', () => {
+    readPlaylist('solo', createEntries(1));
+    expect(useMediaGroupStore().orderedGroups).toHaveLength(1);
+    expect(useMediaGroupStore().orderedGroups[0].parentId).toBeUndefined();
+    expect(usePlaylistStore().findPlaylist('solo')).toBeUndefined();
+  });
+
+  it('turns entries that could not be read into failed children with their titles', () => {
+    const diagnostics = useMediaDiagnosticsStore();
+    const entries = createEntries(3).map(entry => ({ ...entry, title: `Entry ${entry.index + 1}` }));
+    const groupStore = useMediaGroupStore();
+    const group = createPlaylistGroup('broken', 3);
+    group.entries = entries;
+    group.items.leader.entries = entries;
+    group.items['ok-1'] = { id: 'ok-1', groupId: 'broken', url: entries[0].videoUrl, audioCodecs: [], formats: [], filesize: 0 };
+    group.items['ok-2'] = { id: 'ok-2', groupId: 'broken', url: entries[2].videoUrl, audioCodecs: [], formats: [], filesize: 0 };
+    groupStore.createGroup(group);
+    diagnostics.fatals['lost'] = { id: 'lost', groupId: 'broken', exitCode: 1, internal: false, message: 'Private video', details: null, timestamp: 0 };
+    useMediaStore().finalizePlaylistGroup(group);
+    const children = childrenOf('broken');
+    expect(children.map(child => child.parentIndex)).toEqual([0, 1, 2]);
+    expect(children[1].title).toBe('Entry 2');
+    expect(useMediaStateStore().getGroupState(children[1].id)).toBe(MediaState.error);
+  });
+
+  it('keeps the login card of a playlist on its row after the split', () => {
+    const login = useLoginStore();
+    login.failed['pl'] = { groupId: 'pl', host: 'example.com', reason: 'dismissed' };
+    readPlaylist('pl', createEntries(3));
+    expect(login.cardFor('pl')).toMatchObject({ kind: 'failed' });
+  });
+
+  it('sends one notice for a finished playlist, none per item', async () => {
+    readPlaylist('pl', createEntries(3));
+    notifyGroup.mockClear();
+    const progress = useMediaProgressStore();
+    const children = childrenOf('pl');
+    for (const child of children) {
+      const itemId = Object.keys(child.items)[0];
+      progress.processMediaCompletePayload({ id: itemId, groupId: child.id } as never);
+    }
+    await flushPromises();
+    expect(notifyGroup.mock.calls.map(call => call[0])).toEqual(['playlistFinished']);
+    expect(notifyGroup.mock.calls[0][3]).toBe(3);
+  });
+
+  it('sends one partial-failure notice when some items failed, none per item', async () => {
+    readPlaylist('pl', createEntries(3));
+    notifyGroup.mockClear();
+    const progress = useMediaProgressStore();
+    const diagnostics = useMediaDiagnosticsStore();
+    const [a, b, c] = childrenOf('pl');
+    const item = (g: Group) => Object.keys(g.items)[0];
+    useMediaStateStore().setGroupState(b.id, MediaState.downloading);
+    useMediaStateStore().setGroupState(c.id, MediaState.downloading);
+    progress.processMediaCompletePayload({ id: item(a), groupId: a.id } as never);
+    diagnostics.processMediaFatalPayload({ id: item(b), groupId: b.id, exitCode: 1, internal: false, message: 'gone', details: null, timestamp: 0 });
+    progress.processMediaCompletePayload({ id: item(c), groupId: c.id } as never);
+    await flushPromises();
+    expect(notifyGroup.mock.calls.map(call => call[0])).toEqual(['downloadFailed']);
+  });
+
+  it('keeps the parent through cancel + undo, and drops it when the last child is removed', async () => {
+    installTauriMock({ group_cancel: () => undefined, group_download: () => undefined, library_remove: () => undefined });
+    readPlaylist('pl', createEntries(2));
+    const store = useMediaStore();
+    const [first, second] = childrenOf('pl');
+    store.cancelDownload(first.id);
+    await flushPromises();
+    expect(childrenOf('pl')).toHaveLength(2);
+    expect(usePlaylistStore().findPlaylist('pl')).toBeDefined();
+    store.deleteGroup(second.id);
+    await flushPromises();
+    expect(usePlaylistStore().findPlaylist('pl')).toBeDefined();
+    for (const child of childrenOf('pl')) store.deleteGroup(child.id);
+    await flushPromises();
+    expect(usePlaylistStore().findPlaylist('pl')).toBeUndefined();
+  });
+
+  it('retry keeps the playlist, position and title of a child', async () => {
+    installTauriMock({ media_info: () => undefined, library_remove: () => undefined });
+    readPlaylist('pl', createEntries(3));
+    const child = childrenOf('pl')[1];
+    useMediaStateStore().setGroupState(child.id, MediaState.error);
+    await useMediaStore().retryGroup(child.id).catch(() => undefined);
+    const after = useMediaGroupStore().findGroupById(child.id)!;
+    expect(after.parentId).toBe('pl');
+    expect(after.parentIndex).toBe(1);
+    expect(Object.values(after.items)[0].title).toBe('Item 2');
+  });
+
+  it('regroups saved playlist items after a restart from library.json', async () => {
+    const row = (id: string, index: number): LibraryRecord => ({
+      id, paths: [`/downloads/${id}.mp4`], url: `https://example.com/${id}`, title: id, kind: 'video', size: 1, completedAt: 1,
+      display: { playlist: { key: 'pk', title: 'Saved list', count: 2, index } },
+    });
+    installTauriMock({ library_list: () => [row('b', 1), row('a', 0)] });
+    await useMediaStore().loadLibrary();
+    const children = childrenOf('library-playlist:pk');
+    expect(children.map(child => child.parentIndex).sort()).toEqual([0, 1]);
+    expect(usePlaylistStore().findPlaylist('library-playlist:pk')).toMatchObject({ title: 'Saved list' });
+  });
+
+  it('leaves galleries and photo posts as one row (no parent)', () => {
+    const groupStore = useMediaGroupStore();
+    const gallery = createPlaylistGroup('gallery', 1);
+    delete gallery.entries;
+    gallery.items = { leader: { id: 'g-leader', url: 'https://example.com/post', isLeader: true, mediaKind: 'carousel', audioCodecs: [], formats: [], filesize: 0, attachments: [{ id: 'p1', kind: 'image', url: 'https://cdn/x.jpg' }] as never } };
+    groupStore.createGroup(gallery);
+    expect(groupStore.splitGroup(gallery)).toEqual([]);
+    expect(groupStore.findGroupById('gallery')?.parentId).toBeUndefined();
   });
 
   it('expands playlists with the selected subset and updates overrides', async () => {

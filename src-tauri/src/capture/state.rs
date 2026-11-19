@@ -71,6 +71,8 @@ pub struct Offer {
   pub resolving: bool,
   /// Home/feed page with no specific post: no metadata fetch.
   pub feed: bool,
+  /// macOS refused the quick bar's browser read (Automation off); the bar links to the setting.
+  pub automation_denied: bool,
   #[serde(skip)]
   pub(super) adopt_on_focus: bool,
 }

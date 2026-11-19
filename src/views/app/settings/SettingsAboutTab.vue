@@ -9,7 +9,7 @@
         <p class="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground text-pretty rtl:text-[13px]">{{ t('welcome.title') }}</p>
       </div>
     </div>
-    <settings-row :label="t('about.version', { version: `\u2066${appVersion}\u2069` })" :help="checkHelp">
+    <settings-row search-id="version" :label="t('about.version', { version: `\u2066${appVersion}\u2069` })" :help="checkHelp">
       <Button variant="outline" data-testid="about-check" :disabled="checking" :aria-busy="checking || undefined" @click="checkNow">
         <LoaderCircle v-if="checking" class="animate-spin" aria-hidden="true" />{{ checking ? t('about.update.checking') : t('about.update.check') }}
       </Button>
@@ -55,12 +55,12 @@
     <a v-for="link in links" :key="link.href" :href="link.href" :class="linkRowCls" target="_blank" rel="noopener">
       <span>{{ link.label }}</span><ExternalLink class="size-4 shrink-0 text-muted-foreground group-hover:text-primary" aria-hidden="true" />
     </a>
-    <settings-row :label="t('report.title')" :help="t('report.aboutHelp')">
+    <settings-row search-id="reportProblem" :label="t('report.title')" :help="t('report.aboutHelp')">
       <Button variant="outline" data-testid="about-report" @click="report.openReport()">
         <MessageSquareWarning aria-hidden="true" />{{ t('report.open') }}
       </Button>
     </settings-row>
-    <settings-row :label="t('about.poweredBy')" :help="t('about.credit')">
+    <settings-row search-id="licenses" :label="t('about.poweredBy')" :help="t('about.credit')">
       <Button variant="outline" @click="openLicenses()">{{ t('about.viewLicenses') }}</Button>
     </settings-row>
   </settings-section>

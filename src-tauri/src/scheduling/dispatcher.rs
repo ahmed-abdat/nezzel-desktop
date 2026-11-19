@@ -1,5 +1,5 @@
 use crate::scheduling::concurrency::DynamicSemaphore;
-use crate::scheduling::group_state::{is_group_running, remove_group};
+use crate::scheduling::group_state::{group_generation, is_group_running, remove_group_if};
 use crate::scheduling::numbering::NumberingManager;
 use futures::Future;
 use std::{collections::VecDeque, sync::Arc};
@@ -10,12 +10,28 @@ pub trait DispatchEntry: Clone + Send + Sync + 'static {
   fn group_id(&self) -> &String;
   fn group_key(&self) -> Option<&String>;
   fn set_numbering(&mut self, autonumber: u64, group_autonumber: Option<u64>);
+  /// The group run this entry was queued for; `None`: any run.
+  fn generation(&self) -> Option<u64> {
+    None
+  }
+}
+
+/// Queued for an older run of its group (paused and resumed since): must not run.
+fn outdated<Entry: DispatchEntry>(entry: &Entry) -> bool {
+  entry
+    .generation()
+    .is_some_and(|queued| group_generation(entry.group_id()) != Some(queued))
 }
 
 #[derive(Clone)]
 pub enum DispatchRequest<Req> {
   Pipeline(Req),
-  Cleanup { group_id: String },
+  /// `generation`: the group's generation when this was sent (`group_generation`); a group that
+  /// was started again since then keeps running.
+  Cleanup {
+    group_id: String,
+    generation: Option<u64>,
+  },
 }
 
 pub struct GenericDispatcher<Req> {
@@ -56,9 +72,23 @@ where
       loop {
         while let Ok(req) = rx.try_recv() {
           match req {
-            DispatchRequest::Cleanup { group_id } => {
-              queues.retain(|(gid, _)| gid != &group_id);
-              remove_group(&group_id);
+            DispatchRequest::Cleanup {
+              group_id,
+              generation,
+            } => {
+              // Drop the entries of the run it ends; a newer run's entries stay.
+              let ended = |entry: &Entry| match (generation, entry.generation()) {
+                (Some(cleanup), Some(queued)) => queued <= cleanup,
+                _ => true,
+              };
+              for (gid, q) in queues.iter_mut().chain(pending_requeue.iter_mut()) {
+                if gid == &group_id {
+                  q.retain(|entry| !ended(entry));
+                }
+              }
+              queues.retain(|(_, q)| !q.is_empty());
+              pending_requeue.retain(|(_, q)| !q.is_empty());
+              remove_group_if(&group_id, generation);
             }
             DispatchRequest::Pipeline(inner) => {
               let mut entries = make_entries(inner.clone());
@@ -106,8 +136,8 @@ where
           // Pop the next group and its next entry
           let (group_id, mut q) = queues.pop_front().unwrap();
 
-          // Skip cancelled groups.
-          let still_running = is_group_running(&group_id);
+          // Skip cancelled groups and entries of an older run.
+          let still_running = is_group_running(&group_id) && !q.front().is_some_and(outdated);
           if !still_running {
             drop(permit);
             continue;
@@ -163,9 +193,11 @@ where
 mod tests {
   use super::*;
   use crate::scheduling::concurrency::DynamicSemaphore;
-  use crate::scheduling::group_state::ensure_group_running;
+  use crate::scheduling::group_state::{
+    cancel_group, ensure_group_running, group_generation, start_group_run,
+  };
   use std::sync::atomic::{AtomicUsize, Ordering};
-  use std::sync::Arc;
+  use std::sync::{Arc, OnceLock};
   use tauri::test::mock_app;
   use tokio::sync::{Mutex, Notify, Semaphore};
   use tokio::time::{timeout, Duration};
@@ -452,6 +484,308 @@ mod tests {
     assert!(
       idx_b < idx_a_last,
       "expected new group to run before the last queued entry of existing group"
+    );
+  }
+
+  #[derive(Clone)]
+  enum Step {
+    Ensure(&'static str),
+    /// `media_download`.
+    Start(&'static str),
+    Cancel(&'static str),
+    Cleanup(&'static str),
+    /// The Cleanup of the group's last `Cancel`, arriving late (pause still sending it).
+    LateCleanup(&'static str),
+    Queue(&'static str, &'static str, usize),
+  }
+
+  /// `count` entries labelled `tag:index` for `group`. `then` plays while the dispatcher drains,
+  /// so everything it sends lands in that same drain pass (as when the dispatcher was busy).
+  #[derive(Clone)]
+  struct ScriptReq {
+    group: &'static str,
+    tag: &'static str,
+    count: usize,
+    /// The run the entries were queued for (`media_download`'s generation).
+    generation: Option<u64>,
+    then: Vec<Step>,
+  }
+
+  #[derive(Clone)]
+  struct LabelEntry {
+    group_id: String,
+    label: String,
+    generation: Option<u64>,
+  }
+
+  static LAST_CANCEL: std::sync::Mutex<Vec<(&'static str, u64)>> =
+    std::sync::Mutex::new(Vec::new());
+
+  impl DispatchEntry for LabelEntry {
+    fn group_id(&self) -> &String {
+      &self.group_id
+    }
+    fn group_key(&self) -> Option<&String> {
+      None
+    }
+    fn set_numbering(&mut self, _autonumber: u64, _group_autonumber: Option<u64>) {}
+    fn generation(&self) -> Option<u64> {
+      self.generation
+    }
+  }
+
+  type ScriptTx = mpsc::UnboundedSender<DispatchRequest<ScriptReq>>;
+
+  /// What pause (`group_cancel`) and a finished fetch send.
+  fn cleanup_request(group: &str) -> DispatchRequest<ScriptReq> {
+    DispatchRequest::Cleanup {
+      group_id: group.into(),
+      generation: group_generation(group),
+    }
+  }
+
+  fn play(tx: &ScriptTx, steps: &[Step]) {
+    for step in steps {
+      match step {
+        Step::Ensure(group) => {
+          ensure_group_running(group);
+        }
+        Step::Start(group) => {
+          start_group_run(group);
+        }
+        Step::Cancel(group) => {
+          let generation = cancel_group(group);
+          LAST_CANCEL.lock().unwrap().push((group, generation));
+        }
+        Step::Cleanup(group) => tx.send(cleanup_request(group)).unwrap(),
+        Step::LateCleanup(group) => {
+          let generation = LAST_CANCEL
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(g, _)| g == group)
+            .map(|(_, generation)| *generation);
+          tx.send(DispatchRequest::Cleanup {
+            group_id: (*group).into(),
+            generation,
+          })
+          .unwrap()
+        }
+        Step::Queue(group, tag, count) => tx
+          .send(DispatchRequest::Pipeline(ScriptReq {
+            group,
+            tag,
+            count: *count,
+            generation: group_generation(group),
+            then: Vec::new(),
+          }))
+          .unwrap(),
+      }
+    }
+  }
+
+  struct Scripted {
+    _app: tauri::App<tauri::test::MockRuntime>,
+    tx: ScriptTx,
+    started: mpsc::UnboundedReceiver<String>,
+    gate: Arc<Semaphore>,
+  }
+
+  /// One download slot; the job labelled `gated` holds it until `gate` gets a permit.
+  fn start_scripted(gated: Option<&'static str>) -> Scripted {
+    let app = mock_app();
+    let own_tx: Arc<OnceLock<ScriptTx>> = Arc::new(OnceLock::new());
+    let gate = Arc::new(Semaphore::new(0));
+    let (started_tx, started) = mpsc::unbounded_channel();
+    let make_tx = own_tx.clone();
+    let job_gate = gate.clone();
+    let dispatcher = GenericDispatcher::start(
+      app.handle().clone(),
+      Arc::new(DynamicSemaphore::new(1)),
+      move |req: ScriptReq| {
+        play(make_tx.get().expect("sender set"), &req.then);
+        (0..req.count)
+          .map(|index| LabelEntry {
+            group_id: req.group.into(),
+            label: format!("{}:{index}", req.tag),
+            generation: req.generation,
+          })
+          .collect::<Vec<_>>()
+      },
+      move |_tx, _app, entry: LabelEntry| {
+        let started_tx = started_tx.clone();
+        let gate = job_gate.clone();
+        async move {
+          let held = gated == Some(entry.label.as_str());
+          let _ = started_tx.send(entry.label);
+          if held {
+            gate.acquire().await.expect("gate").forget();
+          }
+        }
+      },
+    );
+    let tx = dispatcher.sender();
+    let _ = own_tx.set(tx.clone());
+    Scripted {
+      _app: app,
+      tx,
+      started,
+      gate,
+    }
+  }
+
+  /// Job starts in order, until every expected label has started (the timeout is a hang guard).
+  async fn starts_until(
+    started: &mut mpsc::UnboundedReceiver<String>,
+    expected: &[&str],
+  ) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    while !expected.iter().all(|label| seen.iter().any(|s| s == label)) {
+      let label = timeout(Duration::from_secs(30), started.recv())
+        .await
+        .expect("dispatcher stalled: a queued entry never ran")
+        .expect("job events closed");
+      seen.push(label);
+    }
+    seen
+  }
+
+  fn script(group: &'static str, then: Vec<Step>) -> DispatchRequest<ScriptReq> {
+    DispatchRequest::Pipeline(ScriptReq {
+      group,
+      tag: "script",
+      count: 0,
+      generation: None,
+      then,
+    })
+  }
+
+  #[tokio::test]
+  async fn stale_pause_cleanup_does_not_drop_the_resumed_group() {
+    const G: &str = "stale-cleanup-pause";
+    let mut d = start_scripted(None);
+    d.tx
+      .send(script(
+        "stale-cleanup-pause-script",
+        vec![
+          Step::Ensure(G),
+          Step::Queue(G, "old", 1),
+          Step::Cancel(G),
+          Step::Cleanup(G),
+          Step::Start(G),
+          Step::Queue(G, "new", 1),
+        ],
+      ))
+      .unwrap();
+
+    assert_eq!(starts_until(&mut d.started, &["new:0"]).await, ["new:0"]);
+  }
+
+  #[tokio::test]
+  async fn pause_drops_the_requeued_rest_of_the_group_before_resume() {
+    const G: &str = "stale-cleanup-requeue";
+    const BUSY: &str = "stale-cleanup-requeue-busy";
+    let mut d = start_scripted(Some("old:0"));
+    ensure_group_running(G);
+    ensure_group_running(BUSY);
+    d.tx
+      .send(DispatchRequest::Pipeline(ScriptReq {
+        group: G,
+        tag: "old",
+        count: 2,
+        generation: group_generation(G),
+        then: vec![Step::Queue(BUSY, "busy", 1)],
+      }))
+      .unwrap();
+    // old:0 holds the only slot; old:1 waits in the requeue list while busy:0 waits for the slot.
+    assert_eq!(starts_until(&mut d.started, &["old:0"]).await, ["old:0"]);
+
+    play(
+      &d.tx,
+      &[
+        Step::Cancel(G),
+        Step::Cleanup(G),
+        Step::Start(G),
+        Step::Queue(G, "new", 2),
+      ],
+    );
+    d.gate.add_permits(1);
+
+    assert_eq!(
+      starts_until(&mut d.started, &["new:0", "new:1"]).await,
+      ["busy:0", "new:0", "new:1"]
+    );
+  }
+
+  #[tokio::test]
+  async fn finished_fetch_cleanup_does_not_drop_a_download_started_after_it() {
+    const G: &str = "stale-cleanup-fetch";
+    let mut d = start_scripted(None);
+    d.tx
+      .send(script(
+        "stale-cleanup-fetch-script",
+        vec![
+          Step::Ensure(G),
+          Step::Cleanup(G),
+          Step::Start(G),
+          Step::Queue(G, "new", 1),
+        ],
+      ))
+      .unwrap();
+
+    assert_eq!(starts_until(&mut d.started, &["new:0"]).await, ["new:0"]);
+  }
+
+  #[tokio::test]
+  async fn late_pause_cleanup_keeps_entries_queued_by_the_resume() {
+    const G: &str = "stale-cleanup-late";
+    let mut d = start_scripted(None);
+    d.tx
+      .send(script(
+        "stale-cleanup-late-script",
+        vec![
+          Step::Start(G),
+          Step::Queue(G, "old", 1),
+          Step::Cancel(G),
+          Step::Start(G),
+          Step::Queue(G, "new", 1),
+          Step::LateCleanup(G),
+        ],
+      ))
+      .unwrap();
+
+    assert_eq!(starts_until(&mut d.started, &["new:0"]).await, ["new:0"]);
+  }
+
+  #[tokio::test]
+  async fn resume_before_the_pause_cleanup_does_not_revive_requeued_entries() {
+    const G: &str = "stale-requeue-revive";
+    const BUSY: &str = "stale-requeue-revive-busy";
+    let mut d = start_scripted(Some("old:0"));
+    start_group_run(G);
+    ensure_group_running(BUSY);
+    d.tx
+      .send(DispatchRequest::Pipeline(ScriptReq {
+        group: G,
+        tag: "old",
+        count: 2,
+        generation: group_generation(G),
+        then: vec![Step::Queue(BUSY, "busy", 1)],
+      }))
+      .unwrap();
+    assert_eq!(starts_until(&mut d.started, &["old:0"]).await, ["old:0"]);
+
+    // The pause's Cleanup has not reached the dispatcher yet.
+    play(
+      &d.tx,
+      &[Step::Cancel(G), Step::Start(G), Step::Queue(G, "new", 2)],
+    );
+    d.gate.add_permits(1);
+
+    assert_eq!(
+      starts_until(&mut d.started, &["new:0", "new:1"]).await,
+      ["busy:0", "new:0", "new:1"]
     );
   }
 }

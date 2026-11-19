@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 import { Group } from '../../tauri/types/group';
-import { MediaCodec, MediaFormat, MediaTrack } from '../../tauri/types/media';
+import { EntryItem, MediaCodec, MediaFormat, MediaTrack } from '../../tauri/types/media';
 import { firstKey, omit } from '../../helpers/groups';
 
 function codecId(codec: MediaCodec): string {
@@ -63,7 +63,12 @@ export const useMediaGroupStore = defineStore('media-group', () => {
     return invoke<void>('group_cancel', { groupId: id, discardFiles });
   };
 
-  function splitGroup(group: Group): Group[] {
+  /**
+   * One group per read entry, in playlist order. Items are matched to entries by position among
+   * entries with the same link, so a playlist that lists one video twice keeps both rows.
+   * `unmatched` returns the entries no item arrived for (could not be read, or filtered out).
+   */
+  function splitGroup(group: Group, unmatched: EntryItem[] = []): Group[] {
     const result: Group[] = [];
 
     const leader = Object.values(group.items).find(item => item.entries);
@@ -71,18 +76,20 @@ export const useMediaGroupStore = defineStore('media-group', () => {
 
     if (!entries) return result;
 
-    const entryByUrl = new Map<string, (typeof entries)[number]>();
-    for (const entry of entries) {
-      entryByUrl.set(entry.videoUrl, entry);
+    const entriesByUrl = new Map<string, EntryItem[]>();
+    for (const entry of [...entries].sort((a, b) => a.index - b.index)) {
+      const queue = entriesByUrl.get(entry.videoUrl);
+      if (queue) queue.push(entry);
+      else entriesByUrl.set(entry.videoUrl, [entry]);
     }
 
-    const orderedGroups: (Group | undefined)[] = new Array(entries.length);
+    const placed: { entry: EntryItem; group: Group }[] = [];
     const extras: Group[] = [];
 
     for (const [itemKey, item] of Object.entries(group.items)) {
       if (item.entries) continue;
 
-      const entry = entryByUrl.get(item.url);
+      const entry = entriesByUrl.get(item.url)?.shift();
       const meta = omit(item, ['id', 'groupId', 'isLeader']);
 
       const newGroup: Group = {
@@ -103,16 +110,21 @@ export const useMediaGroupStore = defineStore('media-group', () => {
         newGroup.playlistUploaderId = leader?.uploaderId;
         newGroup.playlistTitle = leader?.title;
         newGroup.playlistId = leader?.playlistId;
+        newGroup.parentIndex = entry.index;
         newGroup.items[itemKey].playlistIndex = entry.index;
-        orderedGroups[entry.index] = newGroup;
+        placed.push({ entry, group: newGroup });
       } else {
         extras.push(newGroup);
       }
     }
 
-    const finalGroups = orderedGroups.filter(
-      (g): g is Group => g !== undefined,
-    ).concat(extras);
+    for (const queue of entriesByUrl.values()) unmatched.push(...queue);
+    unmatched.sort((a, b) => a.index - b.index);
+
+    const finalGroups = placed
+      .sort((a, b) => a.entry.index - b.entry.index)
+      .map(p => p.group)
+      .concat(extras);
 
     prependGroups(finalGroups);
 

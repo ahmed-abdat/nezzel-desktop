@@ -5,6 +5,7 @@ import { useMediaGroupStore } from './group.ts';
 import { notifyGroup } from '../../tauri/notifications';
 import { NotificationKind } from '../../tauri/types/app';
 import { useMediaStore } from './media.ts';
+import { usePlaylistStore } from './playlist';
 import { reportFailedDownload } from '../report';
 import { downloadReportContext } from '../../helpers/reportContext';
 
@@ -101,7 +102,8 @@ export const useMediaDiagnosticsStore = defineStore('media-diagnostics', () => {
         mediaStore.finalizePlaylistGroup(group);
       }
       stateStore.setGroupState(groupId, MediaState.error);
-      void notifyGroup(NotificationKind.DownloadFailed, group, { message: payload.message });
+      if (group.parentId) usePlaylistStore().settle(group.parentId);
+      else void notifyGroup(NotificationKind.DownloadFailed, group, { message: payload.message });
     }
     mediaStore.rememberFailedGroup(groupId);
   }

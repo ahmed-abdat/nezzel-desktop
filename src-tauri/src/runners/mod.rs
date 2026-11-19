@@ -20,3 +20,4 @@ pub(crate) mod ytdlp_files;
 pub mod ytdlp_info;
 pub mod ytdlp_process;
 pub mod ytdlp_runner;
+mod ytdlp_sponsorblock;

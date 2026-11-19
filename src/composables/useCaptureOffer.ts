@@ -38,6 +38,7 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   const faviconFailed = ref(false);
   const auth = ref<Settings['auth']>();
   let unlisten: UnlistenFn | undefined;
+  let disposed = false;
   let slowTimer: ReturnType<typeof setTimeout> | undefined;
   let snapshotTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -175,9 +176,14 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   /** Listen for `capture_changed`, then take the first snapshot. Call from the window's onMounted. */
   async function start() {
     unlisten = await listen('capture_changed', () => void refresh().catch(() => {}));
+    if (disposed) {
+      unlisten();
+      return;
+    }
     await refresh();
   }
   onBeforeUnmount(() => {
+    disposed = true;
     unlisten?.();
     clearTimeout(slowTimer);
     clearInterval(snapshotTimer);

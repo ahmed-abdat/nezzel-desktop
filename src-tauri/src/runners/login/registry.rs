@@ -193,6 +193,7 @@ impl LoginRequest {
           &app.state::<DownloadSender>().0,
           group,
           &entry.id,
+          entry.generation,
           false,
         );
       }
@@ -289,11 +290,14 @@ pub(super) struct CleanupChannels {
 }
 impl CleanupChannels {
   fn send(&self, group_id: &str) {
+    let generation = crate::scheduling::group_state::group_generation(group_id);
     let _ = self.fetch.0.send(DispatchRequest::Cleanup {
       group_id: group_id.into(),
+      generation,
     });
     let _ = self.download.0.send(DispatchRequest::Cleanup {
       group_id: group_id.into(),
+      generation,
     });
   }
 }

@@ -161,6 +161,7 @@ describe('SettingsView', () => {
     const updated = wrapper.findAll('nav a');
     expect(updated[0].attributes('aria-current')).toBeUndefined();
     expect(updated[1].attributes('aria-current')).toBe('page');
+    wrapper.unmount();
   });
 
   it('saves a change once, and reset replaces the same draft without saving it back', async () => {
@@ -203,6 +204,7 @@ describe('SettingsView', () => {
     expect(patch).toHaveBeenCalledTimes(1);
     expect(showToast).toHaveBeenCalledWith('Reset settings to defaults', { style: 'success' });
     expect(settingsState.output.video.policy).toBe(defaultSettings.output.video.policy);
+    wrapper.unmount();
   });
   it('reports a failed autosave, keeps the draft, and never claims it was saved', async () => {
     vi.useFakeTimers();
@@ -273,9 +275,67 @@ describe('global browser login switch', () => {
 });
 
 it('keeps the awake switch behind the advanced performance disclosure', async () => {
-  const wrapper = mount(SettingsPerformance, { props: { modelValue: structuredClone(defaultSettings) }, global: { plugins: [i18n] } });
+  const wrapper = mount(SettingsPerformance, { props: { modelValue: structuredClone(defaultSettings) }, global: { plugins: [i18n] }, attachTo: document.body });
   expect(wrapper.find('#keepAwake').isVisible()).toBe(false);
   await wrapper.get('button[aria-expanded]').trigger('click');
   expect(wrapper.get('#keepAwake').isVisible()).toBe(true);
   wrapper.unmount();
+});
+
+describe('Settings search', () => {
+  it('search: picking a hidden row opens its tab, expands its section and highlights it', async () => {
+    const router = createSettingsRouter();
+    await router.push('/settings');
+    await router.isReady();
+    const wrapper = mount(createRoot(), { global: { plugins: [router, i18n] }, attachTo: document.body });
+    await nextTick();
+
+    const field = wrapper.get('[data-testid="settings-search"]');
+    await field.setValue('precize cuts');
+    const options = wrapper.findAll('[role="option"]');
+    expect(options[0].attributes('data-result-id')).toBe('sponsorBlockPrecise');
+    expect(options[0].attributes('aria-selected')).toBe('true');
+    await field.trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    await nextTick();
+
+    expect(router.currentRoute.value.name).toBe('settings.advanced');
+    expect((field.element as HTMLInputElement).value).toBe('');
+    const row = wrapper.get('[data-setting-id="sponsorBlockPrecise"]');
+    expect(row.attributes('data-search-hit')).toBeDefined();
+    expect(row.element.closest('[style*="display: none"]')).toBeNull();
+    expect(document.activeElement?.id).toBe('sponsorblockPreciseCuts');
+
+    // Logins keeps its advanced rows in a collapsible: search opens it too.
+    await field.setValue('cookies.txt');
+    await field.trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    await nextTick();
+    expect(router.currentRoute.value.name).toBe('settings.logins');
+    expect(wrapper.get('[data-setting-id="cookieFile"]').element.closest('[hidden]')).toBeNull();
+
+    // Cmd/Ctrl+F focuses the search, but not from inside another text field or after someone handled it.
+    const other = document.createElement('textarea');
+    document.body.appendChild(other);
+    other.focus();
+    const fromField = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+    other.dispatchEvent(fromField);
+    expect(fromField.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(other);
+    const handled = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+    handled.preventDefault();
+    document.body.dispatchEvent(handled);
+    expect(document.activeElement).toBe(other);
+    other.remove();
+    const fromPage = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(fromPage);
+    expect(fromPage.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(field.element);
+
+    await field.setValue('qqqzzz');
+    expect(wrapper.find('[data-testid="settings-search-empty"]').exists()).toBe(true);
+    await field.trigger('keydown', { key: 'Escape' });
+    expect((field.element as HTMLInputElement).value).toBe('');
+    wrapper.unmount();
+  });
 });

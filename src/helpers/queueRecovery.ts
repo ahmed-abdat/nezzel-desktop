@@ -1,4 +1,4 @@
-import type { Group } from '../tauri/types/group';
+import type { Group, PlaylistParent } from '../tauri/types/group';
 import type { DownloadOptions, DownloadOverrides, EncodingOptions, TrackOptions } from '../tauri/types/media';
 
 export type SavedDownload = {
@@ -8,6 +8,8 @@ export type SavedDownload = {
   encodings?: EncodingOptions;
   tracks?: TrackOptions;
   attachmentIds?: string[];
+  /** Playlist row this download sits under (no thumbnail: it can be a signed CDN link). */
+  parent?: PlaylistParent;
 };
 const KEY = 'nezzel.pending-downloads.v1';
 
@@ -20,6 +22,7 @@ function safeOverrides(overrides?: DownloadOverrides): DownloadOverrides | undef
       }
     : undefined;
 }
+const safeLink = (url?: string) => (typeof url === 'string' && /^https?:\/\//i.test(url) ? url : undefined);
 export function encodeQueue(rows: SavedDownload[]): string {
   return JSON.stringify({ version: 1, rows: rows.map(row => ({
     group: {
@@ -28,6 +31,8 @@ export function encodeQueue(rows: SavedDownload[]): string {
       isCombined: row.group.isCombined, filesize: row.group.filesize, audioCodecs: [], formats: [],
       playlistId: row.group.playlistId, playlistTitle: row.group.playlistTitle,
       playlistCount: row.group.playlistCount ?? row.group.entries?.length,
+      parentId: typeof row.group.parentId === 'string' ? row.group.parentId : undefined,
+      parentIndex: typeof row.group.parentIndex === 'number' ? row.group.parentIndex : undefined,
       uploader: row.group.uploader, uploaderId: row.group.uploaderId,
       attachments: row.group.attachments?.map(({ id, kind }) => ({ id, kind })),
       items: Object.fromEntries(Object.entries(row.group.items).map(([key, item]) => [key, {
@@ -40,6 +45,9 @@ export function encodeQueue(rows: SavedDownload[]): string {
     },
     options: row.options, overrides: safeOverrides(row.overrides),
     encodings: row.encodings, tracks: row.tracks, attachmentIds: row.attachmentIds,
+    parent: row.parent && typeof row.parent.id === 'string' && row.parent.id === row.group.parentId
+      ? { id: row.parent.id, url: safeLink(row.parent.url), title: row.parent.title, count: Number(row.parent.count) || 0, skipped: 0 }
+      : undefined,
   })) });
 }
 export function decodeQueue(raw: string | null): SavedDownload[] {

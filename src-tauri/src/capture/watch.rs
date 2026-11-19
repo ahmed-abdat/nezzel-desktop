@@ -3,7 +3,7 @@
 use super::outbox::{send_to_main, ForMain};
 use super::policy::{self, supported_url};
 use super::state::CaptureState;
-use super::window::{offer, CaptureWindow};
+use super::window::{offer, offer_with, CaptureWindow};
 use super::{browser, clipboard};
 use crate::SharedConfig;
 use std::{
@@ -295,14 +295,16 @@ pub fn open_quick_bar(app: &AppHandle, browser_first: bool) {
   let request_id = state.quick_request.fetch_add(1, Ordering::Relaxed) + 1;
   let app = app.clone();
   tauri::async_runtime::spawn(async move {
-    // Resolve the foreground identity BEFORE focusing Nezzel. The second command may
-    // request Automation permission, so show the explanation before executing it.
-    let request = if browser_first {
-      browser::request().await
+    // Resolve the foreground identity BEFORE focusing Nezzel. macOS: one osascript reads the frontmost
+    // app and its tab, so the bar shows "Reading the active browser tab" first (shown, not focused, so
+    // the browser stays frontmost). The tab read may ask for Automation; the bar explains it meanwhile.
+    let own = app.config().identifier.clone();
+    let (mut frontmost, request) = if browser_first {
+      let request = browser::request(&own).await;
+      (request.frontmost, request.command)
     } else {
-      None
+      ("skipped", None)
     };
-    let clipboard = read_current(&app).await.unwrap_or_default();
     if app
       .state::<CaptureState>()
       .quick_request
@@ -314,18 +316,42 @@ pub fn open_quick_bar(app: &AppHandle, browser_first: bool) {
     if let Some(card) = app.get_webview_window(CaptureWindow::Card.label()) {
       let _ = card.hide();
     }
+    // Empty text: the reading state, never an older clipboard link that may be replaced a moment later.
     let pending_id = if request.is_some() {
-      offer(&app, CaptureWindow::Bar, &clipboard, true)
+      offer(&app, CaptureWindow::Bar, "", true)
         .ok()
         .map(|offer| offer.id)
     } else {
       None
     };
-    let browser_url = if let Some(command) = request {
-      browser::resolve(command).await
-    } else {
-      None
-    };
+    let started = std::time::Instant::now();
+    let (mut browser_read, clipboard) = tokio::join!(
+      read_browser(request, &own, &mut frontmost),
+      read_current(&app)
+    );
+    let clipboard = clipboard.unwrap_or_default();
+    let mut reset = "no";
+    if browser::after_read(
+      browser_read.as_deref().map_err(|e| *e),
+      browser::reset_used(),
+      cfg!(target_os = "macos"),
+    ) == browser::AfterRead::ResetAndRetry
+      && browser::claim_reset()
+    {
+      reset = if browser::reset_automation(&app.config().identifier).await {
+        "ok"
+      } else {
+        "failed"
+      };
+      // macOS asks again on this read; the bar keeps its "reading the browser" state meanwhile.
+      let retry = browser::request(&own).await.command;
+      browser_read = read_browser(retry, &own, &mut frontmost).await;
+    }
+    let denied = browser::after_read(
+      browser_read.as_deref().map_err(|e| *e),
+      true,
+      cfg!(target_os = "macos"),
+    ) == browser::AfterRead::Denied;
     let state = app.state::<CaptureState>();
     if state.quick_request.load(Ordering::Relaxed) != request_id {
       return;
@@ -336,22 +362,78 @@ pub fn open_quick_bar(app: &AppHandle, browser_first: bool) {
         return;
       }
     }
-    let mut text = browser_url
-      .filter(|s| supported_url(s).is_some())
-      .unwrap_or_else(|| clipboard.clone());
-    // On a feed page, prefer a clipboard post URL from the same site.
-    if let (Some((url, site)), Some((_, clip_site))) =
-      (supported_url(&text), supported_url(&clipboard))
-    {
-      if policy::is_feed_page(&url)
-        && same_site(&site, &clip_site)
-        && !supported_url(&clipboard).is_some_and(|(u, _)| policy::is_feed_page(&u))
-      {
-        text = clipboard;
-      }
-    }
-    let _ = offer(&app, CaptureWindow::Bar, &text, false);
+    let (text, source) = if denied {
+      // An old clipboard link from another site is not what the user pointed at.
+      (String::new(), "denied")
+    } else {
+      choose(browser_read.as_deref().ok(), &clipboard)
+    };
+    let browser = match &browser_read {
+      Ok(url) if supported_url(url).is_some() => "ok",
+      Ok(_) => "unsupported",
+      Err(reason) => reason,
+    };
+    // Log words only: never the browser URL or the clipboard.
+    let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    tracing::info!(
+      frontmost,
+      browser,
+      reset,
+      source,
+      ms,
+      "Quick download bar opened"
+    );
+    let _ = offer_with(&app, CaptureWindow::Bar, &text, false, denied);
   });
+}
+
+/// The quick bar's text and where it came from ("browser", "clipboard", or "none" when neither holds a
+/// supported link): the browser tab first; on a feed page, a clipboard post URL from the same site.
+fn choose(browser_url: Option<&str>, clipboard: &str) -> (String, &'static str) {
+  let (mut text, mut source) = match browser_url.filter(|s| supported_url(s).is_some()) {
+    Some(url) => (url.to_owned(), "browser"),
+    None => (clipboard.to_owned(), "clipboard"),
+  };
+  if let (Some((url, site)), Some((clip_url, clip_site))) =
+    (supported_url(&text), supported_url(clipboard))
+  {
+    if policy::is_feed_page(&url)
+      && same_site(&site, &clip_site)
+      && !policy::is_feed_page(&clip_url)
+    {
+      (text, source) = (clipboard.to_owned(), "clipboard");
+    }
+  }
+  if supported_url(&text).is_none() {
+    source = "none";
+  }
+  (text, source)
+}
+
+/// Runs a browser read. On macOS the output also names the frontmost app, which replaces `frontmost`.
+async fn read_browser(
+  command: Option<tokio::process::Command>,
+  own: &str,
+  frontmost: &mut &'static str,
+) -> Result<String, &'static str> {
+  let Some(command) = command else {
+    return Err("skipped");
+  };
+  let read = browser::resolve(command).await;
+  if !cfg!(target_os = "macos") {
+    return read;
+  }
+  match read {
+    Ok(output) => {
+      let (app, read) = browser::parse_mac(&output, own);
+      *frontmost = app;
+      read
+    }
+    Err(reason) => {
+      *frontmost = "unknown";
+      Err(reason)
+    }
+  }
 }
 
 /// `www.` and mobile `m.` hosts are the same site as the bare domain.
@@ -365,7 +447,7 @@ fn same_site(a: &str, b: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-  use super::{startup_baseline, ShowFailures};
+  use super::{choose, startup_baseline, ShowFailures};
   use crate::capture::{
     clipboard::ReadError,
     policy::{CapturePolicy, Decision},
@@ -409,6 +491,41 @@ mod tests {
     assert!(baseline.is_empty());
     assert_eq!(attempts, 3);
     assert_eq!(start.elapsed(), Duration::from_secs(1));
+  }
+
+  #[test]
+  fn quick_bar_prefers_the_browser_tab_and_says_where_the_link_came_from() {
+    let photo = "https://www.tiktok.com/@user/photo/7312345678901234567";
+    let youtube = "https://youtu.be/abc";
+    let tiktok_post = "https://www.tiktok.com/@user/video/1";
+    for (browser, clipboard, text, source) in [
+      // A TikTok photo tab wins over an older copied YouTube link.
+      (Some(photo), youtube, photo, "browser"),
+      // No browser read (not a browser, Automation denied): the clipboard link.
+      (None, youtube, youtube, "clipboard"),
+      (Some("https://example.com/x"), youtube, youtube, "clipboard"),
+      // A feed tab yields to a copied post from the same site.
+      (
+        Some("https://www.tiktok.com/foryou"),
+        tiktok_post,
+        tiktok_post,
+        "clipboard",
+      ),
+      (
+        Some("https://www.tiktok.com/foryou"),
+        youtube,
+        "https://www.tiktok.com/foryou",
+        "browser",
+      ),
+      // Nothing usable: an empty bar, and the log says so.
+      (None, "hello", "hello", "none"),
+    ] {
+      assert_eq!(
+        choose(browser, clipboard),
+        (text.to_owned(), source),
+        "{browser:?} {clipboard}"
+      );
+    }
   }
 
   #[test]

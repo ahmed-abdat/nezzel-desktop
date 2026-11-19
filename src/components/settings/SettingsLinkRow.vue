@@ -2,6 +2,7 @@
   <!-- A row that navigates (Logins ›, Subtitles ›): the whole row is the link, chevron at the end. -->
   <router-link
     :to="to"
+    :data-setting-id="searchId"
     class="group grid min-h-[52px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-8 gap-y-0.5 border-b border-hairline py-3 outline-none last:border-b-0 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
   >
     <span class="col-start-1 text-[13px] group-hover:text-primary">{{ label }}</span>
@@ -17,5 +18,5 @@
 import type { RouteLocationRaw } from 'vue-router';
 import { ChevronRight } from '@lucide/vue';
 
-defineProps<{ to: RouteLocationRaw; label: string; help?: string; value?: string }>();
+defineProps<{ to: RouteLocationRaw; label: string; help?: string; value?: string; searchId?: string }>();
 </script>

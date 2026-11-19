@@ -188,7 +188,28 @@ def stage_linux(target):
             (staged / name).chmod(0o755)
 
 
-def sign_onedir(payload, identity):
+def codesign(path, identity, entitlements):
+    command = ['codesign', '--force', '--sign', identity, '--options', 'runtime', '--entitlements', str(entitlements)]
+    result = subprocess.run([*command, str(path)], capture_output=True, text=True)
+    if result.returncode == 0:
+        subprocess.run(['codesign', '--verify', '--strict', str(path)], check=True)
+        return
+    if 'bundle format is ambiguous' not in result.stderr:
+        raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout, result.stderr)
+    # The onedir's Python.framework is flattened (copies, no symlinks), so codesign can't seal it
+    # as a bundle. Its loose Mach-O copy is signed as a plain file; the framework dir is skipped.
+    if path.is_dir():
+        print(f'{path.name}: flattened bundle, its files are signed one by one')
+        return
+    with tempfile.TemporaryDirectory() as scratch:
+        loose = Path(scratch) / path.name
+        shutil.copy2(path, loose)
+        subprocess.run([*command, str(loose)], check=True)
+        subprocess.run(['codesign', '--verify', '--strict', str(loose)], check=True)
+        shutil.copy2(loose, path)
+
+
+def sign_onedir(payload, identity, entitlements):
     magic = {bytes.fromhex(value) for value in ('feedface', 'cefaedfe', 'feedfacf', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca')}
     files = []
     for path in payload.rglob('*'):
@@ -197,11 +218,8 @@ def sign_onedir(payload, identity):
                 if source.read(4) in magic:
                     files.append(path)
     frameworks = [path for path in payload.rglob('*.framework') if path.is_dir()]
-    entitlements = ROOT / 'scripts/tools-entitlements.plist'
     for path in sorted(files, key=lambda path: len(path.parts), reverse=True) + sorted(frameworks, key=lambda path: len(path.parts), reverse=True):
-        subprocess.run(['codesign', '--force', '--sign', identity, '--options', 'runtime',
-                        '--entitlements', str(entitlements), str(path)], check=True)
-        subprocess.run(['codesign', '--verify', '--strict', str(path)], check=True)
+        codesign(path, identity, entitlements)
 
 
 # Tauri signs externalBin itself, but resource executables need explicit nested signing.
@@ -220,12 +238,17 @@ def sign_macos():
         # only matters for notarized Developer ID builds.
         print('yt-dlp: ad-hoc build, keeping upstream signatures')
         return
-    sign_onedir(payload, identity)
+    # Library validation only accepts libraries from the process's Team ID. A self-signed identity
+    # (docs/macos-signing.md) has none, so the PyInstaller bootloader couldn't load its own Python
+    # ("different Team IDs"); only Developer ID builds keep library validation on.
+    developer_id = identity.startswith('Developer ID Application')
+    entitlements = ROOT / ('scripts/tools-entitlements.plist' if developer_id else 'scripts/tools-entitlements-self-signed.plist')
+    sign_onedir(payload, identity, entitlements)
     # gallery-dl's onedir (fetch-gallery-dl.py): the app checks its entry against
     # gallery-dl.sha256, so record the hash of the signed bytes.
     gallery = resources / 'gallery-dl'
     if (gallery / 'gallery-dl').is_file():
-        sign_onedir(gallery, identity)
+        sign_onedir(gallery, identity, entitlements)
         (ROOT / 'src-tauri/binaries/gallery-dl.sha256').write_text(sha256(gallery / 'gallery-dl') + '\n')
     # Preserve the verified local cache after codesign rewrites Mach-O bytes.
     index_path = resources / 'index.json'

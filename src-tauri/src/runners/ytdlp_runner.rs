@@ -18,7 +18,7 @@ use crate::state::preferences_models::{PathPreferences, Preferences};
 use crate::stronghold::stronghold_state::{AuthSecrets, StrongholdState};
 use crate::{SharedConfig, SharedPreferences};
 use std::collections::{HashMap, HashSet};
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -81,6 +81,8 @@ pub struct YtdlpRunner<'a> {
   cookie_source: Option<(AuthSettings, Option<String>, String)>,
   cookie_access: Option<super::browser_cookies::CookieAccess>,
   temporary_files: Option<Arc<super::ytdlp_download::DownloadPartial>>,
+  /// Credential options for a private config file (`--config-locations <file>`), never argv.
+  auth_config: Option<String>,
 }
 
 impl<'a> YtdlpRunner<'a> {
@@ -103,6 +105,7 @@ impl<'a> YtdlpRunner<'a> {
       cookie_source: None,
       cookie_access: None,
       temporary_files: None,
+      auth_config: None,
     }
   }
 
@@ -185,8 +188,18 @@ impl<'a> YtdlpRunner<'a> {
       &sponsor_block,
       output_settings.precise_cuts,
     ));
+    self.args.extend(sponsorblock_print_args(&sponsor_block));
 
     self
+  }
+
+  /// Categories yt-dlp is asked to cut out of this download.
+  pub fn sponsorblock_removed(&self, overrides: Option<&DownloadOverrides>) -> Vec<String> {
+    resolve_with_patch(
+      &self.cfg.sponsor_block,
+      overrides.and_then(|value| value.sponsor_block.as_ref()),
+    )
+    .remove_parts
   }
 
   pub fn with_progress_args(mut self) -> Self {
@@ -426,6 +439,22 @@ impl<'a> YtdlpRunner<'a> {
       self.prepare_cookie_access(group_id).await?
     };
     insert_before_url_separator(&mut self.args, &cookies.args);
+    let credential_file = match self.auth_config.take() {
+      Some(config) => {
+        let dir = self
+          .app
+          .path()
+          .app_cache_dir()
+          .map_err(|_| "yt-dlp credential hand-off failed".to_string())?
+          .join("auth-config");
+        let file = CredentialFile::create(&dir, &config)
+          .map_err(|_| "yt-dlp credential hand-off failed".to_string())?;
+        let path = file.0.to_string_lossy().into_owned();
+        insert_before_url_separator(&mut self.args, &["--config-locations".to_string(), path]);
+        Some(file)
+      }
+      None => None,
+    };
     let process_guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
     log_run_summary(&self.args);
     let mut command = self.build_command()?;
@@ -469,6 +498,7 @@ impl<'a> YtdlpRunner<'a> {
     let temporary_files = self.temporary_files.take();
     thread::spawn(move || {
       let _temporary_files = temporary_files;
+      let _credential_file = credential_file;
       let _process_guard = process_guard;
       let cookie_guard = cookies;
       let status = raw_child.wait();
@@ -515,27 +545,157 @@ impl<'a> YtdlpRunner<'a> {
   }
 
   fn apply_auth_secrets(&mut self, s: AuthSecrets) {
-    if let Some(u) = s.username {
-      self.args.push("--username".into());
-      self.args.push(u);
+    self.auth_config = auth_config(s);
+  }
+}
+
+/// A private, short-lived yt-dlp config file holding site credentials (argv is world-readable).
+/// Written as UTF-8 with a BOM, which yt-dlp honours, so the locale code page can't mangle it.
+/// Deleted on drop; stale leftovers from a crashed run are swept on creation.
+struct CredentialFile(PathBuf);
+
+impl CredentialFile {
+  fn create(dir: &std::path::Path, config: &str) -> std::io::Result<Self> {
+    prepare_credential_dir(dir)?;
+    sweep_credential_dir(dir, Duration::from_secs(24 * 3600));
+    let path = dir.join(format!("{}.conf", uuid::Uuid::new_v4()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::OpenOptionsExt;
+      options.mode(0o600);
     }
-    if let Some(p) = s.password {
-      self.args.push("--password".into());
-      self.args.push(p);
+    let file = Self(path);
+    let mut handle = options.open(&file.0)?;
+    handle.write_all(b"\xEF\xBB\xBF")?;
+    handle.write_all(config.as_bytes())?;
+    Ok(file)
+  }
+}
+
+impl Drop for CredentialFile {
+  fn drop(&mut self) {
+    for _ in 0..2 {
+      match std::fs::remove_file(&self.0) {
+        Ok(()) => return,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(_) => {}
+      }
     }
-    if let Some(vp) = s.video_password {
-      self.args.push("--video-password".into());
-      self.args.push(vp);
+    tracing::warn!("credential file cleanup failed");
+  }
+}
+
+/// Create the credential dir (0700 on Unix) and refuse anything that is not a real directory we own.
+fn prepare_credential_dir(dir: &std::path::Path) -> std::io::Result<()> {
+  if let Some(parent) = dir.parent() {
+    std::fs::create_dir_all(parent)?;
+  }
+  let mut builder = std::fs::DirBuilder::new();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::DirBuilderExt;
+    builder.mode(0o700);
+  }
+  match builder.create(dir) {
+    Ok(()) => {}
+    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+    Err(e) => return Err(e),
+  }
+  let meta = std::fs::symlink_metadata(dir)?;
+  let refuse = || {
+    std::io::Error::new(
+      std::io::ErrorKind::PermissionDenied,
+      "unsafe credential dir",
+    )
+  };
+  if !meta.file_type().is_dir() {
+    return Err(refuse());
+  }
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    // SAFETY: geteuid has no preconditions.
+    if meta.uid() != unsafe { libc::geteuid() } {
+      return Err(refuse());
     }
-    if let Some(token) = s.bearer_token {
-      self.args.push("--add-header".into());
-      self.args.push(format!("Authorization:Bearer {token}"));
-    }
-    for h in s.headers {
-      self.args.push("--add-header".into());
-      self.args.push(h);
+    if meta.mode() & 0o077 != 0 {
+      std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
   }
+  Ok(())
+}
+
+/// Remove our own `<uuid>.conf` regular files at least `min_age` old; anything else is left alone.
+fn sweep_credential_dir(dir: &std::path::Path, min_age: Duration) {
+  let Ok(entries) = std::fs::read_dir(dir) else {
+    return;
+  };
+  for entry in entries.flatten() {
+    let ours = entry
+      .file_name()
+      .to_str()
+      .and_then(|n| n.strip_suffix(".conf"))
+      .is_some_and(|stem| uuid::Uuid::parse_str(stem).is_ok());
+    let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
+      continue;
+    };
+    let old = meta
+      .modified()
+      .ok()
+      .and_then(|t| t.elapsed().ok())
+      .is_some_and(|age| age >= min_age);
+    if ours && meta.file_type().is_file() && old && std::fs::remove_file(entry.path()).is_err() {
+      tracing::warn!("credential file cleanup failed");
+    }
+  }
+}
+
+/// Startup sweep: no yt-dlp child exists yet, so every leftover credential file is stale.
+pub(crate) fn sweep_credential_files(app: &AppHandle) {
+  if let Ok(dir) = app.path().app_cache_dir() {
+    sweep_credential_dir(&dir.join("auth-config"), Duration::ZERO);
+  }
+}
+
+/// Quote a value for yt-dlp's config syntax (shlex, double quotes: only `\` and `"` need escaping).
+fn config_quote(value: &str) -> String {
+  let mut out = String::with_capacity(value.len() + 2);
+  out.push('"');
+  for c in value.chars() {
+    if c == '\\' || c == '"' {
+      out.push('\\');
+    }
+    out.push(c);
+  }
+  out.push('"');
+  out
+}
+
+/// Site credentials as yt-dlp config lines (kept out of argv, see `CredentialFile`).
+fn auth_config(s: AuthSecrets) -> Option<String> {
+  let mut lines = Vec::new();
+  let mut opt = |flag: &str, value: &str| lines.push(format!("{flag} {}", config_quote(value)));
+  if let Some(u) = s.username {
+    opt("--username", &u);
+  }
+  if let Some(p) = s.password {
+    opt("--password", &p);
+  }
+  if let Some(vp) = s.video_password {
+    opt("--video-password", &vp);
+  }
+  if let Some(token) = s.bearer_token {
+    opt("--add-header", &format!("Authorization:Bearer {token}"));
+  }
+  for h in s.headers {
+    opt("--add-header", &h);
+  }
+  if lines.is_empty() {
+    return None;
+  }
+  Some(lines.join("\n") + "\n")
 }
 
 /// Presence-only summary of a yt-dlp invocation, safe to log or send to
@@ -937,6 +1097,17 @@ fn normalize_extractor_args(value: &str) -> Option<String> {
   }
 }
 
+/// The removed ranges are only asked for when something is set to be removed.
+fn sponsorblock_print_args(settings: &SponsorBlockSettings) -> Vec<String> {
+  if settings.remove_parts.is_empty() {
+    return Vec::new();
+  }
+  vec![
+    "--print".into(),
+    "after_move:NEZZEL_SB|%(sponsorblock_chapters)j".into(),
+  ]
+}
+
 fn build_sponsorblock_args(settings: &SponsorBlockSettings, precise_cuts: bool) -> Vec<String> {
   let mut args = Vec::new();
 
@@ -1270,6 +1441,117 @@ fn insert_before_url_separator(args: &mut Vec<String>, extra: &[String]) {
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn auth_secrets_become_config_text() {
+    let secrets = [
+      "fixture-username",
+      "fixture-password",
+      "fixture-video-password",
+      "fixture-bearer-token",
+      "Cookie: fixture-session=synthetic",
+    ];
+    let config = super::auth_config(super::AuthSecrets {
+      username: Some(secrets[0].into()),
+      password: Some(secrets[1].into()),
+      video_password: Some(secrets[2].into()),
+      bearer_token: Some(secrets[3].into()),
+      headers: vec![secrets[4].into()],
+    })
+    .unwrap();
+    assert!(secrets.iter().all(|s| config.contains(s)));
+    assert!(config.contains("--add-header \"Authorization:Bearer fixture-bearer-token\"\n"));
+  }
+
+  #[test]
+  fn auth_config_quotes_awkward_values_and_is_none_without_secrets() {
+    assert!(super::auth_config(super::AuthSecrets::default()).is_none());
+    let config = super::auth_config(super::AuthSecrets {
+      password: Some("a b\"c\\d#e".into()),
+      ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(config, "--password \"a b\\\"c\\\\d#e\"\n");
+  }
+
+  #[test]
+  fn auth_config_keeps_non_ascii_values_as_utf8() {
+    let config = super::auth_config(super::AuthSecrets {
+      password: Some("كلمة é".into()),
+      ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(config.as_bytes(), "--password \"كلمة é\"\n".as_bytes());
+  }
+
+  #[test]
+  #[cfg(unix)]
+  fn credential_file_is_private_utf8_bom_readable_by_child_and_removed_on_drop() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    let root = std::env::temp_dir().join(format!("nezzel-cred-{}", uuid::Uuid::new_v4()));
+    let config = super::auth_config(super::AuthSecrets {
+      password: Some("é «كلمة»".into()),
+      ..Default::default()
+    })
+    .unwrap();
+    let file = super::CredentialFile::create(&root, &config).unwrap();
+    let path = file.0.clone();
+    assert_eq!(
+      std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+      0o600
+    );
+    // Fake yt-dlp: records its argv and the config file it was pointed at.
+    let argv = ["--ignore-config", "--config-locations"];
+    let out = Command::new("/bin/sh")
+      .args([
+        "-c",
+        "printf '%s\\n' \"$@\"; for last; do :; done; cat \"$last\"",
+        "fake",
+      ])
+      .args(argv)
+      .arg(&path)
+      .output()
+      .unwrap();
+    let recorded = out.stdout;
+    let text = String::from_utf8(recorded).unwrap();
+    let (argv_part, content) = text.split_at(text.find("\u{feff}").unwrap());
+    assert!(!argv_part.contains("كلمة"));
+    assert_eq!(content, format!("\u{feff}{config}"));
+    drop(file);
+    assert!(!path.exists());
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  #[cfg(unix)]
+  fn credential_dir_refuses_symlink_and_sweep_keeps_foreign_files() {
+    use std::os::unix::fs::symlink;
+    let root = std::env::temp_dir().join(format!("nezzel-cred-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let real = root.join("real");
+    std::fs::create_dir(&real).unwrap();
+    let link = root.join("link");
+    symlink(&real, &link).unwrap();
+    assert!(super::CredentialFile::create(&link, "x").is_err());
+    assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0);
+
+    let dir = root.join("auth");
+    super::prepare_credential_dir(&dir).unwrap();
+    let ours = dir.join(format!("{}.conf", uuid::Uuid::new_v4()));
+    let foreign = dir.join("notes.conf");
+    let target = root.join("target");
+    std::fs::write(&ours, "x").unwrap();
+    std::fs::write(&foreign, "x").unwrap();
+    std::fs::write(&target, "x").unwrap();
+    let linked = dir.join(format!("{}.conf", uuid::Uuid::new_v4()));
+    symlink(&target, &linked).unwrap();
+    super::sweep_credential_dir(&dir, std::time::Duration::ZERO);
+    assert!(!ours.exists());
+    assert!(foreign.exists());
+    assert!(linked.symlink_metadata().is_ok() && target.exists());
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
   #[tokio::test(start_paused = true)]
   #[cfg(unix)]
   async fn recorded_json_lines_cap_or_timeout_reaps_the_listing_process() {
@@ -1448,7 +1730,8 @@ mod tests {
   }
 
   use super::{
-    build_sponsorblock_args, build_subtitle_args, normalize_extractor_args, summarize_args_for_log,
+    build_sponsorblock_args, build_subtitle_args, normalize_extractor_args,
+    sponsorblock_print_args, summarize_args_for_log,
   };
   use crate::models::SubtitleInventory;
   use crate::state::config_models::{SponsorBlockSettings, SubtitleSettings};
@@ -1903,6 +2186,20 @@ mod tests {
         "sponsor,intro",
         "--force-keyframes-at-cuts"
       ]
+    );
+  }
+
+  #[test]
+  fn removed_ranges_are_printed_only_when_something_is_removed() {
+    let mut settings = SponsorBlockSettings {
+      mark_parts: vec!["intro".into()],
+      ..Default::default()
+    };
+    assert!(sponsorblock_print_args(&settings).is_empty());
+    settings.remove_parts = vec!["sponsor".into()];
+    assert_eq!(
+      sponsorblock_print_args(&settings),
+      ["--print", "after_move:NEZZEL_SB|%(sponsorblock_chapters)j"]
     );
   }
 

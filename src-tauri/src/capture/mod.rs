@@ -22,9 +22,8 @@ pub(crate) use outbox::PULL_MS;
 pub use state::{Action, CaptureState};
 pub use watch::open_quick_bar;
 #[cfg(test)]
-pub(crate) use window::{
-  BAR_HEIGHT, BAR_LABEL, BAR_WIDTH, CARD_HEIGHT, CARD_LABEL, CARD_MAX_HEIGHT, CARD_WIDTH,
-};
+pub(crate) use window::{BAR_HEIGHT, BAR_WIDTH, CARD_HEIGHT, CARD_MAX_HEIGHT, CARD_WIDTH};
+pub(crate) use window::{BAR_LABEL, CARD_LABEL};
 
 use outbox::emit_action;
 use state::adopt_on_focus;

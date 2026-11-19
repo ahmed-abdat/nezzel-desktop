@@ -94,12 +94,23 @@ fn index_path<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
 /// Persist before notifying the UI, including downloads that finish while the window is closed.
 /// Called by all engines at their existing successful completion boundary.
 pub async fn complete(app: &AppHandle, entry: &DownloadEntry) {
+  complete_with(app, entry, None).await;
+}
+
+/// `complete` for engines that know how much SponsorBlock removed.
+pub async fn complete_with(
+  app: &AppHandle,
+  entry: &DownloadEntry,
+  sponsor_removed_secs: Option<u32>,
+) {
   let app_clone = app.clone();
   let entry = entry.clone();
   let id = entry.id.clone();
   let group_id = entry.group_id.clone();
-  let result =
-    tauri::async_runtime::spawn_blocking(move || persist_completion(&app_clone, &entry)).await;
+  let result = tauri::async_runtime::spawn_blocking(move || {
+    persist_completion(&app_clone, &entry, sponsor_removed_secs)
+  })
+  .await;
   if !matches!(result, Ok(Ok(()))) {
     // No paths, titles, or source URLs in telemetry/log errors.
     tracing::warn!("Unable to save local download history");
@@ -107,11 +118,31 @@ pub async fn complete(app: &AppHandle, entry: &DownloadEntry) {
   crate::events::emit(
     app,
     crate::events::MEDIA_COMPLETE,
-    MediaProgressComplete { id, group_id },
+    MediaProgressComplete {
+      id,
+      group_id,
+      sponsor_removed_secs,
+    },
   );
 }
 
-fn persist_completion<R: Runtime>(app: &AppHandle<R>, entry: &DownloadEntry) -> Result<(), String> {
+/// What the engine knows at completion overrides what the UI sent when the download was queued.
+fn apply_engine_facts(
+  display: &mut LibraryDisplay,
+  entry: &DownloadEntry,
+  sponsor_removed_secs: Option<u32>,
+) {
+  display.track_type = Some(entry.format.track_type.clone());
+  display.height = entry.format.height.or(display.height);
+  display.fps = entry.format.fps.or(display.fps);
+  display.sponsor_removed_secs = sponsor_removed_secs;
+}
+
+fn persist_completion<R: Runtime>(
+  app: &AppHandle<R>,
+  entry: &DownloadEntry,
+  sponsor_removed_secs: Option<u32>,
+) -> Result<(), String> {
   let Some(records) = app.try_state::<DownloadRecords>() else {
     return Ok(());
   };
@@ -141,9 +172,7 @@ fn persist_completion<R: Runtime>(app: &AppHandle<R>, entry: &DownloadEntry) -> 
     .map(|m| m.len())
     .sum();
   let kind = kind(&paths[0]).to_owned();
-  metadata.display.track_type = Some(entry.format.track_type.clone());
-  metadata.display.height = entry.format.height.or(metadata.display.height);
-  metadata.display.fps = entry.format.fps.or(metadata.display.fps);
+  apply_engine_facts(&mut metadata.display, entry, sponsor_removed_secs);
   if !entry.attachments.is_empty() {
     let selected: Vec<_> = entry
       .attachments

@@ -14,6 +14,7 @@ const allowedCommands: Set<string> = new Set([
     'capture_write_clipboard',
     'capture_shortcut_status',
     'capture_try_link',
+    'capture_open_automation_settings',
     'close_note_ready',
     'close_note_done',
     'window_motion_pref',

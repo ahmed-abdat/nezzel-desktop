@@ -42,6 +42,8 @@ export interface CaptureOffer {
   reason: string | null;
   resolving: boolean;
   feed: boolean;
+  /** macOS refused reading the browser tab (Automation off): the bar links to the setting. */
+  automationDenied?: boolean;
 }
 
 export const emptyDetails = (): CaptureDetails => ({

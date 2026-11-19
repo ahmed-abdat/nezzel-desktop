@@ -41,6 +41,26 @@ pub struct LibraryDisplay {
   pub fps: Option<u32>,
   pub track_type: Option<crate::models::TrackType>,
   pub attachment_summary: Option<AttachmentSummary>,
+  /// Whole seconds SponsorBlock cut out of the saved video.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub sponsor_removed_secs: Option<u32>,
+  /// Playlist this item came from, so finished playlists regroup after restart.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub playlist: Option<PlaylistRef>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistRef {
+  pub key: String,
+  #[serde(default)]
+  pub title: Option<String>,
+  #[serde(default)]
+  pub url: Option<String>,
+  #[serde(default)]
+  pub count: Option<u32>,
+  #[serde(default)]
+  pub index: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -444,4 +464,76 @@ pub(super) fn scan_folder(
     }
   }
   result
+}
+
+#[cfg(test)]
+mod playlist_ref_tests {
+  use super::*;
+
+  fn record(playlist: Option<PlaylistRef>) -> LibraryRecord {
+    LibraryRecord {
+      id: "a".into(),
+      paths: vec![PathBuf::from("/tmp/a.mp4")],
+      url: "https://example.com/v".into(),
+      title: "t".into(),
+      site: None,
+      kind: "video".into(),
+      size: 1,
+      completed_at: 1,
+      thumbnail: None,
+      authority: Vec::new(),
+      display: LibraryDisplay {
+        playlist,
+        ..Default::default()
+      },
+      error_code: None,
+    }
+  }
+
+  #[test]
+  fn record_without_playlist_loads_as_none() {
+    let mut v = serde_json::to_value(record(None)).unwrap();
+    v["display"].as_object_mut().unwrap().remove("playlist");
+    let r: LibraryRecord = serde_json::from_value(v).unwrap();
+    assert!(r.display.playlist.is_none());
+    let r: LibraryRecord = serde_json::from_str(
+      r#"{"id":"a","paths":[],"url":"u","title":"t","site":null,"kind":"video","size":1,"completedAt":1,"thumbnail":null}"#,
+    )
+    .unwrap();
+    assert!(r.display.playlist.is_none());
+  }
+
+  #[test]
+  fn playlist_round_trips() {
+    let p = PlaylistRef {
+      key: "yt:PL1".into(),
+      title: Some("Mix".into()),
+      url: Some("https://example.com/pl".into()),
+      count: Some(12),
+      index: Some(3),
+    };
+    let json = serde_json::to_string(&record(Some(p))).unwrap();
+    let r: LibraryRecord = serde_json::from_str(&json).unwrap();
+    let p = r.display.playlist.unwrap();
+    assert_eq!(p.key, "yt:PL1");
+    assert_eq!(p.title.as_deref(), Some("Mix"));
+    assert_eq!(p.count, Some(12));
+    assert_eq!(p.index, Some(3));
+  }
+
+  #[test]
+  fn none_playlist_omits_key() {
+    let v = serde_json::to_value(record(None)).unwrap();
+    assert!(v["display"].get("playlist").is_none());
+  }
+
+  #[test]
+  fn partial_playlist_ref_loads() {
+    let display: LibraryDisplay =
+      serde_json::from_str(r#"{"playlist":{"key":"k","index":3}}"#).expect("partial ref loads");
+    let playlist = display.playlist.expect("playlist kept");
+    assert_eq!(playlist.key, "k");
+    assert_eq!(playlist.index, Some(3));
+    assert!(playlist.title.is_none() && playlist.url.is_none() && playlist.count.is_none());
+  }
 }

@@ -2,9 +2,13 @@
   <context-menu>
     <context-menu-trigger as-child>
       <li
-        class="row group relative flex items-start gap-3 border-b border-hairline pe-4 ps-8 outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--nz-focus)] animate-in fade-in-0 slide-in-from-top-1 duration-200"
-        :class="[tint, compactRows ? 'py-1.5' : 'py-2.5']"
+        :id="nested ? `playlist-item-${group.id}` : undefined"
+        class="row group relative flex items-start gap-3 border-b border-hairline pe-4 outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--nz-focus)] animate-in fade-in-0 slide-in-from-top-1 duration-200"
+        :class="[tint, compactRows || nested ? 'py-1.5' : 'py-2.5', nested ? 'ps-[52px] before:absolute before:inset-y-0 before:start-[43px] before:w-px before:bg-hairline' : 'ps-8']"
         :aria-selected="selected"
+        :aria-level="nested ? 2 : undefined"
+        :aria-posinset="nested ? posinset : undefined"
+        :aria-setsize="nested ? setsize : undefined"
         :data-phase="phase"
         :data-group-id="group.id"
         :aria-busy="phase === 'reading' || phase === 'downloading' ? 'true' : undefined"
@@ -22,10 +26,11 @@
           :aria-label="t('downloads.selection.select', { title })"
           @click.stop="onBoxClick"
         />
+        <span v-if="nested" class="w-5 shrink-0 self-center text-end text-[12px] text-muted-foreground tnum" aria-hidden="true">{{ group.parentIndex != null ? count(group.parentIndex + 1) : '' }}</span>
         <figure
           v-if="showThumbnails"
           class="relative m-0 grid shrink-0 place-items-center overflow-hidden rounded-[5px] bg-muted text-muted-foreground ring-1 ring-black/5 dark:ring-white/5"
-          :class="[compactRows ? 'h-[27px] w-12' : 'h-10 w-[72px]', phase === 'reading' && !thumbUrl && !logo && 'animate-pulse', canOpen && 'cursor-pointer']"
+          :class="[compactRows || nested ? 'h-[27px] w-12' : 'h-10 w-[72px]', phase === 'reading' && !thumbUrl && !logo && 'animate-pulse', canOpen && 'cursor-pointer']"
           @click="openFromRow"
         >
           <file-type-icon v-if="fileKind" :category="fileKind" :class="compactRows ? 'size-4' : 'size-5'" />
@@ -79,7 +84,7 @@
           </div>
           </template>
           <div v-else-if="showProgress || phase === 'reading'" class="mt-1 flex min-w-0 items-center gap-2.5 text-[12px] text-muted-foreground">
-            <nz-progress :value="phase === 'reading' ? null : percent" :muted="phase === 'paused'" class="max-w-[180px] flex-[1_1_120px]" />
+            <nz-progress :value="phase === 'reading' ? null : percent" :muted="phase === 'paused'" class="flex-[1_1_120px]" :class="nested ? 'max-w-[140px]' : 'max-w-[180px]'" />
             <span class="flex min-w-0 items-center gap-1.5 truncate">
               <template v-for="(part, index) in metaLine.slice(1)" :key="index">
                 <span v-if="index > 0" class="nz-sep" aria-hidden="true" />
@@ -94,6 +99,7 @@
             </template>
           </p>
 
+          <p v-if="sponsorNote" class="mt-0.5 text-[12px] text-muted-foreground" data-testid="row-sponsor-note">{{ sponsorNote }}</p>
           <p v-if="['galleryItemsSkipped', 'listingPartial'].includes(lastDiagnostic?.code ?? '')" class="mt-0.5 text-[12px] text-muted-foreground" role="status">{{ t(`errors.runner.${lastDiagnostic!.code}.message`) }}</p>
           <p v-if="(group.entries?.length ?? group.attachments?.length ?? 0) >= 100" class="mt-0.5 text-[12px] text-muted-foreground" role="status">{{ t('downloads.row.listingCapped') }}</p>
 
@@ -274,6 +280,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { useUiPrefs } from '../../composables/useUiPrefs';
 import LoginNeeded from './LoginNeeded.vue';
 import { useDownloadRow } from '../../composables/useDownloadRow';
+import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import { useDownloadActions } from '../../composables/useDownloadActions';
 import { usePlatform } from '../../composables/usePlatform';
 import { useDownloadSelection } from '../../composables/useDownloadSelection';
@@ -287,7 +294,16 @@ import { countUsage } from '../../tauri/usage';
 import { downloadReportContext } from '../../helpers/reportContext';
 
 defineOptions({ inheritAttrs: false });
-const props = defineProps<{ group: Group; highlighted?: boolean }>();
+const props = defineProps<{
+  group: Group;
+  highlighted?: boolean;
+  /** Item of a playlist row: indented, index column, small thumbnail. */
+  nested?: boolean;
+  parentId?: string;
+  posinset?: number;
+  setsize?: number;
+}>();
+const { count } = useLocaleNumber();
 const router = useRouter();
 const { compactRows, showThumbnails } = useUiPrefs();
 const group = toRef(props, 'group');
@@ -308,7 +324,7 @@ const playlistSummary = computed(() => {
   return t('inputFilters.playlistSelection.checkedCount', { count, total: group.value.entries?.length ?? 0 }, count);
 });
 const colCls = 'hidden shrink-0 self-center truncate text-[12.5px] text-muted-foreground @min-[1040px]/list:block';
-const { phase, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, alreadySaved, fileKind, readingStuck, processing } = useDownloadRow(group);
+const { phase, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, alreadySaved, sponsorNote, fileKind, readingStuck, processing } = useDownloadRow(group);
 const logo = computed(() => siteLogo(group.value.url));
 /** Not known (yet): a typographic placeholder, not copy, so it needs no translation. */
 const EMPTY_CELL = '\u2014';
@@ -428,6 +444,10 @@ function onKey(event: KeyboardEvent) {
     event.preventDefault();
     const rows = Array.from(document.querySelectorAll<HTMLElement>(ROW_SELECTOR));
     rows[rows.indexOf(row) + (event.key === 'ArrowDown' ? 1 : -1)]?.focus();
+  } else if (props.nested && props.parentId && event.key === (document.documentElement.dir === 'rtl' ? 'ArrowRight' : 'ArrowLeft')) {
+    // Back to the playlist row, like a tree.
+    event.preventDefault();
+    document.querySelector<HTMLElement>(`${ROW_SELECTOR}[data-group-id="${CSS.escape(props.parentId)}"]`)?.focus();
   } else if (event.key === 'Enter') {
     if (canOpen.value) openFromRow();
     else if (phase.value === 'ready') void download();

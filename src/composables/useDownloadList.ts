@@ -7,8 +7,11 @@ import { useMediaDestinationStore } from '../stores/media/destination';
 import { groupSite, kindFilterOf } from '../helpers/groupView';
 import { needsAttention, countView, filterRows, statusOf, type ListRow, type ListView, type TypeFilter } from '../helpers/listFilter';
 import type { Group } from '../tauri/types/group';
+import { buildListTree, type TreeNode } from '../helpers/listTree';
+import { usePlaylistStore } from '../stores/media/playlist';
 
-export type GroupRow = ListRow & { id: string; group: Group; needsAttention: boolean };
+export type GroupRow = ListRow & { id: string; group: Group; needsAttention: boolean; parentId?: string; parentIndex?: number };
+export type GroupNode = TreeNode<GroupRow>;
 
 /** Search text is shared by the field and the list (one list on screen at a time). */
 export const downloadSearchQuery = ref('');
@@ -37,10 +40,15 @@ export function useDownloadList() {
     kind: kindFilterOf(kindOf(group)),
     title: group.title ?? group.url ?? '',
     site: groupSite(group) ?? '',
+    parentId: group.parentId,
+    parentIndex: group.parentIndex,
   })));
 
   const counts = (type: TypeFilter) => countView(rows.value, type);
   const shown = (view: ListView) => filterRows(rows.value, view, query.value);
+  const playlists = usePlaylistStore();
+  /** Top-level lines for the list: playlists fold their downloads under one node. */
+  const shownTree = (view: ListView) => buildListTree(rows.value, playlists.playlists, view, query.value);
 
-  return { rows, counts, shown, query };
+  return { rows, counts, shown, shownTree, query };
 }

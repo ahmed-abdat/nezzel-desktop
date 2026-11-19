@@ -30,6 +30,7 @@ mod stronghold;
 mod tray;
 mod usage;
 mod window;
+mod window_commands;
 
 #[cfg(feature = "link-matrix")]
 #[path = "../examples/link_matrix/runner.rs"]
@@ -113,6 +114,7 @@ pub fn run() {
       diagnostics::setup(handle, &path_handle);
       handle.manage(diagnostics::PendingCrash::default());
       runners::browser_cookies::sweep_cookie_exports(handle);
+      runners::ytdlp_runner::sweep_credential_files(handle);
 
       // setup config management
       let config_handle = ConfigHandle::init(handle)?;
@@ -225,6 +227,7 @@ pub fn run() {
         commands::shortcuts::capture_shortcut_status,
         tray::capture_tray_progress,
         capture::capture_try_link,
+        capture::capture_open_automation_settings,
         background::close_note_ready,
         background::close_note_done,
         background::window_motion_pref,
@@ -274,12 +277,10 @@ pub fn run() {
         usage::usage_count,
       ];
       move |invoke: tauri::ipc::Invoke| {
-        if invoke
-          .message
-          .webview_ref()
-          .label()
-          .starts_with("site-login-")
-        {
+        if !window_commands::allowed_for_window(
+          invoke.message.webview_ref().label(),
+          invoke.message.command(),
+        ) {
           return false;
         }
         handler(invoke)

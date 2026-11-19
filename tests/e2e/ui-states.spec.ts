@@ -148,6 +148,7 @@ const ALL_STATES: GalleryState[] = [
     'row-error-members', 'row-error-removed', 'row-error-drm', 'row-error-geo', 'row-error-rate', 'row-error-network',
     'row-error-noaudio', 'row-error-notpublic', 'row-error-unsupported', 'row-error-feed', 'row-error-unknown',
     'playlist-reading', 'playlist-selection', 'multi-select', 'long-titles', 'rows-100',
+    'playlist-collapsed', 'playlist-expanded', 'playlist-paused', 'playlist-partial', 'playlist-done', 'playlist-long-arabic', 'playlist-1000',
   ]),
   { name: 'rows-100-scrolled', seed: 'rows-100', act: scrollMain(2400) },
   { name: 'row-menu', seed: 'row-done-video', act: async page => page.locator(ROW_SELECTOR).first().getByRole('button').last().click() },

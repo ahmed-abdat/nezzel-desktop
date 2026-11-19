@@ -1,9 +1,9 @@
 <template>
   <settings-section :title="t('settings.sponsorBlock.legend')" :note="t('prefs.adv.sb.note')">
-    <settings-row for-id="sb-remove" :label="t('prefs.adv.sb.remove')" :help="t('prefs.adv.sb.removeHint')">
+    <settings-row search-id="sponsorBlock" for-id="sb-remove" :label="t('prefs.adv.sb.remove')" :help="t('prefs.adv.sb.removeHint')">
       <Switch id="sb-remove" v-model="removeOn" />
     </settings-row>
-    <settings-row :label="t('prefs.adv.sb.choose')" :help="summary">
+    <settings-row search-id="sponsorBlockParts" :label="t('prefs.adv.sb.choose')" :help="summary">
       <dropdown-menu>
         <dropdown-menu-trigger as-child>
           <Button variant="outline">{{ t('prefs.adv.sb.chooseButton') }}</Button>
@@ -29,10 +29,10 @@
     </settings-row>
 
     <template #more>
-      <settings-row for-id="sponsorblockPreciseCuts" :label="t('prefs.adv.sb.precise')" :help="t('prefs.adv.sb.preciseHint')">
+      <settings-row search-id="sponsorBlockPrecise" for-id="sponsorblockPreciseCuts" :label="t('prefs.adv.sb.precise')" :help="t('prefs.adv.sb.preciseHint')">
         <Switch id="sponsorblockPreciseCuts" v-model="settings.output.preciseCuts" />
       </settings-row>
-      <settings-row for-id="sponsorblockApiUrl" :label="t('prefs.adv.sb.server')" :help="t('prefs.adv.sb.serverHint')">
+      <settings-row search-id="sponsorBlockServer" for-id="sponsorblockApiUrl" :label="t('prefs.adv.sb.server')" :help="t('prefs.adv.sb.serverHint')">
         <Input
           id="sponsorblockApiUrl"
           v-model="settings.sponsorBlock.apiUrl"

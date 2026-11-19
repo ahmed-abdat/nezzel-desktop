@@ -41,6 +41,9 @@ pub struct MediaProgressStage {
 pub struct MediaProgressComplete {
   pub id: String,
   pub group_id: String,
+  /// Whole seconds SponsorBlock cut out; absent when nothing was removed.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub sponsor_removed_secs: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Clone)]

@@ -1,7 +1,7 @@
 <template>
   <settings-section :title="t('settings.network.legend')">
-    <settings-link-row :to="{ name: 'settings.logins' }" :label="t('prefs.adv.net.logins')" :help="t('prefs.adv.net.loginsHint')" />
-    <settings-row for-id="enableProxy" :label="t('prefs.adv.net.proxy')" :help="t('prefs.adv.net.proxyHint')">
+    <settings-link-row search-id="loginsLink" :to="{ name: 'settings.logins' }" :label="t('prefs.adv.net.logins')" :help="t('prefs.adv.net.loginsHint')" />
+    <settings-row search-id="proxy" for-id="enableProxy" :label="t('prefs.adv.net.proxy')" :help="t('prefs.adv.net.proxyHint')">
       <Switch id="enableProxy" v-model="proxyEnabled" />
     </settings-row>
     <div v-if="proxyEnabled" class="border-b border-hairline pb-3 last:border-b-0">
@@ -23,7 +23,7 @@
     </div>
 
     <template #more>
-      <settings-row for-id="impersonate" :label="t('prefs.adv.net.impersonate')" :help="t('prefs.adv.net.impersonateHint')">
+      <settings-row search-id="impersonate" for-id="impersonate" :label="t('prefs.adv.net.impersonate')" :help="t('prefs.adv.net.impersonateHint')">
         <SelectField id="impersonate" v-model="network.impersonate" :options="impersonateOptions" />
       </settings-row>
     </template>

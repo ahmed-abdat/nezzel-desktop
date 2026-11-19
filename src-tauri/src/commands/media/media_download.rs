@@ -2,7 +2,7 @@ use crate::library::{CompletionMetadata, Library};
 use crate::models::DownloadItem;
 use crate::scheduling::dispatcher::DispatchRequest;
 use crate::scheduling::download_pipeline::{DownloadRequest, DownloadSender};
-use crate::scheduling::group_state::ensure_group_running;
+use crate::scheduling::group_state::start_group_run;
 use std::collections::HashMap;
 use tauri::State;
 
@@ -16,7 +16,7 @@ pub fn media_download(
   library: State<'_, Library>,
   pipeline: State<'_, DownloadSender>,
 ) -> String {
-  ensure_group_running(&group_id);
+  let generation = start_group_run(&group_id);
   let ids: Vec<String> = items.iter().map(|item| item.id.clone()).collect();
   crate::usage::queued(
     &app,
@@ -28,13 +28,16 @@ pub fn media_download(
     library.remember(&group_id, metadata);
   }
 
-  pipeline
+  if let Err(error) = pipeline
     .0
     .send(DispatchRequest::Pipeline(DownloadRequest::Batch {
       group_id: group_id.clone(),
+      generation,
       items,
     }))
-    .unwrap();
+  {
+    tracing::error!(group_id = %group_id, error = %error, "Download dispatcher is gone");
+  }
 
   group_id
 }

@@ -1,36 +1,37 @@
 <template>
   <settings-section :title="t('prefs.adv.app.title')">
-    <settings-row for-id="notification-behavior" :label="t('prefs.adv.app.notify')" :help="t('prefs.adv.app.notifyHint')">
+    <settings-row search-id="notifications" for-id="notification-behavior" :label="t('prefs.adv.app.notify')" :help="t('prefs.adv.app.notifyHint')">
       <SelectField id="notification-behavior" v-model="settings.notifications.notificationBehavior" :options="behaviorOptions" />
     </settings-row>
-    <settings-row for-id="autoStart" :label="t('settings.system.autoStart.label')" :help="t('settings.system.autoStart.hint')">
+    <settings-row search-id="autoStart" for-id="autoStart" :label="t('settings.system.autoStart.label')" :help="t('settings.system.autoStart.hint')">
       <Switch id="autoStart" v-model="settings.system.autoStartEnabled" />
     </settings-row>
-    <settings-row for-id="updateApp" :label="t('prefs.adv.app.updateApp')" :help="t('prefs.adv.app.updateAppHint')">
+    <settings-row search-id="updateApp" for-id="updateApp" :label="t('prefs.adv.app.updateApp')" :help="t('prefs.adv.app.updateAppHint')">
       <Switch id="updateApp" v-model="settings.update.updateApp" />
     </settings-row>
-    <settings-row for-id="updateBinaries" :label="t('prefs.adv.app.updateTools')" :help="t('prefs.adv.app.updateToolsHint')">
+    <settings-row search-id="updateTools" for-id="updateBinaries" :label="t('prefs.adv.app.updateTools')" :help="t('prefs.adv.app.updateToolsHint')">
       <Switch id="updateBinaries" v-model="settings.update.updateBinaries" />
     </settings-row>
-    <settings-row for-id="sendReports" :label="t('report.setting.label')" :help="t('report.setting.help')">
+    <settings-row search-id="sendReports" for-id="sendReports" :label="t('report.setting.label')" :help="t('report.setting.help')">
       <Switch id="sendReports" :model-value="settings.privacy.sendReports" data-testid="settings-send-reports" @update:model-value="setSendReports" />
     </settings-row>
-    <settings-row for-id="sendUsage" :label="t('usage.setting.label')" :help="t('usage.setting.help')">
+    <settings-row search-id="sendUsage" for-id="sendUsage" :label="t('usage.setting.label')" :help="t('usage.setting.help')">
       <Switch id="sendUsage" :model-value="settings.privacy.sendUsage" data-testid="settings-send-usage" @update:model-value="setSendUsage" />
     </settings-row>
 
     <template #more>
       <settings-row
+        search-id="startMinimised"
         for-id="autoStartMinimised"
         :label="isMac ? t('settings.system.autoStartMinimised.label.mac') : t('settings.system.autoStartMinimised.label.windows')"
         :help="minimisedHint"
       >
         <Switch id="autoStartMinimised" v-model="settings.system.autoStartMinimised" :disabled="!settings.system.autoStartEnabled || (!isMac && !settings.system.trayEnabled)" />
       </settings-row>
-      <settings-row for-id="minimiseToTray" :label="t('prefs.adv.app.closeToTray')" :help="t('prefs.adv.app.closeToTrayHint')">
+      <settings-row search-id="closeToTray" for-id="minimiseToTray" :label="t('prefs.adv.app.closeToTray')" :help="t('prefs.adv.app.closeToTrayHint')">
         <Switch id="minimiseToTray" v-model="minimiseToTray" :disabled="settings.system.trayEnabled === false" />
       </settings-row>
-      <settings-row bare as="fieldset" :disabled="!canShowNotifications">
+      <settings-row search-id="notificationKinds" bare as="fieldset" :disabled="!canShowNotifications">
         <legend class="float-start mb-1 w-full text-[13px]" :class="!canShowNotifications && 'opacity-50'">{{ t('prefs.adv.app.notifyWhich') }}</legend>
         <div class="clear-both grid grid-cols-1 gap-x-8 sm:grid-cols-2" :class="!canShowNotifications && 'opacity-50'">
           <label v-for="(label, kind) in notificationKindLabels" :key="kind" class="flex min-h-7 cursor-pointer items-center gap-2.5 text-[13px]">

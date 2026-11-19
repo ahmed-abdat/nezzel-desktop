@@ -255,6 +255,25 @@ pub async fn capture_write_clipboard(
   clipboard::write_text(&app, text, true).await
 }
 
+/// The quick bar's "Open Automation settings" after macOS refused the browser read. Fixed URL only.
+#[tauri::command]
+pub fn capture_open_automation_settings(
+  app: AppHandle,
+  window: WebviewWindow,
+) -> Result<(), String> {
+  if capture_window(&window)? != CaptureWindow::Bar {
+    return Err("unavailable".into());
+  }
+  use tauri_plugin_opener::OpenerExt;
+  app
+    .opener()
+    .open_url(
+      "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+      None::<&str>,
+    )
+    .map_err(|_| "unavailable".into())
+}
+
 /// Welcome "Try it" sample: a short, long-lived public video ("Me at the zoo").
 pub const TRY_LINK: &str = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
 

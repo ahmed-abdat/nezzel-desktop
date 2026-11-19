@@ -1,9 +1,10 @@
 <template>
-  <component :is="as ?? 'div'" v-if="bare" class="border-b border-hairline py-3 last:border-b-0">
+  <component :is="as ?? 'div'" v-if="bare" :data-setting-id="searchId" class="border-b border-hairline py-3 last:border-b-0">
     <slot />
   </component>
   <div
     v-else
+    :data-setting-id="searchId"
     class="grid min-h-[52px] items-center gap-x-8 gap-y-1 border-b border-hairline py-3 last:border-b-0"
     :class="stacked ? 'grid-cols-1' : 'grid-cols-[minmax(0,1fr)_auto]'"
   >
@@ -27,10 +28,10 @@
 // One preference: label (+ optional help) on the start side, control on the end side.
 // `stacked` puts a wide control (textarea, multi-select) under the label instead.
 // `bare` keeps only the row chrome (hairline + padding) around free content, e.g. a fieldset of checkboxes;
-// `as` picks its element.
+// `as` picks its element. `searchId` anchors the row for Settings search (see settingsIndex.ts).
 import { computed } from 'vue';
 
-const props = defineProps<{ label?: string; help?: string; forId?: string; stacked?: boolean; bare?: boolean; as?: string }>();
+const props = defineProps<{ label?: string; help?: string; forId?: string; stacked?: boolean; bare?: boolean; as?: string; searchId?: string }>();
 
 // Some legacy labels end with a colon ("Connect via proxy:"); a preferences row doesn't want it.
 const cleanLabel = computed(() => props.label?.replace(/\s*[:：]\s*$/, '') ?? '');

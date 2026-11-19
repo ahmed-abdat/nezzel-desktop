@@ -19,7 +19,7 @@ pub fn group_cancel(
   records: State<'_, DownloadRecords>,
   library: State<'_, crate::library::Library>,
 ) {
-  cancel_group(&group_id);
+  let generation = cancel_group(&group_id);
   if discard_files != Some(true) {
     crate::runners::ytdlp_download::pause_group(&group_id);
   }
@@ -40,9 +40,11 @@ pub fn group_cancel(
   // Send cleanup requests for items that were already dispatched.
   let _ = fetch_sender.0.send(DispatchRequest::Cleanup {
     group_id: group_id.clone(),
+    generation: Some(generation),
   });
   let _ = download_sender.0.send(DispatchRequest::Cleanup {
     group_id: group_id.clone(),
+    generation: Some(generation),
   });
 
   let mut store = log_state.write();

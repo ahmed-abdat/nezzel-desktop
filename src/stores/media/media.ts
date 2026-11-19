@@ -13,12 +13,16 @@ import { useMediaGroupStore } from './group';
 import { useMediaDestinationStore } from './destination';
 import { useMediaProgressStore } from './progress';
 import { useMediaOptionsStore } from './options';
-import { DownloadOptions, DownloadOverrides, MediaAddPayload, MediaItem, TrackType } from '../../tauri/types/media';
+import { DownloadOptions, DownloadOverrides, EntryItem, MediaAddPayload, MediaItem, TrackType } from '../../tauri/types/media';
+import { usePlaylistStore } from './playlist';
+import { createLimiter, ENGINE_FANOUT, runLimited } from '../../helpers/runLimited';
 import { useMediaSizeStore } from './size.ts';
 import { useMediaDiagnosticsStore } from './diagnostics.ts';
 import { useSettingsStore } from '../settings.ts';
 import { usePreferencesStore } from '../preferences';
 import { useListVisibilityStore } from '../listVisibility';
+import { useToastStore } from '../toast';
+import { i18n } from '../../i18n';
 import { useLoginStore } from '../login';
 import { Group } from '../../tauri/types/group.ts';
 import { notify, notifyGroup } from '../../tauri/notifications';
@@ -55,7 +59,10 @@ export const useMediaStore = defineStore('media', () => {
   const optionsStore = useMediaOptionsStore();
   const sizeStore = useMediaSizeStore();
   const diagnosticsStore = useMediaDiagnosticsStore();
+  const playlistStore = usePlaylistStore();
+  const cancelLimiter = createLimiter(ENGINE_FANOUT);
   const settingsStore = useSettingsStore();
+  const toastStore = useToastStore();
   const { defaultChoice } = useUiPrefs();
   const duplicateFocus = ref<{ id: string } | null>(null);
 
@@ -87,7 +94,8 @@ export const useMediaStore = defineStore('media', () => {
       const downloadDir = overrides?.output?.downloadDir || filesFolder || (options.trackType === TrackType.audio ? paths.audioDownloadDir : paths.videoDownloadDir) || settingsStore.settings.output.downloadDir;
       rows.push({ group: { ...group, items }, options, overrides: { ...overrides, output: { ...overrides?.output, ...(downloadDir ? { downloadDir } : {}) } },
         encodings: optionsStore.getEncodings(group.id), tracks: optionsStore.getTracks(group.id),
-        attachmentIds: group.attachments?.length ? optionsStore.getAttachmentSelection(group.id) : undefined });
+        attachmentIds: group.attachments?.length ? optionsStore.getAttachmentSelection(group.id) : undefined,
+        parent: group.parentId ? playlistStore.findPlaylist(group.parentId) : undefined });
     }
     const ids = new Set(rows.map(row => row.group.id));
     writeQueue([...pendingRestore.value.filter(row => !ids.has(row.group.id)), ...rows]);
@@ -109,6 +117,7 @@ export const useMediaStore = defineStore('media', () => {
     const rows = pendingRestore.value;
     pendingRestore.value = [];
     for (const row of rows) {
+      if (row.parent && !playlistStore.findPlaylist(row.parent.id)) playlistStore.register({ ...row.parent });
       groupStore.createGroup(row.group);
       optionsStore.setOptions(row.group.id, row.options);
       if (row.overrides) optionsStore.setOverrides(row.group.id, row.overrides);
@@ -183,6 +192,12 @@ export const useMediaStore = defineStore('media', () => {
         videos: selected.filter(a => a.kind === 'video').length,
       };
     }
+    const parentId = groupStore.findGroupById(groupId)?.parentId;
+    const parent = parentId ? playlistStore.findPlaylist(parentId) : undefined;
+    if (parent && parentId) {
+      const index = groupStore.findGroupById(groupId)?.parentIndex;
+      display.playlist = { key: parentId, title: parent.title ?? null, url: parent.url ?? null, count: parent.count, index: index ?? null };
+    }
     const itemId = 'items' in item ? groupStore.findGroupLeader(groupId)?.id ?? item.id : item.id;
     return { historyId: historyRecordId(groupId, itemId), title: item.title, site: item.extractor, thumbnail: item.thumbnail, display };
   }
@@ -207,11 +222,16 @@ export const useMediaStore = defineStore('media', () => {
       .catch(() => console.warn('Unable to save local download history'));
   }
 
+  function historyRemoveFailed() {
+    console.warn('Unable to remove local download history');
+    toastStore.showToast(i18n.global.t('downloads.historyRemoveFailed'), { style: 'error' });
+  }
+
   function forgetFailedGroup(groupId: string) {
     const id = failureRecordId(groupId);
     removedFailures.add(id);
     failureWrites = failureWrites.then(() => invoke<void>('library_remove', { paths: [], ids: [id] }))
-      .catch(() => console.warn('Unable to remove local download history'));
+      .catch(historyRemoveFailed);
   }
 
   function queueLibraryRemoval(paths: string[]) {
@@ -221,7 +241,7 @@ export const useMediaStore = defineStore('media', () => {
       const paths = [...pendingLibraryRemoval];
       pendingLibraryRemoval.clear();
       removeTimer = undefined;
-      void invoke('library_remove', { paths }).catch(() => console.warn('Unable to remove local download history'));
+      void invoke('library_remove', { paths }).catch(historyRemoveFailed);
     }, 0);
   }
 
@@ -251,7 +271,21 @@ export const useMediaStore = defineStore('media', () => {
       groupStore.groups[id] = {
         ...item, total: 1, processed: 1, errored: row.errorCode ? 1 : 0, isCombined: false, items: { [id]: item },
         savedAttachmentSummary: summary,
+        sponsorRemovedSecs: row.display?.sponsorRemovedSecs ?? undefined,
       };
+      const playlist = row.display?.playlist;
+      if (playlist?.key) {
+        const parentId = `library-playlist:${playlist.key}`;
+        const known = playlistStore.findPlaylist(parentId);
+        playlistStore.register({
+          id: parentId, url: playlist.url ?? known?.url, title: playlist.title ?? known?.title,
+          thumbnail: known?.thumbnail ?? row.thumbnail ?? undefined, extractor: row.site ?? undefined,
+          count: (known?.count ?? 0) + 1, skipped: 0,
+        });
+        groupStore.groups[id].parentId = parentId;
+        groupStore.groups[id].parentIndex = playlist.index ?? undefined;
+        groupStore.groups[id].playlistTitle = playlist.title ?? undefined;
+      }
       groupStore.groupOrder.push(id);
       stateStore.setState(id, row.errorCode ? MediaState.error : MediaState.done);
       optionsStore.setOptions(id, {
@@ -328,34 +362,74 @@ export const useMediaStore = defineStore('media', () => {
     for (const waiter of pending) waiter.reject(reason);
   }
 
+  /**
+   * Every playlist splits into one download per entry (the engine pauses and cancels per group), tagged
+   * with the playlist row's id so the list shows them under one parent row. Entries that could not be
+   * read become failed children when they can be told apart from filtered-out ones.
+   */
   function finalizePlaylistGroup(group: Group) {
-    const splitThreshold = settingsStore.settings.performance.splitPlaylistThreshold;
     const overrides = optionsStore.getOverrides(group.id);
-    // Keep the playlist row so skipped-child messages remain visible.
-    if (group.total < splitThreshold && group.errored === 0) {
-      const selectedOptions = optionsStore.getOptions(group.id);
-      const newGroups = groupStore.splitGroup(group);
-      if (selectedOptions) {
-        for (const next of newGroups) optionsStore.setOptions(next.id, { ...selectedOptions });
-      }
+    const selectedOptions = optionsStore.getOptions(group.id);
+    const leader = groupStore.findGroupLeader(group.id);
+    const readFailures = diagnosticsStore.findFatalsByGroupId(group.id).length;
+    const unmatched: EntryItem[] = [];
+    const newGroups = groupStore.splitGroup(group, unmatched);
+    const failedChildren = readFailures > 0 && unmatched.length === readFailures
+      ? unmatched.map(entry => unreadableChild(group, entry))
+      : [];
+    const children = [...newGroups, ...failedChildren].sort((a, b) => (a.parentIndex ?? Infinity) - (b.parentIndex ?? Infinity));
+    if (failedChildren.length) groupStore.prependGroups(children);
+    if (selectedOptions) {
+      for (const next of newGroups) optionsStore.setOptions(next.id, { ...selectedOptions });
+    }
+    if (children.length > 1 && leader?.entries) {
+      // The parent keeps the playlist row's id: same place, focus and login card as while it was read.
+      playlistStore.register({
+        id: group.id, url: group.url, title: group.title ?? leader.title, thumbnail: group.thumbnail ?? leader.thumbnail,
+        uploader: group.uploader, extractor: group.extractor, count: children.length,
+        skipped: failedChildren.length ? 0 : readFailures,
+      });
+      for (const child of children) child.parentId = group.id;
+    } else {
       // splitGroup removed the playlist row: its pending login card goes with it.
       useLoginStore().forgetGroup(group.id);
-      migrateOverrides(group.id, newGroups.map(newGroup => newGroup.id), overrides);
-      void notifyGroup(NotificationKind.PlaylistReady, group, {}, newGroups.length);
-      resolvePendingReadyGroup(group.id, newGroups.map(newGroup => newGroup.id));
-      if (newGroups.length === 0) {
-        stateStore.setGroupState(group.id, MediaState.configure);
-        return;
-      }
-      for (const newGroup of newGroups) {
-        stateStore.setGroupState(newGroup.id, MediaState.configure);
-      }
-    } else {
-      groupStore.consolidateGroup(group);
-      void notifyGroup(NotificationKind.PlaylistReady, group, {}, group.entries?.length ?? 1);
-      stateStore.setGroupState(group.id, MediaState.configure);
-      resolvePendingReadyGroup(group.id, [group.id]);
+      // One download left: the list's notes (skipped entries) move onto it, so they stay visible.
+      const only = children[0];
+      if (only && children.length === 1) moveDiagnostics(group.id, only.id);
     }
+    migrateOverrides(group.id, newGroups.map(newGroup => newGroup.id), overrides);
+    void notifyGroup(NotificationKind.PlaylistReady, group, {}, newGroups.length);
+    resolvePendingReadyGroup(group.id, newGroups.map(newGroup => newGroup.id));
+    for (const newGroup of newGroups) {
+      stateStore.setGroupState(newGroup.id, MediaState.configure);
+    }
+    for (const failed of failedChildren) rememberFailedGroup(failed.id);
+  }
+
+  function moveDiagnostics(fromGroupId: string, toGroupId: string) {
+    for (const list of Object.values(diagnosticsStore.diagnostics)) {
+      for (const entry of list) if (entry.groupId === fromGroupId) entry.groupId = toGroupId;
+    }
+    for (const fatal of Object.values(diagnosticsStore.fatals)) if (fatal.groupId === fromGroupId) fatal.groupId = toGroupId;
+  }
+
+  /** A playlist entry no item arrived for: its own failed row (title from the list) with Retry. */
+  function unreadableChild(playlist: Group, entry: EntryItem): Group {
+    const id = uuidv4();
+    const itemId = uuidv4();
+    const item: MediaItem = {
+      id: itemId, groupId: id, isLeader: true, url: entry.videoUrl, title: entry.title, thumbnail: entry.thumbnail,
+      duration: entry.duration, extractor: playlist.extractor, audioCodecs: [], formats: [], filesize: 0, playlistIndex: entry.index,
+    };
+    stateStore.setState(itemId, MediaState.error);
+    diagnosticsStore.processMediaDiagnosticPayload({
+      id: itemId, groupId: id, code: 'playlist_entry_unreadable', level: 'error', component: 'playlist',
+      message: 'Playlist entry could not be read', raw: '', timestamp: Date.now(),
+    });
+    return {
+      ...item, total: 1, processed: 1, errored: 1, isCombined: false, items: { [itemId]: item },
+      playlistTitle: playlist.title, playlistCount: playlist.entries?.length, parentIndex: entry.index,
+    };
   }
 
   function processMediaAddPayload(payload: MediaAddPayload) {
@@ -501,7 +575,9 @@ export const useMediaStore = defineStore('media', () => {
       throw error;
     });
     const [, ids] = await Promise.all([expansion, ready]);
-    await Promise.all(ids.map(id => downloadGroup(id, getDownloadOptions(id), ids.length > 1 ? 'batch' : undefined)));
+    // Big playlists: a bounded number of engine calls in flight; stop when the rows were removed meanwhile.
+    await runLimited(ids, ENGINE_FANOUT, id => downloadGroup(id, getDownloadOptions(id), ids.length > 1 ? 'batch' : undefined),
+      () => ids.every(id => !groupStore.findGroupById(id)));
   }
 
   function createMediaInfoGroup(
@@ -593,6 +669,7 @@ export const useMediaStore = defineStore('media', () => {
     if (!group || !leader) throw new Error('Missing download');
     forgetFailedGroup(groupId);
     delete group.savedAttachmentSummary;
+    delete group.sponsorRemovedSecs;
     for (const itemId of Object.keys(group.items)) {
       stateStore.removeState(itemId);
       progressStore.deleteProgress(itemId);
@@ -601,9 +678,12 @@ export const useMediaStore = defineStore('media', () => {
     }
     diagnosticsStore.removeDiagnostics(groupId);
     destinationStore.deleteDestinations(groupId);
+    // A playlist child keeps its parent, position and the title/thumbnail it had while it re-reads.
     group.items = { [leader.id]: {
       id: leader.id, isLeader: true, url: group.url, audioCodecs: [], formats: [], filesize: 0,
+      ...(group.parentId ? { title: leader.title, thumbnail: leader.thumbnail, playlistIndex: leader.playlistIndex } : {}),
     } };
+    playlistStore.rearm(group.parentId);
     group.total = 1;
     group.processed = 0;
     group.errored = 0;
@@ -763,6 +843,7 @@ export const useMediaStore = defineStore('media', () => {
     // Keep the submitted choice even when it came straight from a global default or capture.
     optionsStore.setOptions(groupId, { ...options });
     const newState = group.isCombined ? MediaState.downloadingList : MediaState.downloading;
+    playlistStore.rearm(group.parentId);
     items
       .filter(item => stateStore.getState(item.id) !== MediaState.done)
       .forEach((item) => {
@@ -965,8 +1046,10 @@ export const useMediaStore = defineStore('media', () => {
     diagnosticsStore.removeDiagnostics(group.id);
     destinationStore.deleteDestinations(group.id);
     optionsStore.removeOptions(group.id);
-    const cancellation = groupStore.cancelGroup(group.id, true).catch(console.error);
+    // Bounded: cancelling or removing a whole playlist must not fire hundreds of engine calls at once.
+    const cancellation = cancelLimiter(() => groupStore.cancelGroup(group.id, true)).catch(console.error);
     groupStore.deleteGroup(group.id);
+    playlistStore.prune(group.parentId);
     return cancellation;
   }
 

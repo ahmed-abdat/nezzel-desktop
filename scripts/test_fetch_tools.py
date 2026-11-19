@@ -274,6 +274,7 @@ assert.deepEqual(input, original);
                     path = Path(command[-1])
                     if path.is_file():
                         path.write_bytes(path.read_bytes() + b'+signed')
+                return bootstrap.subprocess.CompletedProcess(command, 0, '', '')
             with patch.object(bootstrap, 'ROOT', root), patch.object(bootstrap.sys, 'platform', 'darwin'), patch.dict(bootstrap.os.environ, {'APPLE_SIGNING_IDENTITY': 'Developer ID Application: Test'}), patch.object(bootstrap.subprocess, 'run', side_effect=sign) as run:
                 bootstrap.sign_macos()
             signed = [Path(call.args[0][-1]) for call in run.call_args_list if '--sign' in call.args[0]]
@@ -282,6 +283,19 @@ assert.deepEqual(input, original);
             self.assertTrue(all('Developer ID Application: Test' in call.args[0] for call in run.call_args_list if '--sign' in call.args[0]))
             self.assertEqual(checksum.read_text(), hashlib.sha256(bytes.fromhex('cffaedfe') + b'gallery+signed').hexdigest() + '\n')
             self.assertIn('_internal/Python.framework/Python', json.loads(index.read_text())['tools']['yt-dlp']['files'])
+            self.assertTrue(all(str(root / 'scripts/tools-entitlements.plist') in call.args[0] for call in run.call_args_list if '--sign' in call.args[0]))
+
+            # Self-signed identity (a SHA-1): library validation off, since there is no Team ID. A
+            # flattened Python.framework is ambiguous to codesign: its loose copy is signed outside.
+            def sign_flattened(command, **kwargs):
+                if '--sign' in command and Path(command[-1]).is_relative_to(framework):
+                    return bootstrap.subprocess.CompletedProcess(command, 1, '', 'bundle format is ambiguous (could be app or framework)')
+                return sign(command, **kwargs)
+            with patch.object(bootstrap, 'ROOT', root), patch.object(bootstrap.sys, 'platform', 'darwin'), patch.dict(bootstrap.os.environ, {'APPLE_SIGNING_IDENTITY': 'AB' * 20}), patch.object(bootstrap.subprocess, 'run', side_effect=sign_flattened) as run:
+                bootstrap.sign_macos()
+            signs = [call.args[0] for call in run.call_args_list if '--sign' in call.args[0]]
+            self.assertTrue(all(str(root / 'scripts/tools-entitlements-self-signed.plist') in command for command in signs))
+            self.assertTrue((framework / 'Python').read_bytes().endswith(b'+signed+signed'), 'loose copy signed and copied back')
 
     def test_checksum_mismatch_and_archive_traversal_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:

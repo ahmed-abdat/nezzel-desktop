@@ -32,6 +32,24 @@ describe('saved download queue', () => {
     vi.restoreAllMocks();
     localStorage.clear();
   });
+  it('keeps a playlist child under its playlist across a restart, without a thumbnail link', () => {
+    const row = saved();
+    row.group.parentId = 'pl';
+    row.group.parentIndex = 4;
+    row.parent = { id: 'pl', url: 'https://example.com/list', title: 'Series', thumbnail: 'https://cdn/signed.jpg', count: 9, skipped: 0 };
+    const [back] = decodeQueue(encodeQueue([row]));
+    expect(back.group).toMatchObject({ parentId: 'pl', parentIndex: 4 });
+    expect(back.parent).toEqual({ id: 'pl', url: 'https://example.com/list', title: 'Series', count: 9, skipped: 0 });
+  });
+
+  it('still decodes an old snapshot with a combined playlist row', () => {
+    const row = saved();
+    row.group.isCombined = true;
+    const [back] = decodeQueue(JSON.stringify({ version: 1, rows: [row] }));
+    expect(back.group.isCombined).toBe(true);
+    expect(back.parent).toBeUndefined();
+  });
+
   it('round-trips choices, IDs and destination without credentials', () => {
     const text = encodeQueue([saved()]);
     const [row] = decodeQueue(text);

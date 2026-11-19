@@ -42,9 +42,9 @@ else fail "gallery-dl matches gallery-dl.sha256"; fi
 if [[ -e $contents/MacOS/gallery-dl ]]; then fail "no onefile gallery-dl in Contents/MacOS"
 else pass "no onefile gallery-dl in Contents/MacOS"; fi
 
-# Nested tools carry the app's signer (Developer ID team, or ad-hoc for both): a mismatch means
-# the --sign-macos step didn't run with the bundle's identity.
-team() { codesign -dv "$1" 2>&1 | sed -n 's/^TeamIdentifier=//p'; }
+# Nested tools carry the app's signer (Developer ID team, self-signed leaf, or ad-hoc for both): a
+# mismatch means the --sign-macos step didn't run with the bundle's identity.
+team() { codesign -dvv "$1" 2>&1 | sed -n 's/^TeamIdentifier=//p; s/^Authority=//p' | sort | tr '\n' ' '; }
 app_team=$(team "$app")
 for nested in "$contents/Resources/tools/yt-dlp/yt-dlp" "$gallery"; do
   label=$(basename "$nested")

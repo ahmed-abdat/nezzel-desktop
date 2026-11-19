@@ -45,6 +45,7 @@ import { phaseOf } from '../../helpers/groupView';
 import { useDownloadSelection } from '../../composables/useDownloadSelection';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import { batchTargets } from '../../helpers/selection';
+import { ENGINE_FANOUT, runLimited } from '../../helpers/runLimited';
 
 /** Batch actions for the selected rows. Every action runs the same per-row function a single row uses. */
 const props = defineProps<{ groups: Group[] }>();
@@ -75,8 +76,8 @@ async function batch(ids: string[], run: (group: Group) => Promise<boolean>, mes
   if (busy.value) return;
   busy.value = true;
   try {
-    const results = await Promise.allSettled(forIds(ids).map(run));
-    const succeeded = results.filter(result => result.status === 'fulfilled' && result.value).length;
+    const results = await runLimited(forIds(ids), ENGINE_FANOUT, run);
+    const succeeded = results.filter(Boolean).length;
     const failed = results.length - succeeded;
     if (succeeded) toastStore.showToast(t(message, { n: countLabel(succeeded) }), { style: 'success' });
     if (failed) toastStore.showToast(t('feedback.batchFailed', { n: countLabel(failed) }, failed), { style: 'error' });

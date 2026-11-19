@@ -1,41 +1,41 @@
 <template>
   <div>
     <settings-section :title="t('prefs.sections.downloads')">
-      <settings-row :label="t('prefs.general.folder')" :help="t('prefs.general.folderHint')">
+      <settings-row search-id="saveFolder" :label="t('prefs.general.folder')" :help="t('prefs.general.folderHint')">
         <bdi class="block max-w-[14rem] truncate text-[12.5px] text-muted-foreground" :dir="folder ? 'ltr' : undefined" :title="folder">{{ folder ? compactFolderPath(folder) : t('prefs.general.folderDefault') }}</bdi>
         <Button variant="outline" @click="pickFolder">{{ t('prefs.general.change') }}</Button>
       </settings-row>
-      <settings-row for-id="pref-choice" :label="t('prefs.general.choice')" :help="t('prefs.general.choiceHint')">
+      <settings-row search-id="defaultChoice" for-id="pref-choice" :label="t('prefs.general.choice')" :help="t('prefs.general.choiceHint')">
         <SelectField id="pref-choice" v-model="defaultChoice" :options="choiceOptions" />
       </settings-row>
-      <settings-row for-id="pref-ask" :label="t('prefs.general.askEach')" :help="t('prefs.general.askEachHint')">
+      <settings-row search-id="askEach" for-id="pref-ask" :label="t('prefs.general.askEach')" :help="t('prefs.general.askEachHint')">
         <Switch id="pref-ask" v-model="askEach" />
       </settings-row>
     </settings-section>
 
     <settings-section :title="t('prefs.sections.quick')">
-      <settings-row for-id="pref-clip" :label="t('prefs.general.clip')" :help="t('prefs.general.clipHint')">
+      <settings-row search-id="clipboardFill" for-id="pref-clip" :label="t('prefs.general.clip')" :help="t('prefs.general.clipHint')">
         <Switch id="pref-clip" v-model="settings.input.autoFillClipboard" />
       </settings-row>
-      <settings-row for-id="pref-card" :label="t('prefs.general.card')" :help="capturePlatform.backgroundClipboard ? t('prefs.general.cardHint') : t('prefs.general.cardFocusHint')">
+      <settings-row search-id="clipboardCard" for-id="pref-card" :label="t('prefs.general.card')" :help="capturePlatform.backgroundClipboard ? t('prefs.general.cardHint') : t('prefs.general.cardFocusHint')">
         <Switch id="pref-card" v-model="settings.input.watchClipboard" />
       </settings-row>
-      <settings-row for-id="pref-card-keep-open" :label="t('prefs.general.cardKeepOpen')">
+      <settings-row search-id="cardKeepOpen" for-id="pref-card-keep-open" :label="t('prefs.general.cardKeepOpen')">
         <Switch id="pref-card-keep-open" v-model="settings.input.cardKeepOpen" />
       </settings-row>
-      <settings-row for-id="pref-card-position" :label="t('prefs.general.cardPosition')">
+      <settings-row search-id="cardPosition" for-id="pref-card-position" :label="t('prefs.general.cardPosition')">
         <SelectField id="pref-card-position" v-model="settings.input.cardPosition" :options="cardPositionOptions" />
       </settings-row>
-      <settings-row for-id="pref-tray" :label="t('prefs.general.tray')" :help="t('prefs.general.trayHint')">
+      <settings-row search-id="tray" for-id="pref-tray" :label="t('prefs.general.tray')" :help="t('prefs.general.trayHint')">
         <Switch id="pref-tray" v-model="settings.system.trayEnabled" />
       </settings-row>
     </settings-section>
 
     <settings-section :title="t('prefs.sections.appearance')">
-      <settings-row for-id="pref-language" :label="t('prefs.general.language')">
+      <settings-row search-id="language" for-id="pref-language" :label="t('prefs.general.language')">
         <SelectField id="pref-language" v-model="settings.appearance.language" :options="languageSelectOptions" />
       </settings-row>
-      <settings-row for-id="pref-theme" :label="t('prefs.general.theme')">
+      <settings-row search-id="theme" for-id="pref-theme" :label="t('prefs.general.theme')">
         <SelectField id="pref-theme" v-model="settings.appearance.theme" :options="themeOptions" />
       </settings-row>
     </settings-section>

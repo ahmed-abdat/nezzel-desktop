@@ -72,12 +72,16 @@
         <p v-else-if="offer.resolving" class="text-[12.5px] text-muted-foreground" role="status">{{ t('capture.readingBrowser') }}</p>
         <p v-else-if="error" class="text-[12.5px] text-destructive" role="alert">{{ t(error === 'action' ? 'capture.actionFailed' : 'capture.failed') }}</p>
         <CaptureFailure v-else-if="failed" :reason="failure" :site="offer.site" />
+        <div v-else-if="quickText.automation && offer.automationDenied && !text" class="flex flex-wrap items-center gap-2" data-testid="capture-automation-denied">
+          <p class="min-w-0 flex-1 text-[12.5px] text-foreground/80 text-pretty" role="alert">{{ t('capture.automationDenied') }}</p>
+          <Button type="button" variant="outline" size="sm" @click="openAutomation">{{ t('capture.openAutomation') }}</Button>
+        </div>
         <p v-else-if="text && !offer.url" class="text-[12.5px] text-muted-foreground" role="status">{{ t('capture.unsupported') }}</p>
-        <p v-else class="text-[12.5px] text-muted-foreground">{{ t('capture.emptyHint') }}</p>
+        <p v-else class="text-[12.5px] text-muted-foreground" data-testid="capture-empty-hint">{{ t(quickText.barEmpty) }}</p>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
-        <p v-if="isMac && offer.resolving" class="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground" :title="t('capture.automationHint')">{{ t('capture.automationHint') }}</p>
+        <p v-if="quickText.automation && offer.resolving" class="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground" :title="t('capture.automationHint')">{{ t('capture.automationHint') }}</p>
         <span v-else class="inline-flex min-w-max flex-1 items-center gap-1 whitespace-nowrap text-[11.5px] text-muted-foreground">
           <Kbd>{{ escKey }}</Kbd>{{ t('capture.escCloses') }}
         </span>
@@ -110,11 +114,13 @@ import { useI18n } from 'vue-i18n';
 import { usePlatform } from '../../composables/usePlatform';
 import { useCaptureOffer } from '../../composables/useCaptureOffer';
 import { formatDuration } from '../../helpers/units';
+import { quickDownloadText } from '../../helpers/quickDownloadText';
 import { localeDirection } from '../../i18n';
 import { CAPTURE_BAR_SIZE } from '@/generated/contract';
 
 const { t, locale } = useI18n();
-const { isMac } = usePlatform();
+const { isMac, platform } = usePlatform();
+const quickText = computed(() => quickDownloadText(platform.value));
 const text = ref('');
 const input = ref<InputApi>();
 const panel = ref<HTMLElement>();
@@ -134,6 +140,10 @@ const rtl = computed(() => localeDirection(locale.value) === 'rtl');
 const ready = computed(() => !!offer.value.url && !offer.value.resolving && !editing.value && !acting.value);
 const compactCount = (value: number) => new Intl.NumberFormat(locale.value, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 const escKey = computed(() => (isMac.value ? 'esc' : 'Esc'));
+
+function openAutomation() {
+  void invoke('capture_open_automation_settings').catch(() => undefined);
+}
 
 /** A prefilled link is selected, so typing or pasting replaces it instead of appending a second copy. */
 function selectPrefill() {

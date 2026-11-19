@@ -237,10 +237,12 @@ describe('media progress store', () => {
     states.setGroupState('last-skipped', MediaState.fetchingList);
     diagnostics.processMediaDiagnosticPayload({ id: 'missing', groupId: 'last-skipped', level: 'warning', code: 'input_filter_skipped', message: 'Video unavailable', raw: '', component: 'extract', timestamp: 0 });
     diagnostics.processMediaFatalPayload({ id: 'missing', groupId: 'last-skipped', internal: false, exitCode: 0, message: 'Video unavailable', details: null, timestamp: 0 });
-    expect(states.getGroupState('last-skipped')).toBe(MediaState.configure);
-    expect(groups.findGroupById('last-skipped')?.items.saved).toBeDefined();
-    expect(diagnostics.findFatalsByGroupId('last-skipped')).toEqual([]);
-    expect(diagnostics.findDiagnosticsByGroupId('last-skipped')).toEqual([expect.objectContaining({ code: 'input_filter_skipped', message: 'Video unavailable' })]);
+    // The one remaining download takes the playlist's place and keeps the skipped-entry note.
+    const child = groups.findGroupByItemId('saved')!;
+    expect(child.parentId).toBeUndefined();
+    expect(states.getGroupState(child.id)).toBe(MediaState.configure);
+    expect(diagnostics.findFatalsByGroupId(child.id)).toEqual([]);
+    expect(diagnostics.findDiagnosticsByGroupId(child.id)).toEqual([expect.objectContaining({ code: 'input_filter_skipped', message: 'Video unavailable' })]);
   });
 
   it('marks combined playlists error when every item fails', () => {

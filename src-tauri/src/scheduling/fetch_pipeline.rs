@@ -295,6 +295,7 @@ async fn handle_fetch_entry(
           counters.remove(&group_id);
           let _ = tx.send(DispatchRequest::Cleanup {
             group_id: group_id.clone(),
+            generation: crate::scheduling::group_state::fetch_done_generation(&group_id),
           });
         }
       }
@@ -329,6 +330,7 @@ async fn handle_fetch_entry(
           counters.remove(&group_id);
           let _ = tx.send(DispatchRequest::Cleanup {
             group_id: group_id.clone(),
+            generation: crate::scheduling::group_state::fetch_done_generation(&group_id),
           });
         }
       }
@@ -350,6 +352,7 @@ pub fn finish_fetch(tx: &UnboundedSender<DispatchRequest<FetchRequest>>, group_i
   }
   let _ = tx.send(DispatchRequest::Cleanup {
     group_id: group_id.into(),
+    generation: crate::scheduling::group_state::fetch_done_generation(group_id),
   });
 }
 
@@ -424,7 +427,26 @@ mod tests {
     assert!(rx.try_recv().is_err());
     finish_fetch(&tx, group);
     assert!(
-      matches!(rx.try_recv(), Ok(DispatchRequest::Cleanup { group_id }) if group_id == group)
+      matches!(rx.try_recv(), Ok(DispatchRequest::Cleanup { group_id, .. }) if group_id == group)
     );
+  }
+
+  #[test]
+  fn finished_fetch_cleanup_does_not_end_a_download_already_started() {
+    use crate::scheduling::group_state::{
+      ensure_group_running, is_group_running, remove_group, remove_group_if, start_group_run,
+    };
+    let group = "fetch-done-after-download-start";
+    ensure_group_running(group);
+    // The first fetched row is downloading while the group's last fetch is still running.
+    start_group_run(group);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    finish_fetch(&tx, group);
+    let Ok(DispatchRequest::Cleanup { generation, .. }) = rx.try_recv() else {
+      panic!("expected Cleanup");
+    };
+    assert!(!remove_group_if(group, generation));
+    assert!(is_group_running(group));
+    remove_group(group);
   }
 }

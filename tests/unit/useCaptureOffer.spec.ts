@@ -6,13 +6,44 @@ import CaptureBar from '../../src/components/downloads/CaptureBar.vue';
 import CaptureCard from '../../src/components/downloads/CaptureCard.vue';
 import { emptyDetails, type CaptureOffer } from '../../src/captureTypes';
 import { emit } from '@tauri-apps/api/event';
+import * as events from '@tauri-apps/api/event';
 import { i18n } from '../../src/i18n';
 import { installTauriMock } from '../utils/tauriMock';
 import { siteLogo } from '../../src/helpers/siteLogo';
 import { defaultSettings } from '../../src/tauri/types/config';
+import { Platform } from '../../src/tauri/types/app';
+import { resetPlatformForTests } from '../../src/composables/usePlatform';
+import { quickDownloadText } from '../../src/helpers/quickDownloadText';
+
+vi.mock('@tauri-apps/api/event', { spy: true });
 
 let wrapper: ReturnType<typeof mount>;
 afterEach(() => wrapper?.unmount());
+
+describe('capture offer listener lifetime', () => {
+  it('unlistens immediately when registration completes after unmount', async () => {
+    let finishListen!: (unlisten: events.UnlistenFn) => void;
+    const unlisten = vi.fn();
+    const listener = vi.spyOn(events, 'listen').mockImplementationOnce(() => new Promise((resolve) => {
+      finishListen = resolve;
+    }));
+    const snapshot = vi.fn(() => ({ id: 0, url: '', details: emptyDetails() }));
+    installTauriMock({ capture_snapshot: snapshot });
+    let capture!: ReturnType<typeof useCaptureOffer>;
+    wrapper = mount(defineComponent({ setup() {
+      capture = useCaptureOffer();
+      return () => null;
+    } }), { global: { plugins: [i18n] } });
+    try {
+      const starting = capture.start();
+      wrapper.unmount();
+      finishListen(unlisten);
+      await starting;
+      expect(unlisten).toHaveBeenCalledOnce();
+      expect(snapshot).not.toHaveBeenCalled();
+    } finally { listener.mockRestore(); }
+  });
+});
 
 describe('automatic login after an anonymous preview refusal', () => {
   it.each([['card', CaptureCard, 'en'], ['bar', CaptureBar, 'ar']] as const)('%s offers Download without asking to use the browser login', async (name, component, locale) => {
@@ -169,5 +200,43 @@ describe('untitled capture read', () => {
       await wrapper.get('[data-testid=capture-formats-toggle]').trigger('click');
       expect(wrapper.findAll('[role=menuitem]')).toHaveLength(2);
     }
+  });
+});
+
+describe('quick download texts per OS', () => {
+  it.each([
+    [Platform.MacOS, 'capture.emptyHint', 'welcome.shortcut.helpBrowser', 'downloads.empty.hintQuick', true],
+    [Platform.Windows, 'capture.emptyHint', 'welcome.shortcut.helpBrowser', 'downloads.empty.hintQuick', false],
+    [Platform.Linux, 'capture.emptyHintClipboard', 'welcome.shortcut.help', 'downloads.empty.hintQuickClipboard', false],
+    [Platform.Unknown, 'capture.emptyHintClipboard', 'welcome.shortcut.help', 'downloads.empty.hintQuickClipboard', false],
+  ] as const)('%s', (platform, barEmpty, welcomeHelp, homeHint, automation) => {
+    expect(quickDownloadText(platform)).toEqual({ barEmpty, welcomeHelp, homeHint, automation });
+    for (const key of [barEmpty, welcomeHelp, homeHint]) expect(i18n.global.te(key, 'en') && i18n.global.te(key, 'ar') && i18n.global.te(key, 'fr')).toBe(true);
+  });
+});
+
+describe('quick bar when macOS refuses the browser read', () => {
+  afterEach(() => resetPlatformForTests());
+  const denied = () => ({ id: 21, url: '', site: '', read: false, details: emptyDetails(), automationDenied: true });
+
+  it('says how to allow it and opens the Automation settings', async () => {
+    resetPlatformForTests(Platform.MacOS);
+    const open = vi.fn();
+    installTauriMock({ capture_snapshot: denied, capture_open_automation_settings: open });
+    wrapper = mount(CaptureBar, { global: { plugins: [i18n] } });
+    await flushPromises();
+    const notice = wrapper.get('[data-testid=capture-automation-denied]');
+    expect(notice.text()).toContain(i18n.global.t('capture.automationDenied'));
+    await notice.get('button').trigger('click');
+    expect(open).toHaveBeenCalledWith('capture_open_automation_settings', expect.anything());
+  });
+
+  it.each([[Platform.Windows, 'capture.emptyHint'], [Platform.Linux, 'capture.emptyHintClipboard']] as const)('never shows macOS Automation text on %s', async (platform, hint) => {
+    resetPlatformForTests(platform);
+    installTauriMock({ capture_snapshot: denied });
+    wrapper = mount(CaptureBar, { global: { plugins: [i18n] } });
+    await flushPromises();
+    expect(wrapper.find('[data-testid=capture-automation-denied]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid=capture-empty-hint]').text()).toBe(i18n.global.t(hint));
   });
 });

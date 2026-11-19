@@ -91,11 +91,14 @@
         <selection-bar v-if="selectionCount && firstSection === 'failed'" :groups="selectedGroups" />
         <header v-else :class="headCls">
           <h2 id="ledger-failed" class="flex-1">{{ t('downloads.sections.failed') }} <span class="tnum ms-1 font-normal">{{ count(shownFailed.length) }}</span></h2>
-          <Button variant="ghost" class="-my-1 h-6 px-2 font-normal" @click="reportGroups(shownFailed.map(row => row.group))">{{ t('downloads.list.reportFailed') }}</Button>
-          <Button variant="ghost" class="-my-1 h-6 px-2 font-normal" @click="removeRows(shownFailed.map(row => row.id))">{{ t('downloads.list.clearFailed') }}</Button>
+          <Button variant="ghost" class="-my-1 h-6 px-2 font-normal" @click="reportGroups(groupsOf(shownFailed))">{{ t('downloads.list.reportFailed') }}</Button>
+          <Button variant="ghost" class="-my-1 h-6 px-2 font-normal" @click="removeRows(rowsOf(shownFailed).map(row => row.id))">{{ t('downloads.list.clearFailed') }}</Button>
         </header>
         <ul>
-          <download-row v-for="row in shownFailed" :key="row.id" :group="row.group" :highlighted="highlightedId === row.id" />
+          <template v-for="node in shownFailed" :key="node.id">
+            <playlist-group-row v-if="node.kind === 'playlist'" :parent="playlistOf(node)" :children="node.all.map(row => row.group)" :shown="node.shown.map(row => row.group)" :highlighted-id="highlightedId" />
+            <download-row v-else :group="node.row.group" :highlighted="highlightedId === node.id" />
+          </template>
         </ul>
       </section>
 
@@ -109,7 +112,10 @@
           </template>
         </header>
         <ul>
-          <download-row v-for="row in shownNeedsYou" :key="row.id" :group="row.group" :highlighted="highlightedId === row.id" />
+          <template v-for="node in shownNeedsYou" :key="node.id">
+            <playlist-group-row v-if="node.kind === 'playlist'" :parent="playlistOf(node)" :children="node.all.map(row => row.group)" :shown="node.shown.map(row => row.group)" :highlighted-id="highlightedId" />
+            <download-row v-else :group="node.row.group" :highlighted="highlightedId === node.id" />
+          </template>
         </ul>
       </section>
 
@@ -119,7 +125,10 @@
           <h2 id="ledger-active" class="flex-1">{{ t('downloads.sections.active') }} <span class="tnum ms-1 font-normal">{{ count(shownActive.length) }}</span></h2>
         </header>
         <ul>
-          <download-row v-for="row in shownActive" :key="row.id" :group="row.group" :highlighted="highlightedId === row.id" />
+          <template v-for="node in shownActive" :key="node.id">
+            <playlist-group-row v-if="node.kind === 'playlist'" :parent="playlistOf(node)" :children="node.all.map(row => row.group)" :shown="node.shown.map(row => row.group)" :highlighted-id="highlightedId" />
+            <download-row v-else :group="node.row.group" :highlighted="highlightedId === node.id" />
+          </template>
         </ul>
       </section>
 
@@ -128,13 +137,16 @@
         <header v-else :class="headCls">
           <h2 id="ledger-finished">{{ t('downloads.sections.finished') }} <span class="tnum ms-1 font-normal">{{ count(shownFinished.length) }}</span></h2>
           <Tooltip v-if="view.status !== 'done'" :content="t('downloads.list.clearFinishedHint')">
-            <Button variant="ghost" class="-my-1 ms-1 h-6 px-2 font-normal text-muted-foreground hover:text-foreground" @click="clearFinished(shownFinished)">
+            <Button variant="ghost" class="-my-1 ms-1 h-6 px-2 font-normal text-muted-foreground hover:text-foreground" @click="clearFinished(rowsOf(shownFinished))">
               {{ t('downloads.list.clearFinished') }}
             </Button>
           </Tooltip>
         </header>
         <ul>
-          <download-row v-for="row in shownFinished" :key="row.id" :group="row.group" :highlighted="highlightedId === row.id" />
+          <template v-for="node in shownFinished" :key="node.id">
+            <playlist-group-row v-if="node.kind === 'playlist'" :parent="playlistOf(node)" :children="node.all.map(row => row.group)" :shown="node.shown.map(row => row.group)" :highlighted-id="highlightedId" />
+            <download-row v-else :group="node.row.group" :highlighted="highlightedId === node.id" />
+          </template>
         </ul>
       </section>
 
@@ -166,12 +178,18 @@ import Kbd from '@/components/ui/kbd/Kbd.vue';
 import { usePlatform } from '../../composables/usePlatform';
 import { useSettingsStore } from '../../stores/settings';
 import { shortcutKeys } from '../../helpers/shortcut';
+import { quickDownloadText } from '../../helpers/quickDownloadText';
 import { LIST_SEARCH_ID } from '../../helpers/domIds';
 import { useCaptureShortcut } from '../../composables/useCaptureShortcut';
 import { useCapturePlatform } from '../../composables/useCapturePlatform';
 import SelectionBar from '../../components/downloads/SelectionBar.vue';
 import { useDownloadSelection } from '../../composables/useDownloadSelection';
 import DownloadRow from '../../components/downloads/DownloadRow.vue';
+import PlaylistGroupRow from '../../components/downloads/PlaylistGroupRow.vue';
+import { usePlaylistStore } from '../../stores/media/playlist';
+import { isPlaylistOpen } from '../../composables/usePlaylistOpen';
+import { buildListTree } from '../../helpers/listTree';
+import type { GroupNode, GroupRow } from '../../composables/useDownloadList';
 import { useDownloadBuckets } from '../../composables/useDownloadBuckets';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import { useDownloadList } from '../../composables/useDownloadList';
@@ -189,7 +207,12 @@ const route = useRoute();
 const router = useRouter();
 const { count } = useLocaleNumber();
 const { active, finished, ready } = useDownloadBuckets();
-const { rows, shown, query, counts } = useDownloadList();
+const { rows, shownTree, query, counts } = useDownloadList();
+const playlistStore = usePlaylistStore();
+const playlistOf = (node: GroupNode) => playlistStore.playlists[node.id] ?? { id: node.id, count: 0, skipped: 0 };
+/** Downloads behind top-level lines: a playlist stands for all of its children. */
+const rowsOf = (nodes: GroupNode[]): GroupRow[] => nodes.flatMap(node => (node.kind === 'playlist' ? node.shown : [node.row]));
+const groupsOf = (nodes: GroupNode[]) => rowsOf(nodes).map(row => row.group);
 const { clearFinished, removeRows } = useListRemoval();
 const { reportGroups } = useDownloadReports();
 const hidden = useListVisibilityStore();
@@ -224,7 +247,7 @@ onBeforeUnmount(() => clearTimeout(highlightTimer));
 const optionsStore = useMediaOptionsStore();
 const { defaultChoice, compactRows, showThumbnails } = useUiPrefs();
 const isStarting = ref(false);
-const { isMac } = usePlatform();
+const { isMac, platform } = usePlatform();
 const captureShortcut = useCaptureShortcut();
 const capturePlatform = useCapturePlatform();
 const settingsStore = useSettingsStore();
@@ -239,7 +262,7 @@ const hints = computed(() => {
   const quick = accelerator ? shortcutKeys(accelerator, isMac.value) : [];
   return [
     { key: 'paste', icon: ClipboardPaste, textKey: 'downloads.empty.hintPaste', keys: shortcutKeys('CommandOrControl+V', isMac.value) },
-    ...(capturePlatform.session === 'wayland' ? [] : [{ key: 'quick', icon: Zap, textKey: quick.length ? 'downloads.empty.hintQuick' : 'downloads.field.captureSettings', keys: quick }]),
+    ...(capturePlatform.session === 'wayland' ? [] : [{ key: 'quick', icon: Zap, textKey: quick.length ? quickDownloadText(platform.value).homeHint : 'downloads.field.captureSettings', keys: quick }]),
     { key: 'copied', icon: ClipboardCheck, textKey: 'downloads.empty.hintCopied', keys: [] as string[] },
   ];
 });
@@ -284,27 +307,31 @@ watch(() => view.value.status !== 'all' && statusCounts.value[view.value.status]
 });
 /** Rows hidden by "Clear finished" still count until the undo window closes, so onboarding doesn't cover the toast. */
 const hasAny = computed(() => active.value.length + finished.value.length + hidden.ids.size > 0);
-const shownRows = computed(() => shown(view.value));
-const shownNeedsYou = computed(() => shownRows.value.filter(row => row.needsAttention));
-const shownActive = computed(() => shownRows.value.filter(row => row.status === 'active' && !row.needsAttention));
-const shownFailed = computed(() => shownRows.value.filter(row => row.status === 'failed' && !row.needsAttention));
-const shownFinished = computed(() => shownRows.value.filter(row => row.status === 'done' && !row.needsAttention));
-const shownCount = computed(() => shownRows.value.length);
+const shownNodes = computed(() => shownTree(view.value));
+const facts = (node: GroupNode) => (node.kind === 'playlist' ? node : node.row);
+const shownNeedsYou = computed(() => shownNodes.value.filter(node => facts(node).needsAttention));
+const shownActive = computed(() => shownNodes.value.filter(node => facts(node).status === 'active' && !facts(node).needsAttention));
+const shownFailed = computed(() => shownNodes.value.filter(node => facts(node).status === 'failed' && !facts(node).needsAttention));
+const shownFinished = computed(() => shownNodes.value.filter(node => facts(node).status === 'done' && !facts(node).needsAttention));
+const shownCount = computed(() => shownNodes.value.length);
 /** "Download all" acts only on the rows the current filter and search show. */
 const shownReady = computed(() => {
-  const ids = new Set(shownNeedsYou.value.map(row => row.id));
+  const ids = new Set(rowsOf(shownNeedsYou.value).map(row => row.id));
   return ready.value.filter(group => ids.has(group.id));
 });
 
 /** Only transitions count (in progress → done/failed), never rows that were already finished on load. */
 const announcement = ref('');
 const lastStatus = new Map<string, string>();
-watch(rows, (list) => {
+/** Playlists announce once, as a whole, never per item. */
+const allNodes = computed(() => buildListTree(rows.value, playlistStore.playlists));
+watch(allNodes, (list) => {
   const lines: string[] = [];
-  for (const row of list) {
-    const before = lastStatus.get(row.id);
-    if (before === 'active' && row.status !== 'active') lines.push(t(`downloads.announce.${row.status}`, { title: row.title }));
-    lastStatus.set(row.id, row.status);
+  for (const node of list) {
+    const row = facts(node);
+    const before = lastStatus.get(node.id);
+    if (before === 'active' && row.status !== 'active' && row.status !== 'cancelled') lines.push(t(`downloads.announce.${row.status}`, { title: row.title }));
+    lastStatus.set(node.id, row.status);
   }
   if (lines.length) announcement.value = lines.join('. ');
 }, { immediate: true });
@@ -316,9 +343,25 @@ function clearSearch() {
 
 const selection = useDownloadSelection();
 const selectionCount = selection.count;
-const visibleOrder = computed(() => [...shownFailed.value, ...shownNeedsYou.value, ...shownActive.value, ...shownFinished.value].map(row => row.id));
+const orderedNodes = computed(() => [...shownFailed.value, ...shownNeedsYou.value, ...shownActive.value, ...shownFinished.value]);
+/** Top-level lines, plus the children of open playlists, in screen order. */
+const visibleOrder = computed(() => orderedNodes.value.flatMap(node => (node.kind === 'playlist' && isPlaylistOpen(node.id, !node.id.startsWith('library-playlist:'))
+  ? [node.id, ...node.shown.map(row => row.id)]
+  : [node.id])));
 watch(visibleOrder, ids => selection.setOrder(ids), { immediate: true });
-const selectedGroups = computed(() => [...shownFailed.value, ...shownNeedsYou.value, ...shownActive.value, ...shownFinished.value].filter(row => selection.isSelected(row.id)).map(row => row.group));
+/** A selected playlist stands for every download it shows; a download picked inside it counts once. */
+const selectedGroups = computed(() => {
+  const groups = new Map<string, GroupRow['group']>();
+  for (const node of orderedNodes.value) {
+    if (node.kind === 'row') {
+      if (selection.isSelected(node.id)) groups.set(node.id, node.row.group);
+      continue;
+    }
+    const whole = selection.isSelected(node.id);
+    for (const row of node.shown) if (whole || selection.isSelected(row.id)) groups.set(row.id, row.group);
+  }
+  return [...groups.values()];
+});
 const firstSection = computed(() => (shownFailed.value.length ? 'failed' : shownNeedsYou.value.length ? 'needsYou' : shownActive.value.length ? 'active' : 'finished'));
 const inTextField = (el: EventTarget | null) => el instanceof HTMLElement && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
 

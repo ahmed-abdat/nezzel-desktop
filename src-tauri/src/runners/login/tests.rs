@@ -968,7 +968,7 @@ fn fetch_consent_reaches_download_and_retry_without_a_second_prompt() {
     Some("chrome:/selected"),
     "failed finish must preserve consent for the retried row"
   );
-  crate::scheduling::download_pipeline::finish_download(&tx, &group, "login-item", true);
+  crate::scheduling::download_pipeline::finish_download(&tx, &group, "login-item", 0, true);
   assert!(row_browser(&group, "login-item", "https://example.com/private").is_none());
   assert_eq!(
     row_browser(&group, "waiting-sibling", "https://example.com/private").as_deref(),
@@ -1454,10 +1454,10 @@ async fn cancelling_a_group_invalidates_its_pending_login() {
   assert!(!*cancel.borrow());
   assert!(!PENDING.lock().unwrap().contains_key(&token));
   assert!(
-    matches!(fetch_rx.try_recv().unwrap(),DispatchRequest::Cleanup {group_id} if group_id == group)
+    matches!(fetch_rx.try_recv().unwrap(),DispatchRequest::Cleanup {group_id, ..} if group_id == group)
   );
   assert!(
-    matches!(download_rx.try_recv().unwrap(),DispatchRequest::Cleanup {group_id} if group_id == group)
+    matches!(download_rx.try_recv().unwrap(),DispatchRequest::Cleanup {group_id, ..} if group_id == group)
   );
   expire_pending(
     &token,

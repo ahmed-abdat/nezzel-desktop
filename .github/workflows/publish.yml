@@ -16,6 +16,8 @@ jobs:
       WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
       # Unset secrets mean "off": unsigned macOS beta (ad-hoc), no Sentry, no MSIX.
       HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      # Fixed self-signed identity (docs/macos-signing.md), used while there is no Apple certificate.
+      HAS_SELF_SIGN: ${{ secrets.MACOS_SELF_SIGN_P12 != '' }}
       HAS_SENTRY: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
     strategy:
       fail-fast: false
@@ -126,9 +128,50 @@ jobs:
       - name: Prepare hash-verified gallery-dl and installer tools
         run: python scripts/fetch-gallery-dl.py --target ${{ matrix.galleryTarget }} && python scripts/fetch-tools.py --target ${{ matrix.galleryTarget }}
 
-      - name: Ad-hoc sign without an Apple certificate (macOS only)
-        if: startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT != 'true'
+      - name: Ad-hoc sign without any certificate (macOS only)
+        if: startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT != 'true' && env.HAS_SELF_SIGN != 'true'
         run: echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+
+      # No Apple certificate yet: sign with one fixed self-signed identity so the designated
+      # requirement (identifier + certificate hash) stays the same across releases. Ad-hoc
+      # signing pins the cdhash, so every update lost the Automation grant and re-asked for the
+      # keychain item. Gatekeeper still rejects it like ad-hoc; no notarization on this path.
+      - name: Import self-signed certificate (macOS only, no Apple certificate)
+        if: startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT != 'true' && env.HAS_SELF_SIGN == 'true'
+        env:
+          MACOS_SELF_SIGN_P12: ${{ secrets.MACOS_SELF_SIGN_P12 }}
+          MACOS_SELF_SIGN_PASSWORD: ${{ secrets.MACOS_SELF_SIGN_PASSWORD }}
+          # SHA-1 of "Nezzel Self-Signed" (not secret; docs/macos-signing.md). Rotating the cert
+          # means changing it here too.
+          EXPECTED_IDENTITY: EF3369C225D301D3B24B41AB19DE75BBFF1F19DB
+        run: |
+          keychain="$RUNNER_TEMP/self-sign.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+          echo "::add-mask::$keychain_password"
+          printf '%s' "$MACOS_SELF_SIGN_P12" | base64 --decode > "$RUNNER_TEMP/self-sign.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -t 3600 -u "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/self-sign.p12" -k "$keychain" -P "$MACOS_SELF_SIGN_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/self-sign.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          # codesign finds identities through the user search list.
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          # Untrusted (no Apple chain), so `find-identity -v` hides it; codesign still signs with
+          # its SHA-1. Tauri and fetch-tools.py --sign-macos (yt-dlp and gallery-dl onedirs, then
+          # gallery-dl.sha256 of the signed bytes) both read APPLE_SIGNING_IDENTITY.
+          # Exactly one identity, and the pinned one: a swapped secret must not sign a release.
+          identities=$(security find-identity -p codesigning "$keychain" | sed '/Valid identities only/q' | sed -n 's/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) .*/\1/p')
+          if [ "$(printf '%s\n' "$identities" | grep -c .)" != 1 ]; then
+            echo "::error::MACOS_SELF_SIGN_P12 must hold exactly one code-signing identity"
+            exit 1
+          fi
+          identity=$identities
+          if [ "$identity" != "$EXPECTED_IDENTITY" ]; then
+            echo "::error::MACOS_SELF_SIGN_P12 identity $identity is not the pinned $EXPECTED_IDENTITY"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
 
       - name: Import Apple Developer Certificate (MacOS only)
         if: startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT == 'true'
@@ -452,6 +495,15 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
             src-tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: Remove signing keychains and certificates (macOS only)
+        if: always() && startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/self-sign.p12" certificate.p12
+          for keychain in "$RUNNER_TEMP/self-sign.keychain-db" build.keychain; do
+            security delete-keychain "$keychain" 2>/dev/null || true
+          done
 
   package-appxupload:
     # Store package: needs the WINDOWS_PFX secrets; turn on with the MSIX_ENABLED repo variable.

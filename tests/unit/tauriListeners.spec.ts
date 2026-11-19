@@ -1,5 +1,6 @@
 import { describe, it, vi, expect, afterEach } from 'vitest';
 import { emit } from '@tauri-apps/api/event';
+import * as events from '@tauri-apps/api/event';
 import { mockWindows } from '@tauri-apps/api/mocks';
 import { effectScope } from 'vue';
 import { flushPromises } from '@vue/test-utils';
@@ -17,6 +18,7 @@ import type { CaptureChoice } from '../../src/generated/contract';
 import { TrackType, type MediaItem } from '../../src/tauri/types/media';
 
 // The login listeners attach after an async store import; they have their own spec (loginStore.spec.ts).
+vi.mock('@tauri-apps/api/event', { spy: true });
 vi.mock('../../src/tauri/listeners/login', () => ({ registerLoginListeners: vi.fn() }));
 vi.mock('../../src/tauri/notifications', () => ({ notify: vi.fn(), notifyGroup: vi.fn() }));
 
@@ -293,6 +295,43 @@ describe('capture delivery to the main window', () => {
     await vi.advanceTimersByTimeAsync(1600);
     expect(afters.length).toBeGreaterThan(before);
     expect(groups.orderedGroups).toHaveLength(0);
+  });
+
+  it('stops pulling on wake, focus and timer after scope disposal', async () => {
+    vi.useFakeTimers();
+    const { afters } = await setup();
+    const before = afters.length;
+    activeScope.stop();
+    await emit('capture_wake');
+    window.dispatchEvent(new Event('focus'));
+    await vi.advanceTimersByTimeAsync(1600);
+    await flushPromises();
+    expect(afters).toHaveLength(before);
+  });
+
+  it('unlistens when capture wake registration completes after scope disposal', async () => {
+    vi.useFakeTimers();
+    let finishListen!: (unlisten: events.UnlistenFn) => void;
+    const unlisten = vi.fn();
+    const listener = vi.spyOn(events, 'listen').mockImplementationOnce(() => new Promise((resolve) => {
+      finishListen = resolve;
+    }));
+    const pull = vi.fn(() => []);
+    const ready = vi.fn();
+    installTauriMock({ capture_pull: pull, capture_ready: ready });
+    activeScope = effectScope();
+    try {
+      const starting = activeScope.run(() => startCaptureDelivery());
+      activeScope.stop();
+      finishListen(unlisten);
+      await starting;
+      expect(unlisten).toHaveBeenCalledOnce();
+      window.dispatchEvent(new Event('focus'));
+      await vi.advanceTimersByTimeAsync(1600);
+      expect(pull).not.toHaveBeenCalled();
+      expect(ready).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { listener.mockRestore(); }
   });
 
   it('passes the clipboard prefill on and opens Report for a failed read', async () => {

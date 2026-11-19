@@ -8,6 +8,8 @@ import { i18n, applyDocumentLocale, type Locale } from '../../../src/i18n';
 import { applyTheme } from '../../../src/composables/useTheme';
 import { MediaState, useMediaStateStore } from '../../../src/stores/media/state';
 import { useMediaGroupStore } from '../../../src/stores/media/group';
+import { usePlaylistStore } from '../../../src/stores/media/playlist';
+import { setPlaylistOpen } from '../../../src/composables/usePlaylistOpen';
 import { useMediaProgressStore } from '../../../src/stores/media/progress';
 import { useMediaDestinationStore } from '../../../src/stores/media/destination';
 import { useMediaDiagnosticsStore } from '../../../src/stores/media/diagnostics';
@@ -81,6 +83,8 @@ export interface RowSeed {
   processed?: number;
   combined?: boolean;
   entries?: number;
+  parentId?: string;
+  parentIndex?: number;
 }
 
 /** One list row, built the way media_add + progress/destination/diagnostic events build it. */
@@ -110,6 +114,8 @@ export function addRow(seed: RowSeed): { groupId: string; itemId: string } {
     duration: 754,
     entries,
     playlistCount: seed.entries,
+    parentId: seed.parentId,
+    parentIndex: seed.parentIndex,
     items: {
       [itemId]: {
         id: itemId, isLeader: true, url, title: seed.title, thumbnail, mediaKind: seed.kind, attachments: seed.attachments,
@@ -149,6 +155,60 @@ const title = (i: number) => TITLES[i % TITLES.length];
 
 const done = (extra: Partial<RowSeed> = {}): RowSeed => ({ title: title(0), state: MediaState.done, height: 1080, destination: '/Users/me/Downloads/Nezzel/video.mp4', ...extra });
 const failed = (code: string, extra: Partial<RowSeed> = {}): RowSeed => ({ title: title(1), state: MediaState.error, code, ...extra });
+
+const PL_TITLES = ['Cooking basics: episode', 'Bread and dough: part', 'Knife skills: lesson', 'Sauces from scratch: video'];
+const PL_ARABIC_TITLES = [
+  'الحلقة {n}: شرح مفصل لكيفية تحميل الفيديوهات مع عنوان طويل جدا يتجاوز عرض السطر بكثير',
+  'Episode {n} — مقابلة حصرية with the team behind a very long mixed-direction title that never seems to end',
+  'درس {n}: Introduction to a long English phrase داخل عنوان عربي (full uncut version, 4K)',
+];
+type PlaylistKind = 'queued' | 'done' | 'downloading' | 'paused' | 'error';
+interface PlaylistSeed {
+  id: string;
+  title: string;
+  kinds: PlaylistKind[];
+  childTitle?: (index: number) => string;
+  open?: boolean;
+  skipped?: number;
+}
+
+/** A playlist row over its children, built like media_add_playlist: parent meta in the playlist store, children as normal groups. */
+function addPlaylist(seed: PlaylistSeed) {
+  usePlaylistStore().register({ id: seed.id, url: `https://www.youtube.com/playlist?list=${seed.id}`, title: seed.title, thumbnail: THUMB, count: seed.kinds.length, skipped: seed.skipped ?? 0 });
+  seed.kinds.forEach((kind, index) => {
+    const downloading = kind === 'downloading';
+    addRow({
+      title: seed.childTitle?.(index) ?? `${PL_TITLES[index % PL_TITLES.length]} ${index + 1}`,
+      url: `https://www.youtube.com/watch?v=${seed.id}-${index + 1}`,
+      state: kind === 'queued' ? MediaState.downloading : kind === 'done' ? MediaState.done : kind === 'error' ? MediaState.error : kind === 'paused' ? MediaState.paused : MediaState.downloading,
+      height: 720,
+      parentId: seed.id,
+      parentIndex: index,
+      stage: kind === 'queued' ? ProgressStage.queued : undefined,
+      percent: downloading ? 20 + ((index * 23) % 70) : kind === 'paused' ? 35 : undefined,
+      speedBps: downloading ? 2_400_000 : undefined,
+      etaSecs: downloading ? 90 : undefined,
+      destination: kind === 'done' ? `/Users/me/Downloads/Nezzel/${seed.id}-${index + 1}.mp4` : undefined,
+      code: kind === 'error' ? 'geoBlocked' : undefined,
+    });
+  });
+  setPlaylistOpen(seed.id, seed.open ?? true);
+}
+
+const mix = (n: number, head: Partial<Record<PlaylistKind, number>>): PlaylistKind[] => {
+  const kinds: PlaylistKind[] = [];
+  for (const [kind, count] of Object.entries(head) as [PlaylistKind, number][]) for (let i = 0; i < count; i++) kinds.push(kind);
+  while (kinds.length < n) kinds.push('queued');
+  return kinds;
+};
+const PL_TITLE = 'Cooking basics: the full course';
+/** The mock's neighbours: one single download above the playlist and one saved download below it. */
+const aroundPlaylist = (build: () => void) => {
+  addRow({ title: title(2), state: MediaState.downloading, height: 1080, percent: 64, speedBps: 3_400_000, etaSecs: 45 });
+  build();
+  addRow(done({ title: title(0) }));
+};
+const playlistMix = () => mix(40, { done: 10, downloading: 2, paused: 1 });
 
 function mixedList() {
   addRow({ title: title(0), state: MediaState.downloading, height: 1080, percent: 42, speedBps: 3_400_000, etaSecs: 75 });
@@ -301,6 +361,20 @@ export const seeds: Record<string, () => unknown> = {
       addRow({ title: `${title(i)} #${i + 1}`, state, height: 720, percent: state === MediaState.downloading || state === MediaState.paused ? (i * 7) % 100 : undefined, speedBps: 2_000_000, etaSecs: 40, code: state === MediaState.error ? 'rateLimited429' : undefined, destination: state === MediaState.done ? '/x.mp4' : undefined });
     }
   },
+
+  'playlist-collapsed': () => aroundPlaylist(() => addPlaylist({ id: 'pl-1', title: PL_TITLE, kinds: playlistMix(), open: false })),
+  'playlist-expanded': () => aroundPlaylist(() => addPlaylist({ id: 'pl-1', title: PL_TITLE, kinds: playlistMix(), open: true })),
+  'playlist-paused': () => aroundPlaylist(() => addPlaylist({ id: 'pl-1', title: PL_TITLE, kinds: mix(40, { done: 10, paused: 3 }).map(kind => (kind === 'queued' ? 'paused' : kind)), open: true })),
+  'playlist-partial': () => aroundPlaylist(() => addPlaylist({ id: 'pl-1', title: PL_TITLE, kinds: [...mix(10, { done: 7, error: 3 }), ...mix(6, { done: 6 }).slice(0, 6)], skipped: 2, open: true })),
+  'playlist-done': () => aroundPlaylist(() => addPlaylist({ id: 'pl-1', title: PL_TITLE, kinds: Array<PlaylistKind>(40).fill('done'), open: true })),
+  'playlist-long-arabic': () => aroundPlaylist(() => addPlaylist({
+    id: 'pl-1',
+    title: 'قائمة تشغيل طويلة جدا: دورة الطبخ الكاملة من الصفر حتى الاحتراف مع شرح مفصل لكل الوصفات والأدوات والتقنيات — الموسم الأول والثاني',
+    kinds: mix(12, { done: 3, downloading: 2, paused: 1 }),
+    childTitle: index => PL_ARABIC_TITLES[index % PL_ARABIC_TITLES.length].replace('{n}', String(index + 1)),
+    open: true,
+  })),
+  'playlist-1000': () => aroundPlaylist(() => addPlaylist({ id: 'pl-1', title: 'Everything: 1000 episodes archive', kinds: mix(1000, { done: 120, downloading: 2, paused: 1 }), open: true })),
 
   'sheet-video': () => useDownloadSheetStore().show(addRow({ title: title(0), state: MediaState.configure }).groupId),
   'sheet-audio': () => useDownloadSheetStore().show(addRow({ title: 'Podcast episode 12', kind: 'audio', extractor: 'soundcloud', formats: AUDIO_FORMATS, state: MediaState.configure }).groupId),

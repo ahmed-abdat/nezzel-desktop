@@ -24,6 +24,8 @@ const nodeSpecs = [
   'tests/unit/proxyUrl.spec.ts',
   'tests/unit/quickChoice.spec.ts',
   'tests/unit/resolutionSelection.spec.ts',
+  'tests/unit/settingsIndex.spec.ts',
+  'tests/unit/settingsSearch.spec.ts',
   'tests/unit/siteName.spec.ts',
   'tests/unit/skippedDiagnostics.spec.ts',
   'tests/unit/subtitlePreferences.spec.ts',

@@ -3672,6 +3672,8 @@ dependencies = [
  "libc",
  "lzma-rust2",
  "notify-rust",
+ "objc2",
+ "objc2-app-kit",
  "psl",
  "rand 0.10.3",
  "regex",

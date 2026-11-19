@@ -39,6 +39,7 @@ export interface MediaItemsProgress {
 export interface MediaProgressCompletePayload {
   id: string;
   groupId: string;
+  sponsorRemovedSecs?: number;
 }
 
 export enum ProgressCategory {

@@ -1,3 +1,4 @@
+import { buildListTree, parentStatus, type TreeInput } from '../../src/helpers/listTree';
 import { describe, expect, it } from 'vitest';
 import { categoryNoticeCount, needsAttention, countView, filterRows, finishedIds, matchesSearch, parseListView, statusOf, viewQuery, type ListRow, type ListView } from '../../src/helpers/listFilter';
 import { kindFilterOf } from '../../src/helpers/groupView';
@@ -163,5 +164,49 @@ describe('needsAttention', () => {
     [MediaState.error, false, false],
   ] as const)('state %s, login %s → %s', (state, login, expected) => {
     expect(needsAttention(state, login)).toBe(expected);
+  });
+});
+
+describe('buildListTree', () => {
+  const row = (id: string, status: ListRow['status'], extra: Partial<TreeInput> = {}): TreeInput => ({ id, status, kind: 'video', title: id, site: 'youtube.com', ...extra });
+  const parents = { p: { id: 'p', title: 'Artemis series' } };
+  const all: ListView = { type: 'all', status: 'all' };
+
+  it('folds children under one node where the first child was, in playlist order', () => {
+    const rows = [row('single', 'done'), row('c2', 'active', { parentId: 'p', parentIndex: 1 }), row('c1', 'done', { parentId: 'p', parentIndex: 0 }), row('last', 'done')];
+    const tree = buildListTree(rows, parents, all);
+    expect(tree.map(node => node.id)).toEqual(['single', 'p', 'last']);
+    const node = tree[1];
+    expect(node.kind === 'playlist' && node.all.map(r => r.id)).toEqual(['c1', 'c2']);
+  });
+
+  it.each<[string, TreeInput['status'][], string, boolean]>([
+    ['any child running → in progress', ['done', 'active', 'failed'], 'active', false],
+    ['all finished but one failed → failed', ['done', 'failed'], 'failed', false],
+    ['all finished → done', ['done', 'done'], 'done', false],
+    ['cancelled children need the user', ['done', 'cancelled'], 'cancelled', true],
+  ])('section: %s', (_name, statuses, status, attention) => {
+    const rows = statuses.map((s, i) => row(`c${i}`, s, { parentId: 'p', parentIndex: i, needsAttention: s === 'cancelled' }));
+    expect(parentStatus(rows)).toEqual({ status, needsAttention: attention });
+  });
+
+  it('search: the playlist title shows all children; a child title shows only matching children', () => {
+    const rows = [row('Launch day', 'done', { parentId: 'p', parentIndex: 0 }), row('Rollout', 'done', { parentId: 'p', parentIndex: 1 })];
+    const byTitle = buildListTree(rows, parents, all, 'artemis')[0];
+    expect(byTitle.kind === 'playlist' && byTitle.shown).toHaveLength(2);
+    const byChild = buildListTree(rows, parents, all, 'launch')[0];
+    expect(byChild.kind === 'playlist' && byChild.shown.map(r => r.id)).toEqual(['Launch day']);
+    expect(buildListTree(rows, parents, all, 'nothing')).toEqual([]);
+  });
+
+  it('status chip: the playlist shows only children with that status, under that status', () => {
+    const rows = [row('a', 'done', { parentId: 'p', parentIndex: 0 }), row('b', 'failed', { parentId: 'p', parentIndex: 1 }), row('c', 'active', { parentId: 'p', parentIndex: 2 })];
+    const [node] = buildListTree(rows, parents, { type: 'all', status: 'failed' });
+    expect(node.kind === 'playlist' && node.shown.map(r => r.id)).toEqual(['b']);
+    expect(node.kind === 'playlist' && node.status).toBe('failed');
+  });
+
+  it('children of an unknown parent stay plain rows', () => {
+    expect(buildListTree([row('x', 'done', { parentId: 'gone' })], parents, all).map(node => node.kind)).toEqual(['row']);
   });
 });

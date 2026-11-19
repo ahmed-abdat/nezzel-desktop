@@ -128,11 +128,16 @@ export async function startCaptureDelivery() {
     }
   }
 
-  await listen('capture_wake', () => void pull());
+  const unlisten = await listen('capture_wake', () => void pull());
+  if (scope && !scope.active) {
+    unlisten();
+    return;
+  }
   const timer = setInterval(() => void pull(), CAPTURE_PULL_MS);
   const onFocus = () => void pull();
   window.addEventListener('focus', onFocus);
   scope?.run(() => onScopeDispose(() => {
+    unlisten();
     clearInterval(timer);
     window.removeEventListener('focus', onFocus);
   }));

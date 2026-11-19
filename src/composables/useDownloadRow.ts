@@ -130,6 +130,10 @@ export function useDownloadRow(group: Ref<Group>) {
       && destinationStore.getDestinations(group.value.id)
         .filter(d => d.confidence === primary.confidence).every(d => d.alreadyDownloaded);
   });
+  const sponsorNote = computed(() => {
+    const secs = group.value.sponsorRemovedSecs;
+    return phase.value === 'done' && secs ? t('downloads.row.sponsorRemoved', { time: isolate(formatDuration(secs)) }) : undefined;
+  });
   /** Category of a file download: from the saved file when it exists, else the link's title. */
   const fileKind = computed(() => groupFileKind(group.value, destination.value));
   const choiceLabel = computed(() => {
@@ -216,5 +220,5 @@ export function useDownloadRow(group: Ref<Group>) {
   const lastFatal = computed(() => diagnosticsStore.findLastFatalByGroupId(group.value.id));
   const needsLogin = computed(() => phase.value === 'error' && (LOGIN_CODES as readonly string[]).includes(lastDiagnostic.value?.code ?? ''));
 
-  return { state, phase, isList, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, alreadySaved, choice, fileKind, readingStuck, processing };
+  return { state, phase, isList, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, alreadySaved, sponsorNote, choice, fileKind, readingStuck, processing };
 }

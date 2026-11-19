@@ -132,11 +132,53 @@ pub(super) fn create(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
+/// Focuses a capture window without raising Nezzel's other windows. tao's `set_focus` calls
+/// `activateIgnoringOtherApps:`, which brings every window forward, so the main window (e.g. on Settings)
+/// appeared behind the quick bar over the browser. Here the bar becomes key and main first, then the app
+/// activates without `ActivateAllWindows`: macOS raises only the main and key windows, i.e. the bar.
+/// Windows and Linux focus that one window natively.
+#[cfg(target_os = "macos")]
+fn focus_alone(window: &WebviewWindow) {
+  let bar = window.clone();
+  let _ = window.run_on_main_thread(move || {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWindow};
+    // No `set_focus` fallback: it would raise every window again. The bar stays shown, unfocused.
+    let Ok(ns_window) = bar.ns_window() else {
+      tracing::warn!("Capture bar focus skipped: no native window");
+      return;
+    };
+    // SAFETY: tao owns this NSWindow while `bar` lives; read and messaged on the main thread only.
+    let ns_window = unsafe { &*ns_window.cast::<NSWindow>() };
+    ns_window.makeKeyAndOrderFront(None);
+    ns_window.makeMainWindow();
+    // macOS 14 ignores IgnoringOtherApps (deprecated); older versions need it to take focus from the browser.
+    #[allow(deprecated)]
+    NSRunningApplication::currentApplication()
+      .activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps);
+  });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn focus_alone(window: &WebviewWindow) {
+  let _ = window.set_focus();
+}
+
 pub(super) fn offer(
   app: &AppHandle,
   window: CaptureWindow,
   text: &str,
   resolving: bool,
+) -> Result<Offer, String> {
+  offer_with(app, window, text, resolving, false)
+}
+
+/// `automation_denied`: macOS refused the browser read even after one reset; the bar says how to allow it.
+pub(super) fn offer_with(
+  app: &AppHandle,
+  window: CaptureWindow,
+  text: &str,
+  resolving: bool,
+  automation_denied: bool,
 ) -> Result<Offer, String> {
   let parsed = supported_url(text);
   let (url, site) = parsed.unwrap_or_default();
@@ -157,6 +199,7 @@ pub(super) fn offer(
     site,
     resolving,
     feed,
+    automation_denied,
     adopt_on_focus: window.adopts_on_focus() && !state.main_is_focused.load(Ordering::Relaxed),
     ..Offer::with_network(&config.network)
   };
@@ -181,7 +224,7 @@ pub(super) fn offer(
   native.show().map_err(|_| "capture unavailable")?;
   tracing::debug!(window = label, host = %value.site, "Capture window shown");
   if window.focusable() && !resolving {
-    let _ = native.set_focus();
+    focus_alone(&native);
   }
   wake_window(app, window);
   if !resolving && !value.url.is_empty() && !value.feed {

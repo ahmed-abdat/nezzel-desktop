@@ -14,6 +14,7 @@ import {
 import { notifyGroup } from '../../tauri/notifications';
 import { NotificationKind } from '../../tauri/types/app';
 import { useMediaDestinationStore } from './destination';
+import { usePlaylistStore } from './playlist';
 import { useToastStore } from '../toast';
 import { useOpener } from '../../composables/useOpener';
 import { i18n } from '../../i18n';
@@ -66,6 +67,7 @@ export const useMediaProgressStore = defineStore('media-progress', () => {
   function processMediaCompletePayload(payload: MediaProgressCompletePayload) {
     const group = groupStore.findGroupById(payload.groupId);
     if (!group) return;
+    if (payload.sponsorRemovedSecs) group.sponsorRemovedSecs = payload.sponsorRemovedSecs;
     const wasDone = stateStore.getState(payload.id) === MediaState.done;
     stateStore.setState(payload.id, MediaState.done);
     if (group.isCombined) {
@@ -83,7 +85,9 @@ export const useMediaProgressStore = defineStore('media-progress', () => {
         stateStore.setGroupState(group.id, MediaState.done);
       }
     } else {
-      void notifyGroup(NotificationKind.VideoFinished, group);
+      // Playlist children: one notice for the whole playlist, never per item.
+      if (group.parentId) usePlaylistStore().settle(group.parentId);
+      else void notifyGroup(NotificationKind.VideoFinished, group);
       const destinations = useMediaDestinationStore();
       const path = destinations.getPrimaryDestination(group.id)?.path;
       // Only the final file counts: reusing a video stream before a fresh merge is not a reused file.

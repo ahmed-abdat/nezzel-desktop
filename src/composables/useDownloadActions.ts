@@ -183,10 +183,15 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
     } catch { fileMissing(); }
   }
 
-  function openPage() {
+  async function openPage() {
     // Only web links; the row's URL came from user input or a clipboard watcher.
     const url = group.value.url;
-    if (url && /^https?:\/\//i.test(url) && isValidUrl(url)) void openUrl(url);
+    if (!url || !/^https?:\/\//i.test(url) || !isValidUrl(url)) return;
+    try {
+      await openUrl(url);
+    } catch {
+      toastStore.showToast(t('downloads.row.openPageFailed'), { style: 'error' });
+    }
   }
 
   /** Native write, so the clipboard watcher knows this copy came from us and doesn't offer it back. */
@@ -229,7 +234,11 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
     } else {
       toastStore.showToast(t(`downloads.row.deleteRefused.${result}`), {
         style: 'error',
-        action: { label: t('downloads.row.show'), run: () => void revealPath(path) },
+        action: { label: t('downloads.row.show'), run: async () => {
+          try {
+            await revealPath(path);
+          } catch { fileMissing(); }
+        } },
       });
     }
   }

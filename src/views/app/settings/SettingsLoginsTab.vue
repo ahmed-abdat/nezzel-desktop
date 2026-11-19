@@ -2,22 +2,22 @@
   <div>
     <p class="mb-5 text-[12.5px] leading-relaxed text-muted-foreground text-pretty">{{ t('prefs.logins.note') }}</p>
 
-    <settings-row for-id="pref-auto-logins" :label="t('prefs.logins.autoLogins')" :help="t('prefs.logins.autoLoginsHint')">
+    <settings-row search-id="autoLogins" for-id="pref-auto-logins" :label="t('prefs.logins.autoLogins')" :help="t('prefs.logins.autoLoginsHint')">
       <Switch id="pref-auto-logins" v-model="automaticLogins" />
     </settings-row>
 
     <saved-accounts class="mt-8" />
-    <Collapsible class="mt-8">
+    <Collapsible ref="advancedDisclosure" v-model:open="advancedOpen" :unmount-on-hide="false" class="mt-8">
       <CollapsibleTrigger as-child>
         <Button variant="ghost" class="group gap-1.5">{{ t('prefs.tabs.advanced') }}<ChevronDown class="size-4 transition-transform group-data-[state=open]:rotate-180" aria-hidden="true" /></Button>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <settings-row for-id="pref-cookie-browser" :label="t('prefs.logins.browser')" :help="t('prefs.logins.browserHint')">
+        <settings-row search-id="cookieBrowser" for-id="pref-cookie-browser" :label="t('prefs.logins.browser')" :help="t('prefs.logins.browserHint')">
           <SelectField id="pref-cookie-browser" v-model="browser" :disabled="!automaticLogins" :options="browserOptions" />
         </settings-row>
 
         <settings-section :title="t('prefs.sections.otherLogins')" class="mt-8">
-          <settings-row :label="t('prefs.logins.file')" :help="t('prefs.logins.fileHint')">
+          <settings-row search-id="cookieFile" :label="t('prefs.logins.file')" :help="t('prefs.logins.fileHint')">
             <base-file-input
               v-model="settings.auth.cookieFile"
               :label="t('prefs.logins.file')"
@@ -38,7 +38,7 @@
 <script setup lang="ts">
 import { ChevronDown } from '@lucide/vue';
 import BaseFileInput from '../../../components/base/BaseFileInput.vue';
-import { computed, ref, watch } from 'vue';
+import { computed, ref, useTemplateRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Switch from '@/components/ui/switch/Switch.vue';
 import { SelectField } from '@/components/ui/select';
@@ -51,9 +51,16 @@ import { Settings } from '../../../tauri/types/config.ts';
 import { COOKIE_BROWSER_OPTIONS } from '../../../helpers/cookieBrowsers';
 import { COOKIE_BROWSER_AUTOMATIC, COOKIE_BROWSER_NEVER } from '../../../generated/contract';
 import { usePreferencesStore } from '../../../stores/preferences';
+import { useOpenOnReveal } from '../../../composables/useSettingsReveal';
 
 const settings = defineModel<Settings>({ required: true });
 const { t } = useI18n();
+// Kept in the DOM while closed so Settings search can find and open it.
+const advancedOpen = ref(false);
+const advancedRoot = useTemplateRef<{ $el: HTMLElement }>('advancedDisclosure');
+useOpenOnReveal(computed(() => advancedRoot.value?.$el), () => {
+  advancedOpen.value = true;
+});
 const cookieFileFilters = [{ name: 'cookies.txt', extensions: ['txt'] }];
 
 // Recently used cookies.txt files, so switching back is one click instead of a file dialog.

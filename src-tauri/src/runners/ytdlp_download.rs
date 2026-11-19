@@ -1349,6 +1349,9 @@ async fn run_download_attempts(
     ]);
     let _thumbnail_stage = stage_thumbnails(&mut output_args)?;
     let runner = runner.with_args(selected_video_args(&entry));
+    let mut sponsor_removed = super::ytdlp_sponsorblock::RemovedSegments::new(
+      runner.sponsorblock_removed(entry.overrides.as_ref()),
+    );
     let (runner, publication_anchor) = runner
       .with_args(output_args)
       .with_args(super::ytdlp_args::filename_metadata_args(
@@ -1510,6 +1513,7 @@ async fn run_download_attempts(
             YtdlpCommandEvent::Stdout(line) => {
               let line_str = String::from_utf8_lossy(&line);
               pending_files.record(&line_str);
+              sponsor_removed.record(&line_str);
               cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
               store_log_line(&line_str, &entry, log_state, &app);
               if watchdog.observe(&line_str, recovery_started.elapsed()) { recovery.progressed(); network_failure = false; busy_failure = false; }
@@ -1614,7 +1618,7 @@ async fn run_download_attempts(
                 let path = if aria.is_some() { "aria2" } else { "native" };
                 tracing::info!(transport = path, "Download transport completed");
                 crate::events::emit(&app, crate::events::MEDIA_TRANSPORT, serde_json::json!({"id":entry.id,"groupId":entry.group_id,"path":path}));
-                if entry.emit_complete { crate::library::complete(&app, &entry).await; }
+                if entry.emit_complete { crate::library::complete_with(&app, &entry, sponsor_removed.seconds()).await; }
                 return Ok(());
               }
 

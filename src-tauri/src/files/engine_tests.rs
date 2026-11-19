@@ -4,7 +4,7 @@ use super::{
 };
 use sha2::{Digest, Sha256};
 use std::sync::{
-  atomic::{AtomicBool, Ordering},
+  atomic::{AtomicBool, AtomicUsize, Ordering},
   Arc, Mutex,
 };
 use tokio::{
@@ -13,10 +13,29 @@ use tokio::{
   sync::watch,
 };
 
+/// Stalls every response body once `HOLD_AFTER` bytes were served while `held` is set,
+/// so a test can abort a download at a known point instead of racing its completion.
+#[derive(Default)]
+struct Gate {
+  held: AtomicBool,
+  served: AtomicUsize,
+}
+const HOLD_AFTER: usize = 256 * 1024;
+impl Gate {
+  fn blocked(&self, len: usize) -> bool {
+    if self.held.load(Ordering::SeqCst) && self.served.load(Ordering::SeqCst) >= HOLD_AFTER {
+      return true;
+    }
+    self.served.fetch_add(len, Ordering::SeqCst);
+    false
+  }
+}
+
 struct Server {
   url: String,
   data: Arc<Vec<u8>>,
   version: Arc<AtomicBool>,
+  gate: Arc<Gate>,
   requests: Arc<Mutex<Vec<String>>>,
   task: tokio::task::JoinHandle<()>,
   engine: Engine,
@@ -40,6 +59,8 @@ impl Server {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let fail_next = Arc::new(AtomicBool::new(false));
     let fail = fail_next.clone();
+    let gate = Arc::new(Gate::default());
+    let g = gate.clone();
     let (d, v, r) = (data.clone(), version.clone(), requests.clone());
     let engine = Engine::scripted(Arc::new(move |url, range| {
       if fail.swap(false, Ordering::SeqCst) {
@@ -80,13 +101,17 @@ impl Server {
           format!("bytes {}-{end}/{}", start + usize::from(malformed), d.len()),
         );
       }
-      let (data, mut offset) = (d.clone(), start);
+      let (data, mut offset, gate) = (d.clone(), start, g.clone());
       let stream = futures::stream::poll_fn(move |cx| {
         // Yield between network frames; no sockets or wall-clock waits.
         if offset > end {
           return std::task::Poll::Ready(None);
         }
         let limit = (offset + 32768).min(end + 1);
+        if gate.blocked(limit - offset) {
+          cx.waker().wake_by_ref();
+          return std::task::Poll::Pending;
+        }
         let bytes: Vec<_> = data[offset..limit]
           .iter()
           .map(|b| if changed { b ^ 0x5a } else { *b })
@@ -104,6 +129,7 @@ impl Server {
       url,
       data,
       version,
+      gate,
       requests,
       task,
       engine,
@@ -121,6 +147,8 @@ impl Server {
     );
     let version = Arc::new(AtomicBool::new(false));
     let requests = Arc::new(Mutex::new(Vec::new()));
+    let gate = Arc::new(Gate::default());
+    let g = gate.clone();
     let (d, v, r) = (data.clone(), version.clone(), requests.clone());
     let task = tokio::spawn(async move {
       let mut clients = tokio::task::JoinSet::new();
@@ -128,7 +156,7 @@ impl Server {
         tokio::select! {
           accepted = listener.accept() => {
             let (mut socket,_) = accepted.unwrap();
-            let (data, version, requests) = (d.clone(),v.clone(),r.clone());
+            let (data, version, requests, gate) = (d.clone(),v.clone(),r.clone(),g.clone());
             clients.spawn(async move {
               let mut request = Vec::new();
               while !request.ends_with(b"\r\n\r\n") {
@@ -152,6 +180,7 @@ impl Server {
               if socket.write_all(h.as_bytes()).await.is_err() { return; }
               for chunk in data[start..=end].chunks(32768) {
                 let changed_bytes;
+                while gate.blocked(chunk.len()) { tokio::task::yield_now().await; }
                 let body = if changed { changed_bytes = chunk.iter().map(|b| b^0x5a).collect::<Vec<_>>(); &changed_bytes[..] } else { chunk };
                 if socket.write_all(body).await.is_err() { return; }
                 tokio::task::yield_now().await;
@@ -166,12 +195,28 @@ impl Server {
       url,
       data,
       version,
+      gate,
       requests,
       task,
       engine: Engine::local(),
       fail_next: None,
     }
   }
+}
+/// A part file's OS lock is released when its last descriptor closes. Other tests fork helper
+/// processes while this one has the file open, and until that child execs it holds a copy of
+/// the descriptor, so a reopen right after a cancel can see Busy for a few milliseconds.
+/// Poll for the lock to clear instead of failing on that window; any other error returns as is.
+async fn settled<T, F: std::future::Future<Output = super::Result<T>>>(
+  mut op: impl FnMut() -> F,
+) -> super::Result<T> {
+  for _ in 0..500 {
+    match op().await {
+      Err(super::Error::Busy) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
+      result => return result,
+    }
+  }
+  op().await
 }
 struct Dir(std::path::PathBuf);
 impl Dir {
@@ -239,6 +284,7 @@ async fn resume_cases(tcp: bool) {
     let dir = Dir::new();
     let engine = server.engine.clone();
     let (_tx, rx) = watch::channel(true);
+    server.gate.held.store(true, Ordering::SeqCst);
     let (checkpoint_tx, mut checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
     let (url, path, engine2, rx2) = (
       server.url.clone(),
@@ -261,6 +307,7 @@ async fn resume_cases(tcp: bool) {
       .expect("download never checkpointed");
     task.abort();
     let _ = task.await;
+    server.gate.held.store(false, Ordering::SeqCst);
     let saved = std::fs::read_dir(&dir.0)
       .unwrap()
       .filter_map(Result::ok)
@@ -274,10 +321,13 @@ async fn resume_cases(tcp: bool) {
       fail.store(true, Ordering::SeqCst);
     }
     server.requests.lock().unwrap().clear();
-    let result = engine
-      .download(&server.url, &dir.0, "kill", None, rx, &mut |_| {})
-      .await
-      .unwrap();
+    let result = settled(|| async {
+      engine
+        .download(&server.url, &dir.0, "kill", None, rx.clone(), &mut |_| {})
+        .await
+    })
+    .await
+    .unwrap();
     let expected = if changed {
       server.data.iter().map(|b| b ^ 0x5a).collect()
     } else {
@@ -345,10 +395,13 @@ async fn cancellation_checkpoints_and_final_collision_never_overwrites() {
     .filter_map(Result::ok)
     .all(|e| !e.path().to_string_lossy().ends_with(state::PART_SUFFIX)));
   tx.send(true).unwrap();
-  let path = engine
-    .download(&s.url, &dir.0, "cancel", None, rx, &mut |_| {})
-    .await
-    .unwrap();
+  let path = settled(|| async {
+    engine
+      .download(&s.url, &dir.0, "cancel", None, rx.clone(), &mut |_| {})
+      .await
+  })
+  .await
+  .unwrap();
   assert_eq!(path.file_name().unwrap(), "fixture (1).bin");
   assert_eq!(
     std::fs::read(dir.0.join("fixture.bin")).unwrap(),
@@ -859,10 +912,13 @@ async fn shared_ranges_and_resume_use_resolved_endpoint_with_original_identity()
   assert!(matches!(first, Err(super::Error::Cancelled)));
   changed.store(true, Ordering::SeqCst);
   let (_tx, rx) = watch::channel(true);
-  let path = engine
-    .download(SHARE, &dir, "owner", None, rx, &mut |_| {})
-    .await
-    .unwrap();
+  let path = settled(|| async {
+    engine
+      .download(SHARE, &dir, "owner", None, rx.clone(), &mut |_| {})
+      .await
+  })
+  .await
+  .unwrap();
   assert_eq!(std::fs::read(path).unwrap(), *data);
   assert!(ranges.load(Ordering::SeqCst) >= 2);
   assert_eq!(resolves.load(Ordering::SeqCst), 2);
@@ -936,23 +992,28 @@ async fn changing_google_export_format_does_not_reuse_the_other_formats_partial(
   assert!(matches!(result, Err(super::Error::Cancelled)));
   // This is the same record constructor and cleanup used by the runner's registry.
   let partial = super::runner::Partial::new(office.clone(), dir.0.clone(), url, "owner");
-  partial.discard().await.unwrap();
+  settled(|| partial.clone().discard()).await.unwrap();
   assert!(!dir.0.join("sample.docx.nezzel-part").exists());
   assert!(dir.0.join("sample.pdf.nezzel-part").exists());
   let (_tx, rx) = watch::channel(true);
-  let path = engine
-    .clone()
-    .with_export(super::hosts::Export::Office)
-    .download(url, &dir.0, "owner", None, rx, &mut |_| {})
-    .await
-    .unwrap();
+  let office = engine.clone().with_export(super::hosts::Export::Office);
+  let path = settled(|| async {
+    office
+      .download(url, &dir.0, "owner", None, rx.clone(), &mut |_| {})
+      .await
+  })
+  .await
+  .unwrap();
   assert_eq!(path.file_name().unwrap(), "sample.docx");
   assert_eq!(&std::fs::read(path).unwrap()[..8], b"PK\x03\x04test");
   let (_tx, rx) = watch::channel(true);
-  let path = engine
-    .download(url, &dir.0, "owner", None, rx, &mut |_| {})
-    .await
-    .unwrap();
+  let path = settled(|| async {
+    engine
+      .download(url, &dir.0, "owner", None, rx.clone(), &mut |_| {})
+      .await
+  })
+  .await
+  .unwrap();
   assert_eq!(path.file_name().unwrap(), "sample.pdf");
   assert_eq!(pdf_gets.load(Ordering::SeqCst), 2);
 }
@@ -1372,10 +1433,13 @@ async fn yandex_resume_renews_signed_endpoint_and_keeps_name_and_bytes() {
     Err(super::Error::Cancelled)
   ));
   let (_tx, rx) = watch::channel(true);
-  let path = engine
-    .download(url, &dir.0, "owner", None, rx, &mut |_| {})
-    .await
-    .unwrap();
+  let path = settled(|| async {
+    engine
+      .download(url, &dir.0, "owner", None, rx.clone(), &mut |_| {})
+      .await
+  })
+  .await
+  .unwrap();
   assert_eq!(path.file_name().unwrap(), "original.bin");
   assert_eq!(std::fs::read(path).unwrap(), *data);
   assert_eq!(resolutions.load(Ordering::SeqCst), 2);

@@ -1,10 +1,10 @@
 <template>
   <settings-section :title="t('prefs.adv.keys.title')">
     <h3 class="pt-1 text-[12px] font-medium text-muted-foreground">{{ t('prefs.adv.keys.anywhere') }}</h3>
-    <settings-row for-id="keys-global" :label="t('prefs.adv.keys.globalOn')" :help="t('prefs.adv.keys.globalOnHint')">
+    <settings-row search-id="globalShortcuts" for-id="keys-global" :label="t('prefs.adv.keys.globalOn')" :help="t('prefs.adv.keys.globalOnHint')">
       <Switch id="keys-global" v-model="settings.input.globalShortcuts" />
     </settings-row>
-    <settings-row :label="t('prefs.adv.keys.quick')" :help="t('prefs.adv.keys.defaultIs', { keys: shortcutLabel(DEFAULT_CAPTURE_SHORTCUT, isMac) })">
+    <settings-row search-id="quickShortcut" :label="t('prefs.adv.keys.quick')" :help="t('prefs.adv.keys.defaultIs', { keys: shortcutLabel(DEFAULT_CAPTURE_SHORTCUT, isMac) })">
       <shortcut-recorder
         v-model="settings.input.captureShortcut"
         :mac="isMac"
@@ -23,10 +23,10 @@
     </i18n-t>
 
     <h3 class="pt-4 text-[12px] font-medium text-muted-foreground">{{ t('prefs.adv.keys.inside') }}</h3>
-    <settings-row :label="t('prefs.adv.keys.paste')" :help="t('prefs.adv.keys.pasteHint')">
+    <settings-row search-id="pasteShortcut" :label="t('prefs.adv.keys.paste')" :help="t('prefs.adv.keys.pasteHint')">
       <shortcut-recorder :model-value="BUILT_IN_KEYS.paste" :mac="isMac" :label="t('prefs.adv.keys.paste')" readonly />
     </settings-row>
-    <settings-row :label="t('prefs.adv.keys.downloadAll')" :help="t('prefs.adv.keys.defaultIs', { keys: shortcutLabel(IN_APP_SHORTCUT_DEFAULTS.downloadAll, isMac) })">
+    <settings-row search-id="downloadAllShortcut" :label="t('prefs.adv.keys.downloadAll')" :help="t('prefs.adv.keys.defaultIs', { keys: shortcutLabel(IN_APP_SHORTCUT_DEFAULTS.downloadAll, isMac) })">
       <shortcut-recorder
         v-model="inAppShortcuts.downloadAll.value"
         :mac="isMac"
@@ -35,7 +35,7 @@
         :validate="validateFor('downloadAll')"
       />
     </settings-row>
-    <settings-row :label="t('prefs.adv.keys.addAndDownload')" :help="t('prefs.adv.keys.addAndDownloadHint', { keys: shortcutLabel(IN_APP_SHORTCUT_DEFAULTS.addAndDownload, isMac) })">
+    <settings-row search-id="addAndDownloadShortcut" :label="t('prefs.adv.keys.addAndDownload')" :help="t('prefs.adv.keys.addAndDownloadHint', { keys: shortcutLabel(IN_APP_SHORTCUT_DEFAULTS.addAndDownload, isMac) })">
       <shortcut-recorder
         v-model="inAppShortcuts.addAndDownload.value"
         :mac="isMac"

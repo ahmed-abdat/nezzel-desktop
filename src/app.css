@@ -391,3 +391,21 @@ dialog::backdrop { background-color: rgb(8 14 13 / 0.4); }
 .tabs-box .tab-active, .tabs-box .tab:is(input:checked) { background: var(--nz-raised); color: var(--nz-ink); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); border: 0; }
 .fieldset-legend, .label { color: var(--nz-muted); }
 .collapse { border-radius: var(--nz-r-surface); border-color: var(--nz-line); }
+
+/* Settings search: the row it jumped to is tinted for a moment. The tint bleeds 10px past the column
+   (box-shadow, no layout shift) so the text keeps its place. Reduced motion: a plain tint, no fade. */
+[data-search-hit] {
+    border-radius: 6px;
+    animation: nz-search-hit 1.8s ease-out forwards;
+}
+@keyframes nz-search-hit {
+    0%, 55% { background-color: var(--primary-soft); box-shadow: 10px 0 0 var(--primary-soft), -10px 0 0 var(--primary-soft); }
+    100% { background-color: transparent; box-shadow: 10px 0 0 transparent, -10px 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+    [data-search-hit] {
+        animation: none;
+        background-color: var(--primary-soft);
+        box-shadow: 10px 0 0 var(--primary-soft), -10px 0 0 var(--primary-soft);
+    }
+}

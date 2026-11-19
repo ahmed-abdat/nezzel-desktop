@@ -91,6 +91,24 @@ describe('inspector quick choices', () => {
 });
 
 describe('row quality label', () => {
+  it.each([['en', 103, 'Trimmed 1:43 (SponsorBlock)'], ['ar', 103, 'قُصّ \u20661:43\u2069 (SponsorBlock)'], ['fr', 103, '1:43 retirées (SponsorBlock)'], ['en', undefined, undefined]])('SponsorBlock note in %s for %s s', async (locale, secs, copy) => {
+    i18n.global.locale.value = locale as 'en' | 'ar' | 'fr';
+    const groups = useMediaGroupStore();
+    const id = `sb-${locale}-${secs}`;
+    groups.createGroup({ id, url: 'https://example.com/v', title: 'Clip', mediaKind: 'video', total: 1, processed: 1, errored: 0, isCombined: false, sponsorRemovedSecs: secs,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: `${id}-item`, isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaStateStore().setGroupState(id, MediaState.done);
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const row = mount(DownloadRow, { props: { group: groups.findGroupById(id)! }, global: { plugins: [router, i18n] } });
+    try {
+      const note = row.find('[data-testid="row-sponsor-note"]');
+      expect(note.exists() ? note.text() : undefined).toBe(copy);
+    } finally {
+      row.unmount();
+      i18n.global.locale.value = 'en';
+    }
+  });
   it.each([['en', 'Showing the first 100 items'], ['ar', 'أول 100 عنصر فقط'], ['fr', 'Affichage des 100 premiers éléments']])('shows a listing cap in %s', async (locale, copy) => {
     i18n.global.locale.value = locale as 'en' | 'ar' | 'fr';
     const entries = Array.from({ length: 100 }, (_, index) => ({ index, videoUrl: `https://example.com/${index}` }));
@@ -273,7 +291,6 @@ describe('inspector playlist selection', () => {
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
     await router.push('/');
     const row = mount(DownloadRow, { props: { group: groups.findGroupById('capture-playlist')! }, global: { plugins: [router, i18n] } });
-    await flushPromises();
     useDownloadSheetStore().show('capture-playlist');
     const inspector = mount(DownloadInspector, { global: { plugins: [router, i18n] } });
     try {
@@ -281,21 +298,21 @@ describe('inspector playlist selection', () => {
       useSettingsStore().settings.performance.autoLoadSize = true;
       useMediaOptionsStore().setOptions('capture-playlist', { trackType: TrackType.both, height: 720 });
       useMediaStateStore().setGroupState('capture-playlist', MediaState.playlistSelection);
-      await flushPromises();
+      await vi.waitFor(() => expect(inspector.find('#inspector-playlist-selection-item-1').exists()).toBe(true));
       expect(useDownloadSheetStore().open).toBe(true);
       expect(expand).not.toHaveBeenCalled();
       expect(download).not.toHaveBeenCalled();
       expect(size).not.toHaveBeenCalled();
       await inspector.get('#inspector-playlist-selection-item-1').trigger('click');
+      await vi.waitFor(() => expect(row.text()).toContain('1 of 2 item selected'));
       expect(row.find('[role=region]').exists()).toBe(false);
-      expect(row.text()).toContain('1 of 2 item selected');
       expect(inspector.get('#inspector-playlist-selection-item-1').attributes('aria-checked')).toBe('false');
       expect(inspector.findAll('button').filter(button => button.text().startsWith('Download'))).toHaveLength(1);
       const none = inspector.findAll('button').find(button => button.text() === 'Select none')!;
       await none.trigger('click');
       const emptyAction = inspector.findAll('button').find(button => button.text() === 'Download 0 videos')!;
       expect(emptyAction.attributes('disabled')).toBeDefined();
-      expect(row.text()).toContain('No items selected');
+      await vi.waitFor(() => expect(row.text()).toContain('No items selected'));
       await inspector.get('#inspector-playlist-selection-item-0').trigger('click');
       const apply = inspector.findAll('button').find(button => button.text() === 'Download 1 video');
       await apply!.trigger('click');

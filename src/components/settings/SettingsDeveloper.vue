@@ -1,7 +1,7 @@
 <template>
   <!-- Developer-only options, collapsed at the very end of Advanced. -->
   <BaseDisclosure class="mt-8 border-t border-hairline pt-3" :label="t('prefs.adv.dev.title')">
-    <settings-row stacked for-id="extractorArgs" :label="t('prefs.adv.dev.extractor')">
+    <settings-row search-id="extractorArgs" stacked for-id="extractorArgs" :label="t('prefs.adv.dev.extractor')">
       <template #help>
         {{ t('prefs.adv.dev.extractorHint') }}
         <a href="https://github.com/yt-dlp/yt-dlp#extractor-arguments" target="_blank" rel="noopener" class="text-primary hover:underline">{{ t('prefs.adv.dev.whatsThis') }}</a>
