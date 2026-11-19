@@ -408,6 +408,10 @@ pub(super) async fn read_output_stderr(
   read_output_stderr_with_limit(command, process_guard, super::read::READ_LIMIT).await
 }
 
+/// Largest dump a preview reads. YouTube's `automatic_captions` alone passed 11 MB in 2026-11
+/// (every caption language x format); the main window's fetch has no cap and read those links.
+const MAX_DUMP_BYTES: usize = 64 * 1024 * 1024;
+
 pub(super) async fn read_output_stderr_with_limit(
   command: &mut Command,
   process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
@@ -437,11 +441,11 @@ pub(super) async fn read_output_stderr_with_limit(
       let stdout = child.stdout.take()?;
       let mut bytes = Vec::new();
       stdout
-        .take(8 * 1024 * 1024 + 1)
+        .take(MAX_DUMP_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .await
         .ok()?;
-      if bytes.len() > 8 * 1024 * 1024 || !child.wait().await.ok()?.success() {
+      if bytes.len() > MAX_DUMP_BYTES || !child.wait().await.ok()?.success() {
         return None;
       }
       Some(bytes)
@@ -837,6 +841,17 @@ mod tests {
     );
     drop(writer);
     std::fs::remove_dir_all(root).unwrap();
+  }
+
+  /// YouTube's dump grew past 11 MB (automatic_captions lists every caption language x format):
+  /// a large but complete dump is a read, not a failure.
+  #[tokio::test]
+  async fn large_youtube_dump_is_read_in_full() {
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "head -c 12000000 /dev/zero"]);
+    let guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
+    let bytes = read_output(&mut command, guard).await;
+    assert_eq!(bytes.map(|bytes| bytes.len()), Some(12_000_000));
   }
 
   #[tokio::test]
