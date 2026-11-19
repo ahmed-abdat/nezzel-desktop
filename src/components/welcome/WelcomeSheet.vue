@@ -16,23 +16,53 @@
       <!-- macOS overlay title bar: room for the traffic lights, and a place to drag the window. -->
       <div v-if="os === 'mac'" class="h-[38px] flex-none border-b border-hairline bg-sidebar" data-tauri-drag-region />
 
-      <div class="grid min-h-0 flex-1 grid-cols-[minmax(300px,440px)_minmax(380px,1fr)]">
-        <div class="wl-copy-col flex min-w-0 flex-col overflow-y-auto px-10 pt-9">
-          <div class="flex items-center gap-2.5">
-            <img :src="nezzelMark" alt="" class="block size-11">
-            <span class="text-[22px] font-semibold tracking-tight" dir="ltr">{{ t('shell.brand') }}</span>
+      <div class="wl-main grid min-h-0 flex-1 grid-cols-[minmax(300px,400px)_minmax(380px,1fr)]">
+        <div class="wl-copy-col flex min-w-0 flex-col justify-center overflow-y-auto px-9 py-7">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <img :src="nezzelMark" alt="" class="block size-7">
+              <span class="text-[15px] font-semibold tracking-tight" dir="ltr">{{ t('shell.brand') }}</span>
+            </div>
+            <h1 id="welcome-title" class="wl-title">{{ t('welcome.title') }}</h1>
           </div>
-          <h1 id="welcome-title" class="wl-title">{{ t('welcome.title') }}</h1>
-          <p class="wl-lead">{{ capturePlatform.backgroundClipboard ? t('welcome.lead') : t('welcome.leadFocus') }}</p>
 
-          <div class="mt-[26px] border-t border-hairline">
-            <div class="wl-row">
-              <ClipboardCheck class="wl-ic" aria-hidden="true" />
-              <span class="min-w-0 flex-1">
-                <label id="wl-card-l" for="wl-card" class="wl-label">{{ t('welcome.card.label') }}</label>
-                <small id="wl-card-d" class="wl-help">{{ capturePlatform.backgroundClipboard ? t('welcome.card.help') : t('welcome.card.helpFocus') }}</small>
-              </span>
-              <Switch id="wl-card" class="wl-sw" :model-value="card" aria-labelledby="wl-card-l" aria-describedby="wl-card-d" data-testid="welcome-card" @update:model-value="setCard" />
+          <ol class="wl-steps">
+            <li v-for="s in STEPS" :key="s.k" class="wl-step" :class="{ on: step === s.k }">
+              <component :is="s.icon" class="wl-step-ic" aria-hidden="true" />
+              <span>{{ t(`welcome.steps.${s.key}`) }}</span>
+            </li>
+          </ol>
+        </div>
+
+        <div class="wl-demo flex min-w-0 flex-col border-s border-hairline bg-sidebar px-7 pt-7 pb-4">
+          <welcome-clip class="flex-1" @step="step = $event" />
+
+          <div class="wl-try">
+            <span id="wl-try-l" class="flex-none">{{ card ? t('welcome.try.label') : t('welcome.try.off') }}</span>
+            <span class="wl-link" tabindex="0" aria-labelledby="wl-try-l" @copy="onLinkCopy">
+              <LinkIcon class="size-3 flex-none text-muted-foreground rtl:-scale-x-100" aria-hidden="true" />
+              <bdi dir="ltr" class="truncate">{{ SAMPLE_LABEL }}</bdi>
+            </span>
+            <Button variant="outline" class="wl-copy" :class="copied && 'text-primary-soft-foreground'" :disabled="!card" data-testid="welcome-copy" @click="tryIt">
+              <component :is="copied ? Check : Copy" aria-hidden="true" />
+              <span aria-live="polite">{{ copied ? t('welcome.try.copied') : t('welcome.try.copy') }}</span>
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Like a native setup window: what is on at the start, a way to change it, the default button at the end. -->
+      <footer class="wl-foot flex flex-none items-center gap-3 border-t border-hairline px-5">
+        <p class="wl-status min-w-0" data-testid="welcome-status">{{ t(`welcome.status.${statusKey}`) }}</p>
+        <Popover>
+          <PopoverTrigger as-child>
+            <Button variant="outline" class="flex-none" data-testid="welcome-change">{{ t('welcome.change') }}</Button>
+          </PopoverTrigger>
+          <PopoverContent side="top" align="start" :side-offset="8" class="wl-pop w-[360px] p-0" :aria-label="t('prefs.title')" data-testid="welcome-options">
+            <div class="wl-row items-center">
+              <Languages class="wl-ic" aria-hidden="true" />
+              <label for="wl-lang" class="wl-label min-w-0 flex-1">{{ t('prefs.general.language') }}</label>
+              <SelectField id="wl-lang" :model-value="language" :options="languageOptions" data-testid="welcome-language" @update:model-value="setLanguage" />
             </div>
             <div class="wl-row">
               <Power class="wl-ic" aria-hidden="true" />
@@ -50,67 +80,33 @@
               </span>
               <Switch id="wl-reports" class="wl-sw" :model-value="reports" aria-labelledby="wl-reports-l" aria-describedby="wl-reports-d" data-testid="welcome-reports" @update:model-value="setReports" />
             </div>
-            <welcome-shortcut :mac="os === 'mac'" />
-            <div class="wl-row">
-              <FolderOpen class="wl-ic" aria-hidden="true" />
-              <span class="min-w-0 flex-1">
-                <span class="wl-label">{{ t('sheet.saveTo') }}</span>
-                <bdi dir="ltr" class="wl-help block [overflow-wrap:anywhere]" data-testid="welcome-folder">{{ settings.settings.output?.downloadDir || folder }}</bdi>
-              </span>
-            </div>
-          </div>
-
-          <p class="wl-priv">
-            <ShieldCheck class="wl-priv-ic" aria-hidden="true" />
-            <span>{{ t('welcome.privacy') }}</span>
-          </p>
-
-          <div class="wl-foot sticky bottom-0 mt-auto flex items-center gap-3.5 bg-background pt-6 pb-8">
-            <Button size="lg" class="wl-cta" data-testid="welcome-start-button" @click="getStarted">{{ t('welcome.getStarted') }}</Button>
-            <small class="wl-caption">{{ t('welcome.later') }}</small>
-          </div>
-        </div>
-
-        <div class="wl-demo flex min-w-0 flex-col border-s border-hairline bg-sidebar px-7 pt-7 pb-[22px]">
-          <welcome-demo ref="demo" :os="os" :desktop="capturePlatform.desktop" :folder="folder" @step="step = $event" />
-
-          <ol class="mt-3.5 flex gap-1.5" aria-hidden="true">
-            <li v-for="s in STEPS" :key="s.k" class="wl-step" :class="{ on: step === s.k }">
-              <component :is="s.icon" class="size-[15px]" />
-              <span class="wl-step-t">{{ t(`welcome.steps.${s.key}`) }}</span>
-            </li>
-          </ol>
-
-          <div class="wl-try">
-            <span id="wl-try-l" class="flex-none">{{ card ? t('welcome.try.label') : t('welcome.try.off') }}</span>
-            <span class="wl-link" tabindex="0" aria-labelledby="wl-try-l" @copy="onLinkCopy">
-              <LinkIcon class="size-3 flex-none text-muted-foreground rtl:-scale-x-100" aria-hidden="true" />
-              <bdi dir="ltr" class="truncate">{{ SAMPLE_LABEL }}</bdi>
-            </span>
-            <Button variant="outline" class="wl-copy" :class="copied && 'text-primary-soft-foreground'" :disabled="!card" data-testid="welcome-copy" @click="tryIt">
-              <component :is="copied ? Check : Copy" aria-hidden="true" />
-              <span aria-live="polite">{{ copied ? t('welcome.try.copied') : t('welcome.try.copy') }}</span>
-            </Button>
-          </div>
-        </div>
-      </div>
+            <welcome-shortcut :mac="os === 'mac'" class="wl-row-last" />
+          </PopoverContent>
+        </Popover>
+        <span class="flex-1" />
+        <Button size="sm" class="wl-cta" data-testid="welcome-start-button" @click="getStarted">{{ t('welcome.getStarted') }}</Button>
+      </footer>
     </section>
   </config-provider>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ConfigProvider } from 'reka-ui';
 import { invoke } from '@tauri-apps/api/core';
-import { Check, ClipboardCheck, Copy, Download, FolderOpen, LifeBuoy, Link as LinkIcon, PictureInPicture2, Power, ShieldCheck } from '@lucide/vue';
+import { Check, Copy, Download, Languages, LifeBuoy, Link as LinkIcon, PictureInPicture2, Power } from '@lucide/vue';
 import nezzelMark from '../../assets/brand/nezzel-mark.svg';
 import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
-import WelcomeDemo from './WelcomeDemo.vue';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { SelectField } from '../ui/select';
+import WelcomeClip from './WelcomeClip.vue';
 import WelcomeShortcut from './WelcomeShortcut.vue';
-import { desktopOs, folderLabel, trayPlaceKey } from './desktopOs';
-import { localeDirection } from '../../i18n';
+import { desktopOs, trayPlaceKey } from './desktopOs';
+import { getDefaultLocale, localeDirection } from '../../i18n';
+import { appLanguageOptions } from '../../helpers/languageOptions';
+import { languageOptionsLookup } from '../../helpers/subtitles/languages';
 import { usePlatform } from '../../composables/usePlatform';
 import { useSettingsStore } from '../../stores/settings';
 import { useOnboardingStore } from '../../stores/onboarding';
@@ -136,12 +132,10 @@ const capturePlatform = useCapturePlatform();
 
 const dir = computed(() => localeDirection(locale.value));
 const os = computed(() => desktopOs(platform.value));
-const folder = computed(() => folderLabel(settings.settings.output?.downloadDir));
 const card = computed(() => settings.settings.input.watchClipboard);
 const start = ref(true);
 const step = ref(0);
 const copied = ref(false);
-const demo = ref<{ showTry: () => void }>();
 const sheet = ref<HTMLElement>();
 /** Keyboard in use: WebKitGTK left :focus-visible unmatched on most welcome stops (#36), so the
  * sheet decides itself and rings every focused control while the keyboard drives. */
@@ -149,6 +143,8 @@ const keyboard = ref(false);
 function onKey(event: KeyboardEvent) {
   if (!event.metaKey && !event.ctrlKey) keyboard.value = true;
   if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey) trapTab(event);
+  // Return presses the default button, like a native dialog, while focus rests on the sheet itself.
+  if (event.key === 'Enter' && event.target === sheet.value) getStarted();
 }
 
 /** A modal sheet keeps Tab inside. Past the last control WebKitGTK moved focus onto the page
@@ -166,6 +162,7 @@ function trapTab(event: KeyboardEvent) {
   next.focus();
 }
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+onBeforeUnmount(() => clearTimeout(copiedTimer));
 
 /** Crash and error reports: on by default, saved at once like the card switch. */
 const reports = computed(() => settings.settings.privacy.sendReports);
@@ -173,8 +170,17 @@ function setReports(on: boolean) {
   void settings.setPrivacy('sendReports', on);
 }
 
-function setCard(on: boolean) {
-  void onboarding.setCard(on);
+/** One sentence for what is on at the start; it follows the switches behind "Change". */
+const statusKey = computed(() => (start.value ? (reports.value ? 'both' : 'startOnly') : (reports.value ? 'reportsOnly' : 'none')));
+
+/** Language: the system's by default; picking one applies at once, the sheet re-reads in it. */
+const language = computed(() => settings.settings.appearance?.language ?? 'system');
+const languageOptions = computed(() => [
+  { value: 'system', label: t('settings.appearance.language.options.system', { language: languageOptionsLookup.get(getDefaultLocale())?.nativeName ?? getDefaultLocale() }) },
+  ...appLanguageOptions(language.value).map(option => ({ value: String(option.value), label: option.label })),
+]);
+function setLanguage(value: string | null | undefined) {
+  if (value) void settings.patchNow({ appearance: { language: value } });
 }
 
 /** Writes the sample link (never reads the clipboard); with the card on, the real card shows for it. */
@@ -189,7 +195,6 @@ async function tryIt() {
   copied.value = true;
   clearTimeout(copiedTimer);
   copiedTimer = setTimeout(() => (copied.value = false), 1600);
-  demo.value?.showTry();
 }
 
 function onLinkCopy() {
@@ -215,65 +220,68 @@ onMounted(() => {
   outline: 2px solid var(--nz-focus);
   outline-offset: 2px;
 }
-.nz-welcome[data-keyboard] :deep(.wd-replay:focus) { opacity: 1; }
 
-.wl-title { font-size: 24px; line-height: 1.22; font-weight: 600; letter-spacing: -.015em; margin: 20px 0 10px; text-wrap: balance; }
-.wl-lead { font-size: 14px; line-height: 1.6; color: var(--muted-foreground); max-width: 46ch; text-wrap: pretty; }
-.wl-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+.wl-title { font-size: 22px; line-height: 1.25; font-weight: 600; letter-spacing: -.015em; margin: 18px 0 0; max-width: 20ch; text-wrap: balance; }
+.wl-steps { list-style: none; margin: 22px -10px 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.wl-step { display: flex; align-items: center; gap: 10px; height: 34px; padding-inline: 10px; border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--foreground);
+  transition: background-color 180ms ease-out, color 180ms ease-out; }
+.wl-step-ic { width: 16px; height: 16px; flex: none; color: var(--muted-foreground); }
+.wl-step.on .wl-step-ic { color: inherit; }
+/* Heavier text too: the step in view is not told by colour alone. */
+.wl-step.on { background: var(--primary-soft); color: var(--primary-soft-foreground); font-weight: 600; }
+
+.wl-try { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 12.5px; color: var(--muted-foreground); }
+.wl-link { flex: 1; min-width: 150px; height: 28px; display: flex; align-items: center; gap: 6px; padding-inline: 10px; border-radius: 999px; background: color-mix(in oklab, var(--foreground) 5.5%, transparent); color: var(--foreground); font-size: 12px; overflow: hidden; white-space: nowrap; user-select: all; cursor: text; }
+.wl-copy { flex: none; }
+
+.wl-foot { min-height: 52px; padding-block: 8px; background: var(--background); }
+/* A narrow window wraps the sentence to a second line instead of cutting it. */
+.wl-status { font-size: 12px; line-height: 1.4; color: var(--muted-foreground); text-wrap: pretty; }
+.wl-cta { flex: none; min-width: 108px; white-space: nowrap; }
+
+/* The options behind "Change": flat rows, like a Settings page. */
+.wl-row { display: flex; align-items: flex-start; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--hairline); }
 .wl-ic { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--muted-foreground); }
 .wl-label { display: block; font-weight: 500; font-size: 13px; cursor: pointer; }
 .wl-help { display: block; font-size: 12px; color: var(--muted-foreground); margin-top: 2px; text-wrap: pretty; }
 .wl-sw { margin-top: 2px; }
-.wl-priv { display: flex; gap: 8px; align-items: flex-start; margin-top: 14px; font-size: 12px; color: var(--muted-foreground); text-wrap: pretty; }
-.wl-priv-ic { width: 14px; height: 14px; flex: none; margin-top: 1px; color: var(--primary-soft-foreground); }
-.wl-cta { flex: none; white-space: nowrap; }
-.wl-caption { font-size: 12px; color: var(--muted-foreground); }
-.wl-step { list-style: none; flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 7px; color: var(--muted-foreground); font-size: 12.5px; font-weight: 500; min-width: 0;
-  transition: background-color 180ms var(--nz-ease), color 180ms var(--nz-ease), box-shadow 180ms var(--nz-ease); }
-.wl-step svg { flex: none; }
-.wl-step.on { background: var(--card); color: var(--primary-soft-foreground); box-shadow: 0 1px 2px rgb(0 30 25 / .08); }
-.wl-try { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--hairline); font-size: 12.5px; color: var(--muted-foreground); }
-.wl-link { flex: 1; min-width: 0; height: 28px; display: flex; align-items: center; gap: 6px; padding-inline: 10px; border-radius: 999px; background: color-mix(in oklab, var(--foreground) 5.5%, transparent); color: var(--foreground); font-size: 12px; overflow: hidden; white-space: nowrap; user-select: all; cursor: text; }
-.wl-copy { flex: none; }
-.wl-step-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wl-link { min-width: 150px; }
-/* Narrow windows (750px): the demo column is ~380px. */
+.wl-row.items-center .wl-ic { margin-top: 0; }
+.wl-row-last { padding-inline: 14px; border-bottom: 0; }
+
+/* Windows narrower than 1000px (the default is 880): side by side would leave a small clip between two empty
+   bands, so the clip takes the full width on top and the words sit under it, title beside the steps. */
+@media (max-width: 999px) {
+  .wl-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .wl-demo { order: -1; border-inline-start: 0; border-bottom: 1px solid var(--hairline); padding-block: 20px 14px; }
+  .wl-copy-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; column-gap: 28px; padding-block: 20px; overflow: visible; }
+  .wl-steps { margin-top: 0; }
+}
+
+/* Narrow panes: the "Try it" label gets its own line. */
 .wl-demo { container-type: inline-size; }
 @container (max-width: 460px) {
-  .wl-step svg { display: none; }
-  .wl-step { justify-content: center; padding-inline: 6px; }
-  .wl-step-t { white-space: normal; text-align: center; line-height: 1.25; }
   .wl-try { flex-wrap: wrap; row-gap: 8px; }
   .wl-try > span:first-child { flex-basis: 100%; }
 }
 
 /* Arabic: one step larger, taller lines, no tracking. */
-.is-rtl .wl-title { font-size: 26px; line-height: 1.5; letter-spacing: 0; }
-.is-rtl .wl-lead { font-size: 15px; line-height: 1.8; }
-.is-rtl .wl-ic { margin-top: 4px; }
-.is-rtl .wl-label { font-size: 14px; }
-.is-rtl .wl-help { font-size: 13px; margin-top: 0; }
-.is-rtl .wl-sw { margin-top: 5px; }
-.is-rtl .wl-priv { font-size: 13px; }
-.is-rtl .wl-priv-ic { margin-top: 4px; }
-.is-rtl .wl-caption { font-size: 13px; }
-.is-rtl .wl-step { font-size: 13.5px; }
+.is-rtl .wl-title { font-size: 23px; line-height: 1.5; letter-spacing: 0; }
+.is-rtl .wl-step { font-size: 14px; height: 38px; }
 .is-rtl .wl-try { font-size: 13.5px; }
-.is-rtl :deep(.wl-cta) { font-size: 15px; }
+.is-rtl .wl-status { font-size: 13px; }
+:dir(rtl) .wl-ic { margin-top: 4px; }
+:dir(rtl) .wl-label { font-size: 14px; }
+:dir(rtl) .wl-help { font-size: 13px; margin-top: 0; }
+:dir(rtl) .wl-sw { margin-top: 5px; }
 
-/* Short windows (650px): keep Get started in view. */
+/* Short windows (600px): the left column stays in view without scrolling. */
 @media (max-height: 720px) {
-  .wl-copy-col { padding-top: 24px; }
-  .wl-title { font-size: 21px; margin: 14px 0 8px; }
-  .is-rtl .wl-title { font-size: 23px; }
-  .wl-lead { font-size: 13px; }
-  .is-rtl .wl-lead { font-size: 14px; line-height: 1.7; }
-  .wl-copy-col > div:nth-of-type(1) { margin-top: 16px; }
-  .wl-row, :deep(.wl-row) { padding-block: 9px; }
-  .wl-foot { padding-top: 14px; padding-bottom: 20px; }
+  .wl-title { font-size: 20px; margin-top: 14px; }
+  .is-rtl .wl-title { font-size: 21px; }
+  .wl-steps { margin-top: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .wl-step { transition: background-color 150ms ease-out, color 150ms ease-out; }
+  .wl-step { transition: none; }
 }
 </style>

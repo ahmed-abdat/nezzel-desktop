@@ -52,11 +52,6 @@ export const useOnboardingStore = defineStore('onboarding', () => {
     if (!showWelcome.value) void usePreferencesStore().patch({ onboarding: { welcomeDone: true } }).catch(warnNotSaved);
   }
 
-  /** The card switch takes effect at once so "Try it" shows the real card. */
-  function setCard(on: boolean): Promise<boolean> {
-    return useSettingsStore().patchNow({ input: { watchClipboard: on } });
-  }
-
   /** "Get started": the sheet goes away now, the choices are saved behind it. */
   async function complete(choices: WelcomeChoices): Promise<void> {
     showWelcome.value = false;
@@ -70,5 +65,5 @@ export const useOnboardingStore = defineStore('onboarding', () => {
     await usePreferencesStore().patch({ onboarding: { welcomeDone: true, reportsNoticeDone: true } }).catch(warnNotSaved);
   }
 
-  return { showWelcome, sawReportsSwitch, decide, setCard, complete };
+  return { showWelcome, sawReportsSwitch, decide, complete };
 });

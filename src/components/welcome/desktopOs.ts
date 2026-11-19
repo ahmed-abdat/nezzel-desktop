@@ -1,5 +1,4 @@
 import { Platform } from '../../tauri/types/app';
-import { compactFolderPath } from '../../helpers/folderPath';
 import type { LinuxDesktop } from '@/generated/contract';
 
 export type { LinuxDesktop };
@@ -22,9 +21,4 @@ export function trayPlaceKey(os: DesktopOs, desktop: LinuxDesktop): string {
 /** `closeNote.*` hint for Linux: GNOME points at Activities, others at their panel. */
 export function linuxHintKey(desktop: LinuxDesktop): string {
   return desktop === 'gnome' ? 'hintLinux' : desktop === 'kde' ? 'hintKde' : 'hintOther';
-}
-
-/** Last two folder names, joined the way the prototype shows them: "Downloads/Nezzel". */
-export function folderLabel(path: string | null | undefined): string {
-  return compactFolderPath(path ?? '', '/') || 'Downloads/Nezzel';
 }

@@ -1151,8 +1151,16 @@
         "message": "Not available in your country for legal reasons.",
         "action": "Open the page on the site for details"
       },
-      "diskSpaceUnavailable": {"shortMessage": "Could not check free disk space.", "message": "Could not check free disk space.", "action": "Choose an accessible download folder."},
-      "downloadStalled": {"shortMessage": "The download stopped making progress.", "message": "The download stopped making progress.", "action": "Try again when the connection is stable."},
+      "diskSpaceUnavailable": {
+        "shortMessage": "Could not check free disk space.",
+        "message": "Could not check free disk space.",
+        "action": "Choose an accessible download folder."
+      },
+      "downloadStalled": {
+        "shortMessage": "The download stopped making progress.",
+        "message": "The download stopped making progress.",
+        "action": "Try again when the connection is stable."
+      },
       "networkTimeout": {
         "shortMessage": "The connection timed out",
         "message": "The site did not respond before the connection timed out",
@@ -2330,13 +2338,6 @@
   },
   "welcome": {
     "title": "Save videos, audio, photos and files from a link",
-    "lead": "Copy a link anywhere and a small card offers to save it, even with this window closed",
-    "leadFocus": "Copy a link anywhere, then switch back to Nezzel and a small card offers to save it",
-    "card": {
-      "label": "Show a card when I copy a link",
-      "help": "Nezzel checks copied links it can save and never stores what you copy",
-      "helpFocus": "On this desktop the card shows when you switch back to Nezzel after copying. Nezzel never stores what you copy"
-    },
     "start": {
       "label": "Start with my computer",
       "help": "Opens hidden in the {place} when you sign in"
@@ -2348,13 +2349,23 @@
       "linuxKde": "system tray",
       "linuxOther": "notification area"
     },
-    "privacy": "Free, open source and no ads. You can turn reports off anytime",
     "getStarted": "Get started",
-    "later": "Change these anytime in Settings",
+    "change": "Change",
+    "status": {
+      "both": "Nezzel opens with your computer and sends crash reports, never your files or accounts",
+      "startOnly": "Nezzel opens with your computer. Crash reports are off",
+      "reportsOnly": "Nezzel sends crash reports, never your files or accounts",
+      "none": "Nezzel opens only when you start it and sends no crash reports"
+    },
+    "clip": {
+      "alt": "Recording: a link is copied in the browser, the Nezzel card appears, and Save downloads the video",
+      "play": "Play the recording",
+      "pause": "Pause the recording"
+    },
     "steps": {
       "copy": "Copy a link",
       "card": "The card pops up",
-      "save": "Click Save"
+      "save": "Click Download"
     },
     "try": {
       "label": "Try it: copy this link",
@@ -2370,23 +2381,6 @@
       "taken": "Shortcut taken by another app, pick your own",
       "skip": "Skip",
       "later": "Set a shortcut anytime in Settings"
-    },
-    "replay": "Replay",
-    "demoAlt": "Demo: a link is copied in the browser, the Nezzel card pops up by its icon, and Save puts the video in {folder}",
-    "demo": {
-      "videoTitle": "How to make bread at home",
-      "channel": "Mariem’s Kitchen",
-      "meta": "YouTube · 12:04",
-      "quality": "Video · 1080p",
-      "save": "Save",
-      "saved": "Saved to {folder}",
-      "copied": "Copied",
-      "file": "File",
-      "edit": "Edit",
-      "view": "View",
-      "clock": "Tue 9:41",
-      "clockGnome": "Nov 4  9:41",
-      "activities": "Activities"
     }
   },
   "closeNote": {

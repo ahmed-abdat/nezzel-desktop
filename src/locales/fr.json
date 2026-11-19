@@ -1050,8 +1050,16 @@
         "message": "Ce contenu est indisponible dans votre pays pour des raisons légales.",
         "action": "Ouvrez la page sur le site pour en savoir plus"
       },
-      "diskSpaceUnavailable": {"shortMessage": "Impossible de vérifier l’espace libre.", "message": "Impossible de vérifier l’espace libre.", "action": "Choisissez un dossier accessible."},
-      "downloadStalled": {"shortMessage": "Le téléchargement ne progresse plus.", "message": "Le téléchargement ne progresse plus.", "action": "Réessayez lorsque la connexion est stable."},
+      "diskSpaceUnavailable": {
+        "shortMessage": "Impossible de vérifier l’espace libre.",
+        "message": "Impossible de vérifier l’espace libre.",
+        "action": "Choisissez un dossier accessible."
+      },
+      "downloadStalled": {
+        "shortMessage": "Le téléchargement ne progresse plus.",
+        "message": "Le téléchargement ne progresse plus.",
+        "action": "Réessayez lorsque la connexion est stable."
+      },
       "networkTimeout": {
         "shortMessage": "Le site a mis trop de temps à répondre",
         "message": "Le site a mis trop de temps à répondre. Réessayez",
@@ -2334,13 +2342,6 @@
   },
   "welcome": {
     "title": "Enregistrez vidéos, sons, photos et fichiers",
-    "lead": "Copiez un lien n’importe où : une petite carte propose de l’enregistrer, même fenêtre fermée",
-    "leadFocus": "Copiez un lien n’importe où, revenez dans Nezzel et une petite carte propose de l’enregistrer",
-    "card": {
-      "label": "Afficher une carte quand je copie un lien",
-      "help": "Nezzel repère les liens qu’il sait enregistrer et ne garde rien de ce que vous copiez",
-      "helpFocus": "Sur ce bureau, la carte s’affiche quand vous revenez dans Nezzel après la copie. Nezzel ne garde rien de ce que vous copiez"
-    },
     "start": {
       "label": "Lancer avec mon ordinateur",
       "help": "S’ouvre en arrière-plan dans {place} à la connexion"
@@ -2352,9 +2353,19 @@
       "linuxKde": "la boîte à miniatures",
       "linuxOther": "la zone de notification"
     },
-    "privacy": "Gratuit, libre et sans publicité. Vous pouvez désactiver les rapports à tout moment",
     "getStarted": "Commencer",
-    "later": "Modifiable ensuite dans les Réglages",
+    "change": "Modifier",
+    "status": {
+      "both": "Nezzel s’ouvre avec votre ordinateur et envoie des rapports de plantage, jamais vos fichiers ni vos comptes",
+      "startOnly": "Nezzel s’ouvre avec votre ordinateur. Les rapports de plantage sont désactivés",
+      "reportsOnly": "Nezzel envoie des rapports de plantage, jamais vos fichiers ni vos comptes",
+      "none": "Nezzel s’ouvre seulement quand vous le lancez et n’envoie aucun rapport de plantage"
+    },
+    "clip": {
+      "alt": "Enregistrement : un lien est copié dans le navigateur, la carte Nezzel apparaît, puis Enregistrer télécharge la vidéo",
+      "play": "Lire l’enregistrement",
+      "pause": "Mettre l’enregistrement en pause"
+    },
     "steps": {
       "copy": "Copiez un lien",
       "card": "La carte apparaît",
@@ -2374,23 +2385,6 @@
       "taken": "Raccourci déjà pris par une autre app, choisissez le vôtre",
       "skip": "Passer",
       "later": "Définissez un raccourci à tout moment dans les Réglages"
-    },
-    "replay": "Revoir",
-    "demoAlt": "Démo : un lien est copié dans le navigateur, la carte Nezzel apparaît près de son icône, et Enregistrer place la vidéo dans {folder}",
-    "demo": {
-      "videoTitle": "Faire son pain à la maison",
-      "channel": "La cuisine de Mariem",
-      "meta": "YouTube · 12:04",
-      "quality": "Vidéo · 1080p",
-      "save": "Enregistrer",
-      "saved": "Dans {folder}",
-      "copied": "Copié",
-      "file": "Fichier",
-      "edit": "Édition",
-      "view": "Présentation",
-      "clock": "mar. 9:41",
-      "clockGnome": "4 nov.  9:41",
-      "activities": "Activités"
     }
   },
   "closeNote": {

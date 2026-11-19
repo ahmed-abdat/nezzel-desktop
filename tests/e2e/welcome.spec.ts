@@ -12,19 +12,24 @@ test('fresh profile: welcome, Get started, then the main list', async ({ page, c
   await expect(welcome).toBeVisible({ timeout: 20_000 });
   await expect(welcome).toHaveAccessibleName('Save videos, audio, photos and files from a link');
   await expect(welcome).toBeFocused();
-  await expect(welcome.getByRole('switch', { name: 'Show a card when I copy a link' })).toBeChecked();
-  await expect(welcome.getByRole('switch', { name: 'Start with my computer' })).toBeChecked();
-  await expect(welcome.getByTestId('welcome-shortcut')).toContainText('Copy a link anywhere, then press');
-  await expect(welcome.getByTestId('welcome-folder')).toHaveText('/home/user/Downloads/Nezzel');
+  // Nothing to decide up front: one sentence says what is on, the switches wait behind "Change".
+  await expect(welcome.getByRole('switch')).toHaveCount(0);
+  await expect(welcome.getByTestId('welcome-status')).toHaveText('Nezzel opens with your computer and sends crash reports, never your files or accounts');
 
   // Try it writes the sample link; it never reads the clipboard.
   await welcome.getByTestId('welcome-copy').click();
   await expect(welcome.getByTestId('welcome-copy')).toHaveText('Copied');
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('https://www.youtube.com/watch?v=jNQXAC9IVRw');
 
-  // With the card off there is nothing to try.
-  await welcome.getByRole('switch', { name: 'Show a card when I copy a link' }).click();
-  await expect(welcome.getByTestId('welcome-copy')).toBeDisabled();
+  await welcome.getByTestId('welcome-change').click();
+  const options = page.getByTestId('welcome-options');
+  await expect(options.getByRole('switch', { name: 'Start with my computer' })).toBeChecked();
+  await expect(options.getByTestId('welcome-shortcut')).toContainText('Copy a link anywhere, then press');
+  // The sentence follows the switch, so "off" is visible without reopening the panel.
+  await options.getByRole('switch', { name: 'Send crash and error reports' }).click();
+  await expect(welcome.getByTestId('welcome-status')).toHaveText('Nezzel opens with your computer. Crash reports are off');
+  await page.keyboard.press('Escape');
+  await expect(options).toBeHidden();
 
   await page.getByTestId('welcome-start-button').click();
   await expect(welcome).toBeHidden();
@@ -32,7 +37,7 @@ test('fresh profile: welcome, Get started, then the main list', async ({ page, c
   await expect(page.getByText('Paste or drop a link. To add links from a file, open the … menu.')).toBeVisible();
 });
 
-test('keyboard: Tab goes through the switches to Get started, with a visible focus ring', async ({ page }) => {
+test('keyboard: Tab ends on Get started, with a visible focus ring', async ({ page }) => {
   await page.goto('/');
   const welcome = page.getByTestId('welcome');
   await expect(welcome).toBeFocused({ timeout: 20_000 });
@@ -41,7 +46,7 @@ test('keyboard: Tab goes through the switches to Get started, with a visible foc
     await page.keyboard.press('Tab');
     order.push(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.testid ?? ''));
   }
-  expect(order).toEqual(['welcome-card', 'welcome-start', 'welcome-reports', 'welcome-start-button']);
+  expect(order.slice(-2)).toEqual(['welcome-change', 'welcome-start-button']);
   const start = page.getByTestId('welcome-start-button');
   await expect(start).toBeFocused();
   // The ring is the primary hue: without an offset it melts into the button.
@@ -50,6 +55,32 @@ test('keyboard: Tab goes through the switches to Get started, with a visible foc
   await expect(welcome).toBeHidden();
   // The focused button went away with the sheet: focus lands on the main content, not the page body.
   await expect(page.locator(`#${MAIN_PANE_ID}`)).toBeFocused();
+});
+
+test('keyboard: Tab stays inside the open options panel, outlined; Escape returns to Change', async ({ page, browserName }) => {
+  const tab = browserName === 'webkit' ? 'Alt+Tab' : 'Tab';
+  await page.goto('/');
+  await expect(page.getByTestId('welcome')).toBeFocused({ timeout: 20_000 });
+  const change = page.getByTestId('welcome-change');
+  await change.focus();
+  await page.keyboard.press('Enter');
+  const options = page.getByTestId('welcome-options');
+  await expect(options).toBeVisible();
+  // The panel is drawn outside the sheet: past its last control, focus used to leave for the page.
+  const stops: string[] = [];
+  for (const key of [...Array<string>(8).fill(tab), ...Array<string>(8).fill(`Shift+${tab}`)]) {
+    await page.keyboard.press(key);
+    stops.push(await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement;
+      if (!el.closest('[data-testid="welcome-options"]')) return `outside:${el.tagName}`;
+      return getComputedStyle(el).outlineStyle === 'solid' ? 'in' : `no outline:${el.id || el.dataset.testid || el.tagName}`;
+    }));
+  }
+  expect(stops.filter(s => s !== 'in')).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(options).toBeHidden();
+  await expect(change).toBeFocused();
+  await expect(page.getByTestId('welcome')).toBeVisible();
 });
 
 // #36, Fedora KDE Wayland 1280×800: 704 is the window that fits above the panel, 600 a smaller screen.
@@ -98,12 +129,12 @@ for (const height of [704, 600]) {
         if (stops.some(s => s.name === stop.name)) break;
         stops.push(stop);
       }
-      expect(stops.map(s => s.name)).toEqual(['welcome-card', 'welcome-start', 'welcome-reports', 'welcome-start-button', 'welcome-replay', 'wl-link', 'welcome-copy']);
+      expect(stops.map(s => s.name)).toEqual(['welcome-clip-toggle', 'wl-link', 'welcome-copy', 'welcome-change', 'welcome-start-button']);
       expect(stops.filter(s => s.problems.length)).toEqual([]);
       // Shift+Tab from the first stop wraps to the last, inside the sheet.
-      await page.getByTestId('welcome-card').focus();
+      await page.getByTestId('welcome-clip-toggle').focus();
       await page.keyboard.press(`Shift+${tab}`);
-      await expect(page.getByTestId('welcome-copy')).toBeFocused();
+      await expect(page.getByTestId('welcome-start-button')).toBeFocused();
       await expect(welcome).toHaveAttribute('data-keyboard', 'true');
       await page.locator('#welcome-title').click();
       await expect(welcome).not.toHaveAttribute('data-keyboard');

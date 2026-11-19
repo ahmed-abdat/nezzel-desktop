@@ -135,6 +135,7 @@ const LOADING_OFFER = { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', site
 const ALL_STATES: GalleryState[] = [
   // First run
   { name: 'welcome', seed: false, mockData: { preferences: { onboarding: { welcomeDone: false, closeNoteDone: false } } } },
+  { name: 'welcome-options', seed: false, mockData: { preferences: { onboarding: { welcomeDone: false, closeNoteDone: false } } }, act: async page => page.getByTestId('welcome-change').click() },
   // Main list
   ...seedsOnly(['list-empty', 'list-filter-all', 'list-filter-active', 'list-filter-done', 'list-filter-failed']),
   { name: 'list-cleared', act: async page => page.locator('section[aria-labelledby="ledger-finished"] header button').click() },
