@@ -2220,7 +2220,7 @@
     "year": "Year"
   },
   "welcome": {
-    "title": "Save videos, audio, photos and files from any link",
+    "title": "Save videos, audio, photos and files from a link",
     "lead": "Copy a link anywhere and a small card offers to save it, even with this window closed",
     "leadFocus": "Copy a link anywhere, then switch back to Nezzel and a small card offers to save it",
     "card": {
