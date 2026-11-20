@@ -40,11 +40,50 @@ You only see qualities the site really offers. Your library keeps a list of what
 
 ## Install
 
-Download the installer for your system from the [latest release](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). Its tools (yt-dlp, ffmpeg and the rest) come inside the installer, so nothing is downloaded on first start. After that Nezzel keeps them and itself up to date; you can turn both off in Settings.
+Download the file for your system from the [latest release](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest):
 
-- **macOS:** the app isn't signed by Apple yet. Open the app once, then go to System Settings → Privacy & Security and click **Open Anyway** (older macOS: right-click the app → Open). Or run `xattr -dr com.apple.quarantine /Applications/Nezzel.app` in Terminal.
-- **Windows:** SmartScreen may warn about an unknown publisher. Click **More info → Run anyway**.
-- **Linux:** on Ubuntu or Debian, install the `.deb` (`sudo apt install ./Nezzel_*.deb`). On Fedora, install the `.rpm` (`sudo dnf install ./Nezzel-*.rpm`). On any other distro, make the AppImage executable (`chmod +x Nezzel*.AppImage`) and run it. The `.deb` and `.rpm` need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later), because the Linux builds are made on Ubuntu 22.04.
+| Your system | File to download |
+| --- | --- |
+| Mac with Apple Silicon (M1 or newer) | `Nezzel_…_aarch64.dmg` |
+| Mac with Intel | `Nezzel_…_x64.dmg` |
+| Windows | `Nezzel_…_x64-setup.exe` |
+| Ubuntu, Debian | `Nezzel_…_amd64.deb` |
+| Fedora | `Nezzel-…x86_64.rpm` |
+| Other Linux | `Nezzel_…_amd64.AppImage` |
+
+Not sure which Mac you have? Apple menu → About This Mac: "Chip: Apple M…" is Apple Silicon, "Processor: Intel" is Intel. The `arm64` / `aarch64` files for Windows and Linux are for ARM computers; the `-portable.zip` files run without installing.
+
+The app isn't code-signed yet, so macOS and Windows ask once before it opens. This is expected:
+
+**macOS**
+
+1. Open the `.dmg` and drag Nezzel to Applications.
+2. Open Nezzel. macOS says it can't check the app: click **Done** (not Move to Trash).
+3. Open System Settings → Privacy & Security, scroll down and click **Open Anyway**, then confirm.
+
+On macOS 14 or earlier you can right-click the app and choose Open instead. From Terminal: `xattr -dr com.apple.quarantine /Applications/Nezzel.app`.
+
+**Windows**
+
+1. Open the `-setup.exe`. A blue "Windows protected your PC" notice may appear.
+2. Click **More info**, then **Run anyway**.
+
+<details>
+<summary>Watch it on Windows 11 (39 s)</summary>
+
+<img src=".github/assets/install-windows.gif" width="640" alt="Installing Nezzel on Windows 11: the setup file is opened, the SmartScreen notice appears, More info and Run anyway are clicked, the installer finishes and Nezzel opens">
+
+</details>
+
+**Linux**
+
+- Ubuntu or Debian: `sudo apt install ./Nezzel_*.deb`
+- Fedora: `sudo dnf install ./Nezzel-*.rpm`
+- Any other distro: `chmod +x Nezzel*.AppImage`, then run it.
+
+The `.deb` and `.rpm` need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later), because the Linux builds are made on Ubuntu 22.04.
+
+The tools Nezzel uses (yt-dlp, ffmpeg and the rest) come inside the installer, so nothing is downloaded on first start. After that Nezzel keeps them and itself up to date; you can turn both off in Settings.
 
 On Linux Wayland, bind **Quick download** in your desktop's custom keyboard shortcuts to
 `/usr/bin/nezzel --capture` (`.deb` / `.rpm`). This opens the quick bar in the running instance,
@@ -82,9 +121,11 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 انسخ الرابط، فيلتقطه Nezzel تلقائيًا (أو الصقه في خانة الرابط)، ثم اختر الجودة واضغط «تنزيل». تُحفظ الملفات في مجلد ‎`Downloads/Nezzel`‎.
 
-حمّل التطبيق من [صفحة الإصدارات](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). التطبيق غير موقّع بعد، لذلك قد يحذّرك النظام عند فتحها أول مرة: في macOS افتح «إعدادات النظام ← الخصوصية والأمن» واضغط «فتح على أي حال»، وفي Windows اضغط «More info» ثم «Run anyway».
+حمّل التطبيق من [صفحة الإصدارات](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). اختر الملف المناسب لجهازك: ‎`aarch64.dmg`‎ لماك بمعالج Apple (M1 وما بعده)، ‎`x64.dmg`‎ لماك Intel، ‎`x64-setup.exe`‎ لويندوز، و‎`.deb`‎ أو ‎`.rpm`‎ أو ‎`AppImage`‎ للينكس.
 
-لا يوجد خادم لـ Nezzel. تُرسَل تقارير الأعطال والأخطاء إلى مشروعنا في Sentry (في الاتحاد الأوروبي) وهي مفعّلة افتراضيًا، دون الروابط أو أسماء الملفات أو المسارات أو الكوكيز، ويمكنك إيقافها من الإعدادات أو من شاشة الترحيب. ولا يقرأ ملفات تعريف الارتباط (الكوكيز) من متصفحك إلا بعد موافقتك، ولا يمرّر إلا كوكيز الموقع الذي طلبها. التفاصيل في [PRIVACY.md](PRIVACY.md).
+التطبيق غير موقّع بعد، لذلك يسألك النظام مرة واحدة قبل فتحه، وهذا متوقَّع. في macOS: افتح التطبيق، اضغط «تم» في التنبيه، ثم افتح «إعدادات النظام ← الخصوصية والأمن» واضغط «فتح على أي حال». في Windows: اضغط «مزيد من المعلومات» (More info) ثم «تشغيل على أي حال» (Run anyway).
+
+لا يوجد حساب في Nezzel. تُرسَل تقارير الأعطال والأخطاء إلى مشروعنا في Sentry (في الاتحاد الأوروبي)، وأعداد استخدام يومية مجهولة إلى خادمنا، دون الروابط أو أسماء الملفات أو المسارات أو الكوكيز. كلاهما مفعّل افتراضيًا ويمكنك إيقافه من الإعدادات. ولا يقرأ ملفات تعريف الارتباط (الكوكيز) من متصفحك إلا بعد موافقتك، ولا يمرّر إلا كوكيز الموقع الذي طلبها. التفاصيل في [PRIVACY.md](PRIVACY.md).
 
 يوجد أيضًا [Nezzel لأندرويد](https://github.com/ahmed-abdat/nezzel).
 
@@ -96,7 +137,11 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 Copiez un lien : Nezzel le détecte (ou collez-le dans le champ). Choisissez la qualité, puis cliquez sur «&nbsp;Télécharger&nbsp;». Les fichiers vont dans `Downloads/Nezzel`. Téléchargez l’application depuis la [page des versions](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest).
 
-La bêta n’est pas encore signée : au premier lancement, macOS demande d’autoriser l’app dans Réglages Système → Confidentialité et sécurité, et Windows SmartScreen demande «&nbsp;Informations complémentaires → Exécuter quand même&nbsp;». Il n’y a pas de serveur Nezzel. Les rapports de plantage et d’erreur partent vers notre projet Sentry (UE), activés par défaut, sans liens, noms de fichiers, chemins ni cookies ; vous pouvez les désactiver dans les Réglages ou sur l’écran d’accueil. Détails dans [PRIVACY.md](PRIVACY.md).
+Choisissez le fichier de votre système : `aarch64.dmg` pour un Mac Apple Silicon (M1 ou plus récent), `x64.dmg` pour un Mac Intel, `x64-setup.exe` pour Windows, `.deb`, `.rpm` ou `AppImage` pour Linux.
+
+L’application n’est pas encore signée : le système demande une confirmation, une seule fois. Sur macOS, ouvrez l’app, cliquez sur «&nbsp;Terminé&nbsp;», puis dans Réglages Système → Confidentialité et sécurité cliquez sur «&nbsp;Ouvrir quand même&nbsp;». Sur Windows, cliquez sur «&nbsp;Informations complémentaires&nbsp;» puis «&nbsp;Exécuter quand même&nbsp;».
+
+Il n’y a pas de compte Nezzel. Les rapports de plantage et d’erreur partent vers notre projet Sentry (UE) et des compteurs d’usage quotidiens anonymes vers notre serveur, sans liens, noms de fichiers, chemins ni cookies. Les deux sont activés par défaut et se désactivent dans les Réglages. Détails dans [PRIVACY.md](PRIVACY.md).
 
 ## For developers
 
