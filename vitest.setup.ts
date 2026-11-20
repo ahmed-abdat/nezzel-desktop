@@ -1,10 +1,16 @@
-import { beforeEach, afterEach } from 'vitest';
+import { beforeAll, beforeEach, afterEach } from 'vitest';
+import { loadLocaleMessages } from './src/i18n';
 import { clearMocks } from '@tauri-apps/api/mocks';
 import { installTauriMock } from './tests/utils/tauriMock';
 import { createPinia, setActivePinia } from 'pinia';
 import { InvokeArgs } from '@tauri-apps/api/core';
 import { mediaHandlers } from './tests/utils/mocks/mediaHandlers';
 import { MockData } from './tests/e2e/utils/mockData';
+
+// Component tests select locales synchronously; windows await these messages before mounting.
+beforeAll(async () => {
+  await Promise.all([loadLocaleMessages('ar'), loadLocaleMessages('fr')]);
+});
 
 beforeEach(() => {
   clearMocks();

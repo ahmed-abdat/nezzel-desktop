@@ -1,22 +1,7 @@
 import { createRouter, createWebHistory, type RouteLocation } from 'vue-router';
 import HomeView from './views/app/HomeView.vue';
-import MediaView from './views/app/MediaView.vue';
-import SubtitleView from './views/app/SubtitleView.vue';
 import FullLayout from './layouts/FullLayout.vue';
 import AppLayout from './layouts/AppLayout.vue';
-import InstallView from './views/full/InstallView.vue';
-import LocationView from './views/app/LocationView.vue';
-import SettingsView from './views/app/SettingsView.vue';
-import MediaPreferencesView from './views/app/MediaPreferencesView.vue';
-import InputFiltersView from './views/app/InputFiltersView.vue';
-import TheDownloadPreferences from './components/media-view/TheDownloadPreferences.vue';
-import TheNetworkPreferences from './components/media-view/TheNetworkPreferences.vue';
-import TheOutputPreferences from './components/media-view/TheOutputPreferences.vue';
-import TheSubtitlePreferences from './components/media-view/TheSubtitlePreferences.vue';
-import SettingsGeneralTab from './views/app/settings/SettingsGeneralTab.vue';
-import SettingsLoginsTab from './views/app/settings/SettingsLoginsTab.vue';
-import SettingsAboutTab from './views/app/settings/SettingsAboutTab.vue';
-import SettingsAdvancedTab from './views/app/settings/SettingsAdvancedTab.vue';
 
 const routes = [
   {
@@ -27,7 +12,7 @@ const routes = [
       {
         path: '',
         name: 'install.index',
-        component: InstallView,
+        component: () => import('./views/full/InstallView.vue'),
         meta: { index: 0 },
       },
     ],
@@ -51,26 +36,26 @@ const routes = [
       {
         path: 'settings',
         name: 'settings',
-        component: SettingsView,
+        component: () => import('./views/app/SettingsView.vue'),
         meta: { index: 1 },
         children: [
           {
             path: '',
             name: 'settings.general',
-            component: SettingsGeneralTab,
+            component: () => import('./views/app/settings/SettingsGeneralTab.vue'),
             meta: { index: 0 },
           },
           {
             path: 'logins',
             name: 'settings.logins',
-            component: SettingsLoginsTab,
+            component: () => import('./views/app/settings/SettingsLoginsTab.vue'),
             meta: { index: 1 },
           },
-          { path: 'about', name: 'settings.about', component: SettingsAboutTab, meta: { index: 1 } },
+          { path: 'about', name: 'settings.about', component: () => import('./views/app/settings/SettingsAboutTab.vue'), meta: { index: 1 } },
           {
             path: 'advanced',
             name: 'settings.advanced',
-            component: SettingsAdvancedTab,
+            component: () => import('./views/app/settings/SettingsAdvancedTab.vue'),
             meta: { index: 1 },
           },
         ],
@@ -78,7 +63,7 @@ const routes = [
       {
         path: 'location',
         name: 'location',
-        component: LocationView,
+        component: () => import('./views/app/LocationView.vue'),
         meta: { index: 1 },
       },
       {
@@ -90,19 +75,19 @@ const routes = [
       {
         path: 'subtitles',
         name: 'subtitles',
-        component: SubtitleView,
+        component: () => import('./views/app/SubtitleView.vue'),
         meta: { index: 1 },
       },
       {
         path: 'input-filters',
         name: 'input-filters',
-        component: InputFiltersView,
+        component: () => import('./views/app/InputFiltersView.vue'),
         meta: { index: 1 },
       },
       {
         path: 'group/:groupId',
         name: 'group.metadata',
-        component: MediaView,
+        component: () => import('./views/app/MediaView.vue'),
         props: true,
         meta: { index: 1, requiresGroup: true },
       },
@@ -115,35 +100,35 @@ const routes = [
       {
         path: 'preferences/:groupId',
         name: 'preferences',
-        component: MediaPreferencesView,
+        component: () => import('./views/app/MediaPreferencesView.vue'),
         props: true,
         meta: { index: 1, requiresGroup: true },
         children: [
           {
             path: '',
             name: 'preferences.quality',
-            component: TheDownloadPreferences,
+            component: () => import('./components/media-view/TheDownloadPreferences.vue'),
             props: true,
             meta: { index: 0 },
           },
           {
             path: 'network',
             name: 'preferences.network',
-            component: TheNetworkPreferences,
+            component: () => import('./components/media-view/TheNetworkPreferences.vue'),
             props: true,
             meta: { index: 1 },
           },
           {
             path: 'output',
             name: 'preferences.output',
-            component: TheOutputPreferences,
+            component: () => import('./components/media-view/TheOutputPreferences.vue'),
             props: true,
             meta: { index: 1 },
           },
           {
             path: 'subtitles',
             name: 'preferences.subtitles',
-            component: TheSubtitlePreferences,
+            component: () => import('./components/media-view/TheSubtitlePreferences.vue'),
             props: true,
             meta: { index: 1 },
           },

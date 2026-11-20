@@ -4,7 +4,7 @@
  * the app's Pinia stores and i18n. Each seed puts the app in one state through the same store
  * calls the Tauri listeners make; nothing here touches engine logic.
  */
-import { i18n, applyDocumentLocale, type Locale } from '../../../src/i18n';
+import { i18n, applyDocumentLocale, loadLocaleMessages, type Locale } from '../../../src/i18n';
 import { applyTheme } from '../../../src/composables/useTheme';
 import { MediaState, useMediaStateStore } from '../../../src/stores/media/state';
 import { useMediaGroupStore } from '../../../src/stores/media/group';
@@ -47,7 +47,8 @@ const CANDIDATES: LoginCandidate[] = [
 let counter = 0;
 const nextId = (prefix: string) => `${prefix}-${++counter}`;
 
-export function appearance(locale: Locale, theme: 'light' | 'dark') {
+export async function appearance(locale: Locale, theme: 'light' | 'dark') {
+  await loadLocaleMessages(locale);
   i18n.global.locale.value = locale;
   applyDocumentLocale(locale);
   applyTheme(theme);

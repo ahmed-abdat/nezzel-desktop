@@ -16,7 +16,7 @@ export async function mountCapturePanel() {
   }
   document.documentElement.classList.add('nz-capture');
   const settings = await invoke<Settings>('config_get');
-  applyAppearance(settings.appearance);
+  await applyAppearance(settings.appearance);
   const app = createApp(getCurrentWindow().label === CAPTURE_WINDOW.bar ? CaptureBar : CaptureCard).use(createPinia()).use(i18n);
   app.mount('#app');
   return app;

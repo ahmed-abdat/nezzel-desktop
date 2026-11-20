@@ -93,7 +93,7 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   async function syncAppearance() {
     const settings = await invoke<Settings>('config_get');
     auth.value = settings?.auth;
-    applyAppearance(settings.appearance);
+    await applyAppearance(settings.appearance);
   }
 
   let asked = 0;

@@ -4,7 +4,7 @@ import App from './App.vue';
 import router from './router';
 import tauriListeners from './plugins/tauriListeners';
 import { useSettingsStore } from './stores/settings';
-import { applyAppearance } from './appearance';
+import { applyAppearance, applyLanguage } from './appearance';
 import { invoke } from '@tauri-apps/api/core';
 import { installErrorLog } from './tauri/errorLog';
 import { i18n } from './i18n';
@@ -89,18 +89,15 @@ export async function mountMainWindow() {
   }
 
   async function initStores(): Promise<void> {
-    try {
-      const prefs = await preferencesStore.load();
-      await useOnboardingStore().decide(prefs?.onboarding);
-    } catch (e) {
-      console.error(`Unable to load preferences: ${e}`);
-    }
-
-    try {
-      const settings = await settingsStore.load();
-      applyAppearance(settings.appearance);
-    } catch (e) {
-      console.error(`Unable to load settings: ${e}`);
-    }
+    await Promise.all([
+      // Onboarding needs preferences and its library check, but neither needs settings.
+      preferencesStore.load().then(prefs => useOnboardingStore().decide(prefs?.onboarding)).catch((e) => {
+        console.error(`Unable to load preferences: ${e}`);
+      }),
+      settingsStore.load().then(settings => applyAppearance(settings.appearance)).catch(async (e) => {
+        console.error(`Unable to load settings: ${e}`);
+        await applyLanguage('system');
+      }),
+    ]);
   }
 }

@@ -1,17 +1,5 @@
 import { createI18n } from 'vue-i18n';
 import en from './locales/en.json';
-import esRaw from './locales/es.json';
-import nlRaw from './locales/nl.json';
-import itRaw from './locales/it.json';
-import frRaw from './locales/fr.json';
-import deRaw from './locales/de.json';
-import nbRaw from './locales/nb.json';
-import ruRaw from './locales/ru.json';
-import trRaw from './locales/tr.json';
-import ptPTRaw from './locales/pt-PT.json';
-import ptBRRaw from './locales/pt-BR.json';
-import zhTWRaw from './locales/zh-TW.json';
-import arRaw from './locales/ar.json';
 import { detectBrowserLanguageCodes } from './helpers/subtitles/languages.ts';
 import { RTL_LANGS } from './generated/contract';
 
@@ -33,19 +21,6 @@ export const availableLocales = {
 
 type MessageSchema = typeof en;
 export type Locale = keyof typeof availableLocales;
-
-const es = esRaw as unknown as MessageSchema;
-const nl = nlRaw as unknown as MessageSchema;
-const it = itRaw as unknown as MessageSchema;
-const fr = frRaw as unknown as MessageSchema;
-const de = deRaw as unknown as MessageSchema;
-const nb = nbRaw as unknown as MessageSchema;
-const ru = ruRaw as unknown as MessageSchema;
-const tr = trRaw as unknown as MessageSchema;
-const ptPT = ptPTRaw as unknown as MessageSchema;
-const ptBR = ptBRRaw as unknown as MessageSchema;
-const zhTW = zhTWRaw as unknown as MessageSchema;
-const ar = arRaw as unknown as MessageSchema;
 
 const rtlLocales: ReadonlySet<string> = new Set(RTL_LANGS);
 
@@ -70,7 +45,7 @@ const localeAliases: Record<string, Locale> = {
   'nb-NO': 'nb',
 };
 
-/** Fully translated locales: the only ones offered and auto-picked. The others stay loaded for upstream merges and old configs. */
+/** Fully translated locales: the only ones offered and auto-picked. The others remain available on demand for old configs and upstream merges. */
 export const offeredLocales: ReadonlySet<Locale> = new Set<Locale>(['en', 'ar', 'fr']);
 
 export function getDefaultLocale(): Locale {
@@ -85,7 +60,7 @@ export function getDefaultLocale(): Locale {
 }
 
 export const i18n = createI18n<[MessageSchema], Locale, false>({
-  locale: getDefaultLocale(),
+  locale: 'en',
   legacy: false,
   globalInjection: false,
   fallbackLocale: 'en',
@@ -96,19 +71,22 @@ export const i18n = createI18n<[MessageSchema], Locale, false>({
       return count === 0 ? 0 : count === 1 ? 1 : count === 2 ? 2 : mod >= 3 && mod <= 10 ? 3 : mod >= 11 ? 4 : 5;
     },
   },
-  messages: {
-    en,
-    es,
-    nl,
-    it,
-    fr,
-    de,
-    nb,
-    ru,
-    tr,
-    'pt-PT': ptPT,
-    'pt-BR': ptBR,
-    'zh-TW': zhTW,
-    ar,
-  },
+  // Other locale schemas are installed by loadLocaleMessages before use.
+  messages: { en } as Record<Locale, MessageSchema>,
 });
+
+const localeModules = import.meta.glob<{ default: MessageSchema }>(['./locales/*.json', '!./locales/en.json']);
+const pendingLocales = new Map<Locale, Promise<void>>();
+
+/** Keep English ready as the fallback; fetch each other locale only when it is needed. */
+export async function loadLocaleMessages(locale: Locale): Promise<void> {
+  if (i18n.global.availableLocales.includes(locale)) return;
+  let pending = pendingLocales.get(locale);
+  if (!pending) {
+    pending = localeModules[`./locales/${locale}.json`]().then(({ default: messages }) => {
+      i18n.global.setLocaleMessage(locale, messages);
+    }).finally(() => pendingLocales.delete(locale));
+    pendingLocales.set(locale, pending);
+  }
+  await pending;
+}

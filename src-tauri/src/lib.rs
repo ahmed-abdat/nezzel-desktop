@@ -207,6 +207,7 @@ pub fn run() {
 
       // register shortcuts
       register_shortcuts(handle);
+      state::config::remember_startup_config(handle);
 
       Ok(())
     })

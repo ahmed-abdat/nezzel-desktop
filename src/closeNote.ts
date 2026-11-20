@@ -12,9 +12,9 @@ export async function mountCloseNote() {
   document.documentElement.classList.add('nz-capture');
   try {
     const settings = await invoke<Settings>('config_get');
-    applyAppearance(settings.appearance);
+    await applyAppearance(settings.appearance);
   } catch {
-    applyLanguage('system');
+    await applyLanguage('system');
   }
   const q = new URLSearchParams(location.search);
   const app = createApp(CloseNote, {

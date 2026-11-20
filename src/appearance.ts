@@ -1,4 +1,4 @@
-import { applyDocumentLocale, getDefaultLocale, i18n, type Locale } from './i18n';
+import { applyDocumentLocale, getDefaultLocale, i18n, loadLocaleMessages, type Locale } from './i18n';
 
 /** The `language` setting is a locale code or 'system' (the OS language). */
 export function resolveLocale(language: string): Locale {
@@ -18,17 +18,24 @@ export function removeTheme() {
   if (meta) meta.removeAttribute('content');
 }
 
+let languageRequest = 0;
+
 /** Language only: i18n and the document's lang/dir. */
-export function applyLanguage(language: string): Locale {
+export async function applyLanguage(language: string): Promise<Locale> {
+  const request = ++languageRequest;
   const locale = resolveLocale(language);
+  await loadLocaleMessages(locale);
+  // A slower import must not undo a newer choice or a failed-save rollback.
+  if (request !== languageRequest) return locale;
   i18n.global.locale.value = locale;
   applyDocumentLocale(locale);
   return locale;
 }
 
 /** The one window bootstrap: language and theme from the Appearance settings. 'system' leaves the OS to decide. */
-export function applyAppearance(appearance: { language: string; theme: string }) {
-  applyLanguage(appearance.language);
+export async function applyAppearance(appearance: { language: string; theme: string }) {
+  const language = applyLanguage(appearance.language);
   if (appearance.theme === 'light' || appearance.theme === 'dark') applyTheme(appearance.theme);
   else removeTheme();
+  await language;
 }

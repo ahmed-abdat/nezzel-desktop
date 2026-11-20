@@ -2362,9 +2362,9 @@
       "none": "Nezzel s’ouvre seulement quand vous le lancez et n’envoie aucun rapport de plantage"
     },
     "clip": {
-      "alt": "Enregistrement : un lien est copié dans le navigateur, la carte Nezzel apparaît, puis Enregistrer télécharge la vidéo",
-      "play": "Lire l’enregistrement",
-      "pause": "Mettre l’enregistrement en pause"
+      "alt": "Animation : un lien est copié, la carte Nezzel apparaît dans le coin de l’écran, puis Télécharger enregistre la vidéo",
+      "play": "Lire l’animation",
+      "pause": "Mettre l’animation en pause"
     },
     "steps": {
       "copy": "Copiez un lien",

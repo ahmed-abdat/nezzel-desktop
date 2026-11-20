@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { i18n, type Locale } from '../../src/i18n';
+import { i18n, loadLocaleMessages, type Locale } from '../../src/i18n';
 import { browserName, candidateLabel } from '../../src/helpers/cookieBrowsers';
 
 it('preserves dots in real profile names instead of treating them as directory prefixes', () => {
@@ -18,7 +18,8 @@ it.each([
   ['en', 'Work', 'Work'], ['ar', 'Work', 'عمل'], ['fr', 'Work', 'Travail'],
   ['en', 'Banking', 'Banking'], ['ar', 'Banking', 'معاملات مصرفية'], ['fr', 'Banking', 'Banque'],
   ['en', 'Shopping', 'Shopping'], ['ar', 'Shopping', 'تسوّق'], ['fr', 'Shopping', 'Achats'],
-])('localizes the built-in %s Firefox container %s', (locale, container, label) => {
+])('localizes the built-in %s Firefox container %s', async (locale, container, label) => {
+  await loadLocaleMessages(locale as Locale);
   const previous = i18n.global.locale.value;
   i18n.global.locale.value = locale as Locale;
   try {

@@ -15,7 +15,8 @@ async function addUrl(page: Page, url: string) {
 async function setLocale(page: Page, locale: 'en' | 'ar') {
   await page.evaluate(async (l) => {
     // @ts-ignore
-    const { i18n, applyDocumentLocale } = await import('/src/i18n.ts');
+    const { i18n, applyDocumentLocale, loadLocaleMessages } = await import('/src/i18n.ts');
+    await loadLocaleMessages(l);
     i18n.global.locale.value = l;
     applyDocumentLocale(l);
   }, locale);

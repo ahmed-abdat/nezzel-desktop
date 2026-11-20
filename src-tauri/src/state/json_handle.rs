@@ -69,7 +69,7 @@ impl<T: JsonBackedState> JsonStoreHandle<T> {
         T::on_updated(app, value);
         self.save_value(serde_json::to_value(value)?)
       },
-      |_| {},
+      |value| T::on_stored(app, value),
     )
   }
 
@@ -97,7 +97,10 @@ impl<T: JsonBackedState> JsonStoreHandle<T> {
         }
         Ok(())
       },
-      |value| T::on_updated(app, value),
+      |value| {
+        T::on_updated(app, value);
+        T::on_stored(app, value);
+      },
     )
   }
 
@@ -114,7 +117,7 @@ impl<T: JsonBackedState> JsonStoreHandle<T> {
         T::on_updated(app, value);
         self.save_value(raw)
       },
-      |_| {},
+      |value| T::on_stored(app, value),
     )
   }
 }
@@ -508,7 +511,10 @@ mod tests {
         next.clone(),
         isolated,
         |value| std::fs::write(&path, serde_json::to_vec(value).unwrap()),
-        |_| notified.set(notified.get() + 1),
+        |value| {
+          assert_eq!(swap.load_full().as_ref(), value);
+          notified.set(notified.get() + 1);
+        },
       )
       .unwrap();
       assert_eq!(saved, next);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyDocumentLocale, getDefaultLocale, type Locale } from '../../src/i18n';
+import { applyDocumentLocale, getDefaultLocale, loadLocaleMessages, type Locale } from '../../src/i18n';
 import { appLanguageOptions } from '../../src/helpers/languageOptions';
 import { i18n } from '../../src/i18n';
 import { mount } from '@vue/test-utils';
@@ -15,6 +15,42 @@ type RunnerCopy = { shortMessage?: string; action?: string; message?: string };
 const runnerLocales = { en, ar, fr } as unknown as Record<string, { errors: { runner: Record<string, RunnerCopy> } }>;
 /** Tool and engine names mean nothing to people; error copy names what happened and what to do. */
 const ENGINE_WORDS = /yt-dlp|gallery-dl|ffmpeg|aria2|deno|\bengine\b|moteur|محرك/i;
+
+describe('lazy locale loading', () => {
+  it('starts with English only, installs requested messages, and keeps the English fallback', async () => {
+    vi.resetModules();
+    const { i18n: fresh, loadLocaleMessages: load } = await import('../../src/i18n');
+    expect(fresh.global.availableLocales).toEqual(['en']);
+    expect(fresh.global.locale.value).toBe('en');
+    await Promise.all([load('ar'), load('ar')]);
+    expect(fresh.global.availableLocales).toEqual(['ar', 'en']);
+    expect(fresh.global.getLocaleMessage('ar')).toEqual(ar);
+    fresh.global.locale.value = 'ar';
+    expect(fresh.global.t('errors.runner.liveNow.message')).toBe(ar.errors.runner.liveNow.message);
+    const fallbackKey = 'fallbackProbe';
+    fresh.global.mergeLocaleMessage('en', { [fallbackKey]: 'English fallback' });
+    expect(fresh.global.t(fallbackKey, {}, { missingWarn: false, fallbackWarn: false })).toBe('English fallback');
+  });
+
+  it('keeps the visible language until messages arrive and ignores a superseded load', async () => {
+    vi.resetModules();
+    const { i18n: fresh } = await import('../../src/i18n');
+    const { applyLanguage } = await import('../../src/appearance');
+    await applyLanguage('en');
+    const arabic = applyLanguage('ar');
+    expect(fresh.global.locale.value).toBe('en');
+    expect(document.documentElement.dir).toBe('ltr');
+    await arabic;
+    expect(fresh.global.locale.value).toBe('ar');
+    expect(document.documentElement.dir).toBe('rtl');
+    expect(fresh.global.getLocaleMessage('ar')).toEqual(ar);
+    const french = applyLanguage('fr');
+    await applyLanguage('en');
+    await french;
+    expect(fresh.global.locale.value).toBe('en');
+    expect(document.documentElement.dir).toBe('ltr');
+  });
+});
 
 describe('download error copy', () => {
   const cases = Object.entries(runnerLocales).flatMap(([locale, messages]) =>
@@ -119,7 +155,8 @@ describe('download error copy', () => {
 });
 
 describe('locale direction', () => {
-  it('falls back to English for a new diagnostic key in an older locale', () => {
+  it('falls back to English for a new diagnostic key in an older locale', async () => {
+    await loadLocaleMessages('es');
     i18n.global.locale.value = 'es';
     const component = defineComponent({
       setup() {

@@ -18,13 +18,30 @@ export const useSettingsStore = defineStore('settings', () => {
 
   async function load(): Promise<Settings> {
     const cfg = await invoke<Settings>('config_get');
-    applySettings(cfg);
+    await applySettings(cfg);
     return cfg;
   }
 
   async function patch(partial: DeepPartial<Settings>) {
-    const newCfg = await invoke<Settings>('config_set', { patch: partial });
-    applySettings(newCfg);
+    await savePatch(partial, false);
+  }
+
+  async function savePatch(partial: DeepPartial<Settings>, optimistic: boolean) {
+    const before = structuredClone(toRaw(settings.value));
+    const language = partial.appearance?.language;
+    const optimisticFields = optimistic ? partial : language ? { appearance: { language } } : {};
+    mergeInto(settings.value, optimisticFields);
+    try {
+      await Promise.all([
+        language ? applyLanguage(language) : Promise.resolve(),
+        invoke<Settings>('config_set', { patch: partial }).then(applySettings),
+      ]);
+    } catch (error) {
+      // Only this patch's fields: a concurrent patch that succeeded keeps its value.
+      rollbackInto(settings.value, optimisticFields, before);
+      if (language) await applyLanguage(settings.value.appearance.language);
+      throw error;
+    }
   }
 
   /**
@@ -32,14 +49,10 @@ export const useSettingsStore = defineStore('settings', () => {
    * comes back and a toast says so, so the control never lies about what is saved.
    */
   async function patchNow(partial: DeepPartial<Settings>): Promise<boolean> {
-    const before = structuredClone(toRaw(settings.value));
-    mergeInto(settings.value, partial);
     try {
-      await patch(partial);
+      await savePatch(partial, true);
       return true;
     } catch {
-      // Only this patch's fields: a concurrent patch that succeeded keeps its value.
-      rollbackInto(settings.value, partial, before);
       useToastStore().showToast(i18n.global.t('feedback.settingFailed'), { style: 'error' });
       return false;
     }
@@ -56,7 +69,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   async function reset() {
     const cfg = await invoke<Settings>('config_reset');
-    applySettings(cfg);
+    await applySettings(cfg);
     return cfg;
   }
 
@@ -65,11 +78,11 @@ export const useSettingsStore = defineStore('settings', () => {
     return settings.value.auth.cookieFile !== null || (browser !== COOKIE_BROWSER_NEVER && browser !== COOKIE_BROWSER_AUTOMATIC);
   }
 
-  function applySettings(cfg: Settings) {
+  async function applySettings(cfg: Settings) {
     Object.assign(settings.value, cfg);
 
     if (cfg.appearance.language) {
-      applyLanguage(cfg.appearance.language);
+      await applyLanguage(cfg.appearance.language);
     }
   }
 

@@ -15,13 +15,15 @@ test('it shows how many links are ready', async ({ page }) => {
 
 test('Download all in a filtered view covers only the links it shows', async ({ page }) => {
   await page.goto('/');
-  for (const url of ['https://example.com/song1', 'https://example.com/song2', 'https://example.com/single-image']) {
+  for (const url of ['https://example.com/song1', 'https://example.com/song2', 'https://example.com/image-carousel']) {
     await page.fill('#queue-url-input', url);
     await page.keyboard.press('Enter');
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.keyboard.press('Escape');
   }
   await expect(page.getByText('3 links ready')).toBeVisible();
+  // The third link is a carousel: it always waits for a pick. A photo would download by itself when its read
+  // finishes while the sheet is still open (downloadSheet.ts), so it is "ready" only if Escape wins that race.
   // Type views hide rows that still need a click, so narrow the list with search.
   await page.getByRole('searchbox').fill('Test Video');
   await expect(page.getByText('2 links ready')).toBeVisible();

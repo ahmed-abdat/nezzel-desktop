@@ -35,6 +35,8 @@ pub trait JsonBackedState:
 
   fn before_initialized(_app: &AppHandle<Wry>, _value: &mut Self) {}
   fn on_updated(_app: &AppHandle<Wry>, _new_value: &Self) {}
+  /// Side effects that must read the published snapshot, even when dispatched inline.
+  fn on_stored(_app: &AppHandle<Wry>, _new_value: &Self) {}
 }
 
 pub fn json_merge(base: &mut Value, patch: &Value) {

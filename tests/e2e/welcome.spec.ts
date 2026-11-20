@@ -12,6 +12,14 @@ test('fresh profile: welcome, Get started, then the main list', async ({ page, c
   await expect(welcome).toBeVisible({ timeout: 20_000 });
   await expect(welcome).toHaveAccessibleName('Save videos, audio, photos and files from a link');
   await expect(welcome).toBeFocused();
+  // The coded animation plays (no video); with reduced motion it rests on its last frame, the row saved.
+  const clip = welcome.getByTestId('welcome-clip');
+  await expect(clip.getByRole('img', { name: /^Animation: a link is copied/ })).toBeVisible();
+  await expect(clip.getByTestId('welcome-clip-toggle')).toHaveAccessibleName('Pause the animation');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(clip.getByTestId('welcome-clip-toggle')).toHaveAccessibleName('Play the animation');
+  await expect(clip.getByTestId('welcome-clip-saved')).toHaveCSS('opacity', '1');
+  await expect(clip.getByTestId('welcome-clip-saved')).toContainText('Saved');
   // Nothing to decide up front: one sentence says what is on, the switches wait behind "Change".
   await expect(welcome.getByRole('switch')).toHaveCount(0);
   await expect(welcome.getByTestId('welcome-status')).toHaveText('Nezzel opens with your computer and sends crash reports, never your files or accounts');

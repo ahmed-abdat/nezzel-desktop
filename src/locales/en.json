@@ -2358,9 +2358,9 @@
       "none": "Nezzel opens only when you start it and sends no crash reports"
     },
     "clip": {
-      "alt": "Recording: a link is copied in the browser, the Nezzel card appears, and Save downloads the video",
-      "play": "Play the recording",
-      "pause": "Pause the recording"
+      "alt": "Animation: a link is copied, the Nezzel card appears in the corner of the screen, Download is pressed and the video is saved",
+      "play": "Play the animation",
+      "pause": "Pause the animation"
     },
     "steps": {
       "copy": "Copy a link",

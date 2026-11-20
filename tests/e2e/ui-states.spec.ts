@@ -270,8 +270,9 @@ async function shoot(page: Page, state: GalleryState, locale: Locale, entries: I
         await expect(page.locator('header[data-tauri-drag-region]')).toHaveCount(1);
       }
       if (state.name === 'settings-logins-auto') {
-        await expect(page.locator('#pref-login-policy')).toBeVisible();
-        await expect(page.locator('#pref-cookie-browser')).toBeVisible();
+        await expect(page.locator('#pref-auto-logins')).toBeVisible();
+        // The browser choice waits under Advanced, closed by default.
+        await expect(page.locator('#pref-cookie-browser')).toBeHidden();
         await expect(page.locator('#pref-cookie-never')).toHaveCount(0);
         await expect(page.locator('#pref-always-browser')).toHaveCount(0);
       }
