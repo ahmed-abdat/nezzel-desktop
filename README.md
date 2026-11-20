@@ -75,6 +75,8 @@ On macOS 14 or earlier you can right-click the app and choose Open instead. From
 1. Open the `-setup.exe`. A blue "Windows protected your PC" notice may appear.
 2. Click **More info**, then **Run anyway**.
 
+Comfortable with a command line? With [Scoop](https://scoop.sh) there is no warning screen: `scoop bucket add nezzel https://github.com/ahmed-abdat/scoop-nezzel`, then `scoop install nezzel/nezzel` (portable build; update with `scoop update nezzel`).
+
 <details>
 <summary>Watch it on Windows 11 (39 s)</summary>
 
