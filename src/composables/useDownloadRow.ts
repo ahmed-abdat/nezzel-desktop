@@ -37,6 +37,16 @@ function releaseClock() {
   clockTimer = undefined;
 }
 
+/** One saved file of a finished row; `kind` picks its icon (local files have no preview in the webview). */
+export type SavedFile = { path: string; name: string; kind: 'image' | 'video' | 'audio' | 'file' };
+function savedFileKind(path: string): SavedFile['kind'] {
+  const extension = path.split('.').pop()?.toLowerCase() ?? '';
+  if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'heic', 'bmp'].includes(extension)) return 'image';
+  if (['mp4', 'mkv', 'webm', 'mov', 'm4v'].includes(extension)) return 'video';
+  if (['mp3', 'm4a', 'opus', 'ogg', 'flac', 'wav', 'aac'].includes(extension)) return 'audio';
+  return 'file';
+}
+
 /** Display model for one download row: phase, progress, meta line and the login hint. */
 export function useDownloadRow(group: Ref<Group>) {
   const i18n = useI18n();
@@ -124,6 +134,16 @@ export function useDownloadRow(group: Ref<Group>) {
     return saved && t(`downloads.row.${saved.key}`, { n: saved.n }, saved.n);
   });
   const destination = computed(() => destinationStore.getPrimaryDestination(group.value.id)?.path);
+  /** Every file a finished download saved, in saved order (a photo post saves several). Intermediate
+   *  paths the engine reports with less confidence are not files the user got. */
+  const savedFiles = computed<SavedFile[]>(() => {
+    if (phase.value !== 'done') return [];
+    const all = destinationStore.getDestinations(group.value.id);
+    const best = Math.max(...all.map(d => d.confidence));
+    const seen = new Set<string>();
+    return all.filter(d => d.confidence === best && !seen.has(d.path) && !!seen.add(d.path))
+      .map(d => ({ path: d.path, name: d.path.split(/[\\/]/).pop() || d.path, kind: savedFileKind(d.path) }));
+  });
   const alreadySaved = computed(() => {
     const primary = destinationStore.getPrimaryDestination(group.value.id);
     return phase.value === 'done' && !!primary
@@ -220,5 +240,5 @@ export function useDownloadRow(group: Ref<Group>) {
   const lastFatal = computed(() => diagnosticsStore.findLastFatalByGroupId(group.value.id));
   const needsLogin = computed(() => phase.value === 'error' && (LOGIN_CODES as readonly string[]).includes(lastDiagnostic.value?.code ?? ''));
 
-  return { state, phase, isList, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, alreadySaved, sponsorNote, choice, fileKind, readingStuck, processing };
+  return { state, phase, isList, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, savedFiles, alreadySaved, sponsorNote, choice, fileKind, readingStuck, processing };
 }

@@ -183,6 +183,23 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
     } catch { fileMissing(); }
   }
 
+  /** One file of a several-file row (a photo of a post). False when it is gone, so its line can say so. */
+  async function openSavedFile(path: string) {
+    try {
+      // Whatever the row is: a post can carry any file, and only passive formats launch a viewer.
+      if (revealsInFolder(path)) await revealPath(path);
+      else await openPath(path);
+      return true;
+    } catch { return false; }
+  }
+
+  async function revealSavedFile(path: string) {
+    try {
+      await revealPath(path);
+      return true;
+    } catch { return false; }
+  }
+
   async function openPage() {
     // Only web links; the row's URL came from user input or a clipboard watcher.
     const url = group.value.url;
@@ -245,5 +262,5 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
 
   const canTrash = computed(() => !isTrashRefused(group.value.id));
 
-  return { download, pause, remove, cancel, retry, recover, recoveryLabel, recoveryIsSwitch, openFile, revealFile, openPage, copyLink, deleteFile, trashFile, canTrash };
+  return { download, pause, remove, cancel, retry, recover, recoveryLabel, recoveryIsSwitch, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, trashFile, canTrash };
 }

@@ -58,7 +58,7 @@
           <PopoverTrigger as-child>
             <Button variant="outline" class="flex-none" data-testid="welcome-change">{{ t('welcome.change') }}</Button>
           </PopoverTrigger>
-          <PopoverContent side="top" align="start" :side-offset="8" class="wl-pop w-[360px] p-0" :aria-label="t('prefs.title')" data-testid="welcome-options">
+          <PopoverContent side="top" align="start" :side-offset="8" :collision-padding="12" class="wl-pop w-[360px] p-0" :aria-label="t('prefs.title')" data-testid="welcome-options">
             <div class="wl-row items-center">
               <Languages class="wl-ic" aria-hidden="true" />
               <label for="wl-lang" class="wl-label min-w-0 flex-1">{{ t('prefs.general.language') }}</label>

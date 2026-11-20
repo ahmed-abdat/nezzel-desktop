@@ -3,7 +3,7 @@
 // - `options` may contain an empty-string value (reka forbids it on items), mapped to a sentinel here.
 // - Name it with `id` + an outside <label for>, or `aria-label` (VoiceOver/Narrator/Orca read the trigger as a combobox).
 import type { HTMLAttributes } from 'vue';
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { SelectRoot, SelectValue } from 'reka-ui';
 import SelectTrigger from './SelectTrigger.vue';
 import SelectContent from './SelectContent.vue';
@@ -39,11 +39,18 @@ const inner = computed<SelectFieldValue | undefined>({
 });
 const items = computed(() => props.options.map(o => ({ ...o, inner: toInner(o.value) as SelectFieldValue })));
 const selectedLabel = computed(() => props.options.find(o => o.value === model.value)?.label);
+
+// reka opens on pointerdown or a key only. An assistive press (VoiceOver, accessibility automation) is a bare
+// click with no pointer events before it (detail 0), which only focused the trigger: open the list for it too.
+const open = ref(false);
+function onTriggerClick(event: MouseEvent) {
+  if (event.detail === 0 && !props.disabled) open.value = true;
+}
 </script>
 
 <template>
-  <SelectRoot v-model="inner" :disabled="disabled" :name="name">
-    <SelectTrigger :id="id" v-bind="$attrs" :class="props.class">
+  <SelectRoot v-model="inner" v-model:open="open" :disabled="disabled" :name="name">
+    <SelectTrigger :id="id" v-bind="$attrs" :class="props.class" @click="onTriggerClick">
       <SelectValue v-if="$slots.value" :placeholder="placeholder" :dir="valueDir">
         <slot name="value" />
       </SelectValue>

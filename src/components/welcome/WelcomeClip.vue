@@ -1,7 +1,7 @@
 <template>
   <figure ref="box" class="wc nz-wanim" :class="{ 'is-static': mode === 'static', 'is-paused': mode === 'paused' }" data-testid="welcome-clip">
     <!-- A plain screen: a menu bar, an app with a link. The card lands in its real corner, then the Nezzel window rises. -->
-    <div ref="stage" class="wc-stage" :class="narrow && 'is-narrow'" :style="fit" role="img" :aria-label="t('welcome.clip.alt')">
+    <div class="wc-stage" :class="narrow && 'is-narrow'" :style="fit" role="img" :aria-label="t('welcome.clip.alt')">
       <div class="wc-bar" aria-hidden="true">
         <i style="width:14px" /><i style="width:34px" /><i style="width:28px" /><i style="width:40px" /><span class="flex-1" /><i style="width:16px" /><i style="width:16px" /><i style="width:46px" />
       </div>
@@ -40,7 +40,7 @@
       </section>
 
       <!-- The Nezzel window rises with the row in the list (DownloadRow.vue). -->
-      <div class="wc-win" aria-hidden="true">
+      <div ref="win" class="wc-win" aria-hidden="true">
         <div class="wc-win-bar">
           <span v-if="os === 'mac'" class="wc-lights" dir="ltr"><i /><i /><i /></span>
           <span class="wc-pill wc-paste"><LinkIcon class="wc-pill-ic rtl:-scale-x-100" /><span>{{ t('downloads.empty.cta') }}</span></span>
@@ -94,6 +94,8 @@ const logo = siteLogo(TRY_LINK) ?? '';
 const LOOP = 7900;
 /** Where each step starts: copy, card, Download. */
 const STEP_AT = [0, 1900, 3650];
+/** The rest ends: the Saved frame fades into the first beat, and step 1 shows from here. */
+const RESET = 7600;
 /** The row's progress fills linearly between these two moments. */
 const FILL = [4370, 5870] as const;
 
@@ -105,7 +107,7 @@ const keys = computed(() => shortcutKeys('CommandOrControl+C', os.value === 'mac
 /** static: the last frame, nothing moves (reduced motion, until Play). */
 const mode = ref<'running' | 'paused' | 'static'>('static');
 const box = ref<HTMLElement>();
-const stage = ref<HTMLElement>();
+const win = ref<HTMLElement>();
 const pct = ref(100);
 
 /** The scene keeps a minimum size and scales down to fit a small pane, so the card never overlaps the link. */
@@ -135,9 +137,9 @@ const narrow = computed(() => size.value.w > 0 && Math.max(size.value.w, MIN_W) 
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let frame = 0;
-/** Where the CSS loop is now, read from the stage's own animation: no second clock to drift. */
+/** Where the CSS loop is now, read from the window's own animation: no second clock to drift. */
 function clock(): number | undefined {
-  const anim = stage.value?.getAnimations?.()[0];
+  const anim = win.value?.getAnimations?.()[0];
   const at = Number(anim?.currentTime ?? NaN);
   return Number.isFinite(at) ? at % LOOP : undefined;
 }
@@ -154,13 +156,13 @@ function tick() {
     timer = setTimeout(tick, 50);
     return;
   }
-  emit('step', STEP_AT.reduce((step, start, i) => (at >= start ? i + 1 : step), 0));
+  emit('step', at >= RESET ? 1 : STEP_AT.reduce((step, start, i) => (at >= start ? i + 1 : step), 0));
   pct.value = Math.round(Math.min(1, Math.max(0, (at - FILL[0]) / (FILL[1] - FILL[0]))) * 100);
   if (at >= FILL[0] && at < FILL[1]) {
     frame = requestAnimationFrame(tick);
     return;
   }
-  const next = [...STEP_AT, FILL[0], LOOP].filter(ms => ms > at).sort((a, b) => a - b)[0] ?? LOOP;
+  const next = [...STEP_AT, FILL[0], RESET, LOOP].filter(ms => ms > at).sort((a, b) => a - b)[0] ?? LOOP;
   timer = setTimeout(tick, next - at + 10);
 }
 
@@ -240,7 +242,7 @@ defineExpose({ play });
 
 /* The base styles are the last frame (reduced motion shows it as is); the loop's keyframes draw every beat before it.
    Beats in ms of a 7.9 s loop: select 450, copy keys 1000, card 1900, pointer 2900, press 3650, card out 4150,
-   row 4250 (fill 4370-5870), saved 5900, rest, fade 7600. Transform and opacity only. */
+   row 4250 (fill 4370-5870), saved 5900, rest, reset 7600. Transform and opacity only. */
 .wc-stage { position: absolute; inset: 0; overflow: hidden; border-radius: 12px; background: var(--wc-desk); transform-origin: 0 0; pointer-events: none; }
 .wc-stage:dir(rtl) { transform-origin: 100% 0; }
 .wc-bar { height: 26px; background: var(--wc-desk-bar); display: flex; align-items: center; gap: 14px; padding-inline: 14px; direction: ltr; }
@@ -300,20 +302,18 @@ defineExpose({ play });
 .wc-toggle { position: absolute; inset-block-end: 8px; inset-inline-end: 8px; z-index: 3; }
 
 /* ---------- the loop ---------- */
-.wc:not(.is-static) .wc-stage,
 .wc:not(.is-static) .wc-sel::before,
 .wc:not(.is-static) .wc-stage :is(.wc-keys, .wc-card, .wc-cursor, .wc-best, .wc-lbl-1, .wc-lbl-2, .wc-win, .wc-row, .wc-fill, .wc-run, .wc-done, .wc-round, .wc-open) {
   animation-duration: 7900ms; animation-iteration-count: infinite; animation-fill-mode: both; animation-timing-function: linear;
 }
-.wc:not(.is-static) .wc-stage { animation-name: wc-fade; }
-.wc:not(.is-static) .wc-sel::before { animation-name: wc-sel; }
+.wc:not(.is-static) .wc-sel::before { animation-name: wc-sel, wc-reset; }
 .wc:not(.is-static) .wc-keys { animation-name: wc-keys; }
 .wc:not(.is-static) .wc-card { animation-name: wc-card; }
 .wc:not(.is-static) .wc-cursor { animation-name: wc-cursor; }
 .wc:not(.is-static) .wc-best { animation-name: wc-press; }
 .wc:not(.is-static) .wc-lbl-1 { animation-name: wc-before-press; }
 .wc:not(.is-static) .wc-lbl-2 { animation-name: wc-after-press; }
-.wc:not(.is-static) .wc-win { animation-name: wc-win; }
+.wc:not(.is-static) .wc-win { animation-name: wc-win, wc-reset; }
 .wc:not(.is-static) .wc-row { animation-name: wc-row; }
 .wc:not(.is-static) .wc-fill { animation-name: wc-fill; }
 .wc:not(.is-static) :is(.wc-run, .wc-round) { animation-name: wc-before-saved; }
@@ -321,8 +321,9 @@ defineExpose({ play });
 .wc:not(.is-static) .wc-spin { animation: wc-spin 1s linear infinite; }
 .wc.is-paused *, .wc.is-paused .wc-sel::before { animation-play-state: paused; }
 
-/* 7600 rest, 7840 faded out; the loop starts again from the empty screen. */
-@keyframes wc-fade { 0%, 96.2% { opacity: 1; } 99.2%, 100% { opacity: 0; } }
+/* 7600 → 7840: what the first beat lacks (selection, keys, window) fades out; the screen and the app stay,
+   so the loop goes from Saved straight into beat 1 and never shows an empty stage. */
+@keyframes wc-reset { 0%, 96.2% { opacity: 1; animation-timing-function: ease-out; } 99.2%, 100% { opacity: 0; } }
 /* 450 → 830: a selection sweeps the link. */
 @keyframes wc-sel {
   0%, 5.7% { transform: scaleX(0); animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1); }
@@ -331,7 +332,8 @@ defineExpose({ play });
 /* 1000: the copy keys. */
 @keyframes wc-keys {
   0%, 12.66% { opacity: 0; transform: translateY(3px); animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1); }
-  15.2%, 100% { opacity: 1; transform: none; }
+  15.2%, 96.2% { opacity: 1; transform: none; animation-timing-function: ease-out; }
+  99.2%, 100% { opacity: 0; transform: none; }
 }
 /* 1900: the card lands in its corner; 4150: it hands over to the list. */
 @keyframes wc-card {

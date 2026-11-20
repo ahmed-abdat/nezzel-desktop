@@ -27,6 +27,20 @@
           @click.stop="onBoxClick"
         />
         <span v-if="nested" class="w-5 shrink-0 self-center text-end text-[12px] text-muted-foreground tnum" aria-hidden="true">{{ group.parentIndex != null ? count(group.parentIndex + 1) : '' }}</span>
+        <!-- Several saved files (a photo post): open in place, like a playlist. Open on the row still opens the first. -->
+        <Button
+          v-if="hasFiles"
+          size="icon-xs"
+          variant="ghost"
+          class="-ms-1 shrink-0 self-center rounded-full text-muted-foreground"
+          :aria-expanded="filesOpen"
+          :aria-controls="filesOpen ? savedFiles.map((_, i) => fileLineId(i)).join(' ') : undefined"
+          :aria-label="t(filesOpen ? 'downloads.playlist.hide' : 'downloads.playlist.show', { title })"
+          data-testid="files-toggle"
+          @click.stop="filesOpen = !filesOpen"
+        >
+          <ChevronRight class="transition-transform duration-150 ease-[var(--nz-ease)] rtl:-scale-x-100 motion-reduce:transition-none" :class="filesOpen && 'rotate-90 rtl:-rotate-90'" aria-hidden="true" />
+        </Button>
         <figure
           v-if="showThumbnails"
           class="relative m-0 grid shrink-0 place-items-center overflow-hidden rounded-[5px] bg-muted text-muted-foreground ring-1 ring-black/5 dark:ring-white/5"
@@ -251,6 +265,53 @@
       </template>
     </context-menu-content>
   </context-menu>
+  <template v-if="hasFiles && filesOpen">
+    <li
+      v-for="(file, i) in savedFiles"
+      :id="fileLineId(i)"
+      :key="file.path"
+      class="group/file relative flex items-center gap-3 border-b border-hairline py-1 pe-4 ps-[68px] before:absolute before:inset-y-0 before:start-[43px] before:w-px before:bg-hairline animate-in fade-in-0 duration-150 motion-reduce:animate-none"
+      data-testid="saved-file"
+    >
+      <!-- Local files have no preview in the webview (no asset access): the file's kind stands in. -->
+      <span class="grid h-[27px] w-12 shrink-0 place-items-center rounded-[5px] bg-muted text-muted-foreground ring-1 ring-black/5 dark:ring-white/5" aria-hidden="true">
+        <component :is="FILE_ICONS[file.kind]" class="size-4" />
+      </span>
+      <p class="flex min-w-0 flex-1 items-center gap-2 text-[12.5px]">
+        <!-- Cut in the middle: the end (number, extension) is what tells a post's files apart. -->
+        <bdi :id="`${fileLineId(i)}-name`" dir="ltr" class="flex min-w-0" :title="file.name"><span class="truncate">{{ file.name.slice(0, -NAME_TAIL) }}</span><span class="shrink-0 whitespace-pre">{{ file.name.slice(-NAME_TAIL) }}</span></bdi>
+        <span v-if="missingFiles.has(file.path)" class="inline-flex shrink-0 items-center gap-1 font-medium text-destructive-foreground" role="status">
+          <triangle-alert class="size-3.5" aria-hidden="true" />{{ t('feedback.fileMissing') }}
+        </span>
+      </p>
+      <div class="flex shrink-0 items-center gap-1 @min-[1040px]/list:w-[200px] @min-[1040px]/list:justify-end">
+        <Button
+          variant="ghost"
+          class="text-primary hover:text-primary"
+          :disabled="missingFiles.has(file.path)"
+          :aria-describedby="`${fileLineId(i)}-name`"
+          @click="openSaved(file.path)"
+        >
+          {{ t('downloads.row.open') }}
+        </Button>
+        <tooltip :content="t('downloads.row.show')">
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            class="opacity-0 transition-opacity group-hover/file:opacity-100 group-focus-within/file:opacity-100 focus-visible:opacity-100"
+            :disabled="missingFiles.has(file.path)"
+            :aria-label="t('downloads.row.show')"
+            :aria-describedby="`${fileLineId(i)}-name`"
+            @click="revealSaved(file.path)"
+          >
+            <folder-open />
+          </Button>
+        </tooltip>
+        <!-- The row's ⋯ slot: keeps Open in one column with the row's Open. -->
+        <span class="size-7" aria-hidden="true" />
+      </div>
+    </li>
+  </template>
 </template>
 
 <script setup lang="ts">
@@ -266,7 +327,7 @@ import { siteLogo } from '../../helpers/siteLogo';
 import { isPermanentError } from '../../helpers/errorOutcome';
 import { computed, nextTick, ref, toRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Check, Copy, Ellipsis, ExternalLink, File, Film, FolderOpen, Image as ImageIcon, Images, Info, ListX, MessageSquareWarning, Music, Pause, Play, RotateCw, ThumbsUp, Trash2, TriangleAlert, Wrench, X } from '@lucide/vue';
+import { Check, ChevronRight, Copy, Ellipsis, ExternalLink, File, Film, FolderOpen, Image as ImageIcon, Images, Info, ListX, MessageSquareWarning, Music, Pause, Play, RotateCw, ThumbsUp, Trash2, TriangleAlert, Wrench, X } from '@lucide/vue';
 import type { RouteLocationRaw } from 'vue-router';
 import { useRouter } from 'vue-router';
 import Tooltip from '@/components/ui/tooltip/Tooltip.vue';
@@ -324,7 +385,7 @@ const playlistSummary = computed(() => {
   return t('inputFilters.playlistSelection.checkedCount', { count, total: group.value.entries?.length ?? 0 }, count);
 });
 const colCls = 'hidden shrink-0 self-center truncate text-[12.5px] text-muted-foreground @min-[1040px]/list:block';
-const { phase, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, alreadySaved, sponsorNote, fileKind, readingStuck, processing } = useDownloadRow(group);
+const { phase, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, savedFiles, alreadySaved, sponsorNote, fileKind, readingStuck, processing } = useDownloadRow(group);
 const logo = computed(() => siteLogo(group.value.url));
 /** Not known (yet): a typographic placeholder, not copy, so it needs no translation. */
 const EMPTY_CELL = '\u2014';
@@ -334,7 +395,21 @@ const cells = computed(() => [
   { key: 'size', value: columns.value.size, cls: 'w-20 text-end', num: true },
   { key: 'length', value: columns.value.length, cls: 'w-16 text-end', num: true },
 ]);
-const { download, pause, retry, recover, recoveryLabel, recoveryIsSwitch, remove, cancel, openFile, revealFile, openPage, copyLink, deleteFile, canTrash } = useDownloadActions(group);
+const { download, pause, retry, recover, recoveryLabel, recoveryIsSwitch, remove, cancel, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, canTrash } = useDownloadActions(group);
+/** A finished row that saved several files lists them under it on demand (closed by default). */
+const hasFiles = computed(() => savedFiles.value.length > 1);
+const filesOpen = ref(false);
+const fileLineId = (index: number) => `saved-file-${group.value.id}-${index}`;
+const FILE_ICONS = { image: ImageIcon, video: Film, audio: Music, file: File };
+const NAME_TAIL = 12;
+/** Files this session found gone from disk: their line says so and stops offering Open. */
+const missingFiles = ref(new Set<string>());
+async function openSaved(path: string) {
+  if (!await openSavedFile(path)) missingFiles.value = new Set(missingFiles.value).add(path);
+}
+async function revealSaved(path: string) {
+  if (!await revealSavedFile(path)) missingFiles.value = new Set(missingFiles.value).add(path);
+}
 /** Finished with a known file: double-click, thumbnail, title and Enter open it. Nothing else opens. */
 /** A file that only reveals its folder (installer, archive, unknown): the primary action says so. */
 const revealsFile = computed(() => group.value.mediaKind === 'file' && revealsInFolder(destination.value));

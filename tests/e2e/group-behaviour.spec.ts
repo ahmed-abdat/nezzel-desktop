@@ -33,3 +33,45 @@ test('a playlist row expands, pauses all and offers Resume all', async ({ page }
   await page.getByRole('button', { name: 'Pause all', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Resume all', exact: true })).toBeVisible();
 });
+
+test('a saved photo post opens in place and opens the chosen photo, in Arabic too', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator(`#${MAIN_PANE_ID}`)).toBeVisible();
+  await page.evaluate(async () => {
+    // @ts-expect-error served by the Vite dev server, not resolved by tsc
+    const { addRow, appearance } = await import('/tests/e2e/utils/uiStateSeeds.ts');
+    // @ts-expect-error served by the Vite dev server, not resolved by tsc
+    const { useMediaDestinationStore } = await import('/src/stores/media/destination.ts');
+    // @ts-expect-error served by the Vite dev server, not resolved by tsc
+    const { MediaState } = await import('/src/stores/media/state.ts');
+    await appearance('ar', 'light');
+    const { groupId } = addRow({ title: 'Instagram post', url: 'https://www.instagram.com/p/abc/', extractor: 'instagram', kind: 'carousel', state: MediaState.done });
+    for (const n of [1, 2, 3]) useMediaDestinationStore().addDestination(groupId, { path: `/Users/me/Downloads/Nezzel/post_${n}.jpg`, confidence: 100 });
+    // Record what the opener is asked to open (the e2e backend answers every other call as before).
+    const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown, options?: unknown) => unknown } }).__TAURI_INTERNALS__;
+    const invoke = internals.invoke;
+    const opened: string[] = [];
+    (window as unknown as { __opened: string[] }).__opened = opened;
+    internals.invoke = (cmd, args, options) => {
+      if (cmd === 'plugin:opener|open_path') opened.push((args as { path: string }).path);
+      return invoke(cmd, args, options);
+    };
+  });
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  const toggle = page.getByTestId('files-toggle');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  const lines = page.getByTestId('saved-file');
+  await expect(lines).toHaveCount(3);
+  await expect(lines.nth(1)).toContainText('post_2.jpg');
+  // RTL: the icon sits at the start (right) of the line, the actions at its end (left).
+  const second = lines.nth(1);
+  const icon = await second.locator('span[aria-hidden="true"]').first().boundingBox();
+  const name = await second.locator('bdi').boundingBox();
+  const open = await second.getByRole('button', { name: 'فتح', exact: true }).boundingBox();
+  expect(icon!.x).toBeGreaterThan(name!.x);
+  expect(name!.x).toBeGreaterThan(open!.x);
+  await second.getByRole('button', { name: 'فتح', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __opened: string[] }).__opened)).toEqual(['/Users/me/Downloads/Nezzel/post_2.jpg']);
+});

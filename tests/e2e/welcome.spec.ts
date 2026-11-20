@@ -29,13 +29,45 @@ test('fresh profile: welcome, Get started, then the main list', async ({ page, c
   await expect(welcome.getByTestId('welcome-copy')).toHaveText('Copied');
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('https://www.youtube.com/watch?v=jNQXAC9IVRw');
 
+  // The app's default window: 360px from Change's start runs past its end edge.
+  await page.setViewportSize({ width: 880, height: 836 });
   await welcome.getByTestId('welcome-change').click();
   const options = page.getByTestId('welcome-options');
   await expect(options.getByRole('switch', { name: 'Start with my computer' })).toBeChecked();
+  // The panel keeps clear of the window's edges (measured once its zoom-in has ended).
+  await options.evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
+  const box = (await options.boundingBox())!;
+  const view = page.viewportSize()!;
+  expect(Math.min(box.x, box.y, view.width - box.x - box.width, view.height - box.y - box.height)).toBeGreaterThanOrEqual(12);
   await expect(options.getByTestId('welcome-shortcut')).toContainText('Copy a link anywhere, then press');
   // The sentence follows the switch, so "off" is visible without reopening the panel.
   await options.getByRole('switch', { name: 'Send crash and error reports' }).click();
   await expect(welcome.getByTestId('welcome-status')).toHaveText('Nezzel opens with your computer. Crash reports are off');
+
+  // The language list by mouse: it opens above the panel, the pick applies at once, the panel stays open.
+  // Each option is hit-tested at its centre, so a list drawn behind the panel fails here.
+  const pickByMouse = async (option: ReturnType<typeof page.getByRole>) => {
+    await options.getByTestId('welcome-language').click();
+    await expect(option).toBeVisible();
+    expect(await option.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+    })).toBe(true);
+    await option.click();
+    await expect(page.getByRole('listbox')).toBeHidden();
+  };
+  await pickByMouse(page.getByRole('option', { name: /^العربية/ }));
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  await expect(options).toBeVisible();
+  // Back to the system language (the first option, labelled in Arabic now).
+  await pickByMouse(page.getByRole('option').first());
+  await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
+  await expect(options).toBeVisible();
+  // An assistive press (VoiceOver, accessibility automation) is a bare click with no pointer events: it opens the list too.
+  await options.getByTestId('welcome-language').dispatchEvent('click');
+  await expect(page.getByRole('listbox')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox')).toBeHidden();
   await page.keyboard.press('Escape');
   await expect(options).toBeHidden();
 

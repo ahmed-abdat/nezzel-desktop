@@ -188,6 +188,98 @@ describe('row phase mapping', () => {
   });
 });
 
+describe('row saved files', () => {
+  async function savedRow(id: string, paths: string[], confidence = 100) {
+    const groups = useMediaGroupStore();
+    const item = { id: `${id}-item`, isLeader: true, url: 'https://www.instagram.com/p/x/', audioCodecs: [], formats: [], filesize: 0 };
+    groups.createGroup({ ...item, id, title: 'Post', mediaKind: 'carousel', total: 1, processed: 1, errored: 0, isCombined: false, items: { [item.id]: item } });
+    useMediaStateStore().setGroupState(id, MediaState.done);
+    const destinations = useMediaDestinationStore();
+    // An intermediate path the engine reported first, with less confidence: never a saved file.
+    destinations.addDestination(id, { path: '/tmp/part', confidence: 60 });
+    for (const path of paths) destinations.addDestination(id, { path, confidence });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    return mount(DownloadRow, { props: { group: groups.findGroupById(id)! }, global: { plugins: [router, i18n] } });
+  }
+
+  it('lists every saved file in saved order once, for a multi-file row only', async () => {
+    const model = (id: string) => {
+      let files: unknown;
+      const probe = defineComponent({
+        setup() {
+          files = useDownloadRow(ref(useMediaGroupStore().findGroupById(id)!)).savedFiles.value;
+          return () => null;
+        },
+      });
+      mount(probe, { global: { plugins: [i18n] } }).unmount();
+      return files;
+    };
+    const multi = await savedRow('files-multi', ['/d/p 1.jpg', '/d/p 2.jpg', '/d/p 1.jpg', '/d/p 3.mp4']);
+    const single = await savedRow('files-single', ['/d/only.jpg']);
+    try {
+      expect(model('files-multi')).toEqual([
+        { path: '/d/p 1.jpg', name: 'p 1.jpg', kind: 'image' },
+        { path: '/d/p 2.jpg', name: 'p 2.jpg', kind: 'image' },
+        { path: '/d/p 3.mp4', name: 'p 3.mp4', kind: 'video' },
+      ]);
+      const toggle = multi.get('[data-testid="files-toggle"]');
+      expect(toggle.attributes('aria-expanded')).toBe('false');
+      expect(multi.findAll('[data-testid="saved-file"]')).toHaveLength(0);
+      expect(single.find('[data-testid="files-toggle"]').exists()).toBe(false);
+    } finally {
+      multi.unmount();
+      single.unmount();
+    }
+  });
+
+  it('never launches a script or installer that came with a post: its folder opens instead', async () => {
+    const opened: string[] = [];
+    const revealed: string[] = [];
+    installTauriMock({
+      'plugin:opener|open_path': (_cmd, args) => { opened.push((args as { path: string }).path); },
+      'plugin:opener|reveal_item_in_dir': (_cmd, args) => { revealed.push(JSON.stringify(args)); },
+    });
+    const row = await savedRow('files-unsafe', ['/d/a.jpg', '/d/run.command', '/d/setup.exe']);
+    try {
+      await row.get('[data-testid="files-toggle"]').trigger('click');
+      for (const line of row.findAll('[data-testid="saved-file"]')) {
+        await line.findAll('button')[0].trigger('click');
+        await flushPromises();
+      }
+      expect(opened).toEqual(['/d/a.jpg']);
+      expect(revealed).toHaveLength(2);
+      expect(revealed.join()).toContain('run.command');
+      expect(revealed.join()).toContain('setup.exe');
+    } finally {
+      row.unmount();
+    }
+  });
+
+  it('opens and shows the chosen file, and marks a missing one', async () => {
+    const opened: string[] = [];
+    installTauriMock({
+      'plugin:opener|open_path': (_cmd, args) => { opened.push((args as { path: string }).path); },
+      'plugin:opener|reveal_item_in_dir': () => Promise.reject('missing'),
+    });
+    const row = await savedRow('files-open', ['/d/a.jpg', '/d/b.jpg', '/d/c.jpg']);
+    try {
+      await row.get('[data-testid="files-toggle"]').trigger('click');
+      const lines = row.findAll('[data-testid="saved-file"]');
+      expect(lines.map(line => line.text())).toEqual(['a.jpgOpen', 'b.jpgOpen', 'c.jpgOpen']);
+      await lines[1].findAll('button')[0].trigger('click');
+      await flushPromises();
+      expect(opened).toEqual(['/d/b.jpg']);
+      // Show in folder cannot find the third file: its line says so and stops offering Open.
+      await lines[2].findAll('button')[1].trigger('click');
+      await flushPromises();
+      const third = row.findAll('[data-testid="saved-file"]')[2];
+      expect(third.text()).toContain('File not found');
+      expect(third.findAll('button')[0].attributes('disabled')).toBeDefined();
+    } finally { row.unmount(); }
+  });
+});
+
 describe('row login hint', () => {
   function needsLogin(id: string, code: string | undefined, state: MediaState) {
     const groups = useMediaGroupStore();
