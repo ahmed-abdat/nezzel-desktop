@@ -57,9 +57,9 @@ The app isn't code-signed yet, so macOS and Windows ask once before it opens. Th
 
 **macOS**
 
-1. Open the `.dmg` and drag Nezzel to Applications.
-2. Open Nezzel. macOS says it can't check the app: click **Done** (not Move to Trash).
-3. Open System Settings → Privacy & Security, scroll down and click **Open Anyway**, then confirm.
+1. Open the downloaded `.dmg`. macOS says it can't verify it: click **Done** (not Move to Trash).
+2. Open System Settings → Privacy & Security, scroll down and click **Open Anyway**, then confirm with your password or Touch ID. The disk image opens.
+3. Drag Nezzel to Applications and open it. If macOS asks again, repeat step 2.
 
 On macOS 14 or earlier you can right-click the app and choose Open instead. From Terminal: `xattr -dr com.apple.quarantine /Applications/Nezzel.app`.
 
@@ -123,7 +123,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 حمّل التطبيق من [صفحة الإصدارات](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). اختر الملف المناسب لجهازك: ‎`aarch64.dmg`‎ لماك بمعالج Apple (M1 وما بعده)، ‎`x64.dmg`‎ لماك Intel، ‎`x64-setup.exe`‎ لويندوز، و‎`.deb`‎ أو ‎`.rpm`‎ أو ‎`AppImage`‎ للينكس.
 
-التطبيق غير موقّع بعد، لذلك يسألك النظام مرة واحدة قبل فتحه، وهذا متوقَّع. في macOS: افتح التطبيق، اضغط «تم» في التنبيه، ثم افتح «إعدادات النظام ← الخصوصية والأمن» واضغط «فتح على أي حال». في Windows: اضغط «مزيد من المعلومات» (More info) ثم «تشغيل على أي حال» (Run anyway).
+التطبيق غير موقّع بعد، لذلك يسألك النظام مرة واحدة قبل فتحه، وهذا متوقَّع. في macOS: افتح الملف الذي نزّلته، اضغط «تم» في التنبيه، ثم افتح «إعدادات النظام ← الخصوصية والأمن» واضغط «فتح على أي حال». في Windows: اضغط «مزيد من المعلومات» (More info) ثم «تشغيل على أي حال» (Run anyway).
 
 لا يوجد حساب في Nezzel. تُرسَل تقارير الأعطال والأخطاء إلى مشروعنا في Sentry (في الاتحاد الأوروبي)، وأعداد استخدام يومية مجهولة إلى خادمنا، دون الروابط أو أسماء الملفات أو المسارات أو الكوكيز. كلاهما مفعّل افتراضيًا ويمكنك إيقافه من الإعدادات. ولا يقرأ ملفات تعريف الارتباط (الكوكيز) من متصفحك إلا بعد موافقتك، ولا يمرّر إلا كوكيز الموقع الذي طلبها. التفاصيل في [PRIVACY.md](PRIVACY.md).
 
@@ -139,7 +139,7 @@ Copiez un lien : Nezzel le détecte (ou collez-le dans le champ). Choisissez la 
 
 Choisissez le fichier de votre système : `aarch64.dmg` pour un Mac Apple Silicon (M1 ou plus récent), `x64.dmg` pour un Mac Intel, `x64-setup.exe` pour Windows, `.deb`, `.rpm` ou `AppImage` pour Linux.
 
-L’application n’est pas encore signée : le système demande une confirmation, une seule fois. Sur macOS, ouvrez l’app, cliquez sur «&nbsp;Terminé&nbsp;», puis dans Réglages Système → Confidentialité et sécurité cliquez sur «&nbsp;Ouvrir quand même&nbsp;». Sur Windows, cliquez sur «&nbsp;Informations complémentaires&nbsp;» puis «&nbsp;Exécuter quand même&nbsp;».
+L’application n’est pas encore signée : le système demande une confirmation, une seule fois. Sur macOS, ouvrez le fichier téléchargé, cliquez sur «&nbsp;Terminé&nbsp;», puis dans Réglages Système → Confidentialité et sécurité cliquez sur «&nbsp;Ouvrir quand même&nbsp;». Sur Windows, cliquez sur «&nbsp;Informations complémentaires&nbsp;» puis «&nbsp;Exécuter quand même&nbsp;».
 
 Il n’y a pas de compte Nezzel. Les rapports de plantage et d’erreur partent vers notre projet Sentry (UE) et des compteurs d’usage quotidiens anonymes vers notre serveur, sans liens, noms de fichiers, chemins ni cookies. Les deux sont activés par défaut et se désactivent dans les Réglages. Détails dans [PRIVACY.md](PRIVACY.md).
 
