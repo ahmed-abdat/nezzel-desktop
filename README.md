@@ -90,6 +90,12 @@ On macOS 14 or earlier you can right-click the app and choose Open instead. From
 
 The `.deb` and `.rpm` need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later), because the Linux builds are made on Ubuntu 22.04.
 
+**When a site needs your login.** Nezzel uses your browser's login automatically (see Sites above) and never sends cookies or passwords anywhere. On a Mac, macOS may ask permission first; if you decline, that one download fails and you can retry:
+
+- **Keychain** (Chrome, Edge, Brave and similar): a prompt to unlock your browser's Keychain item. Click **Always Allow** to be asked once, or **Allow** to be asked again next time.
+- **Safari**: if the download fails, open System Settings → Privacy & Security → Full Disk Access, turn on Nezzel, then restart Nezzel.
+- **Automation** ("control your browser"): asked by the quick download bar to read your open tab's link. Click **Allow**, or **Don't Allow** and Nezzel uses the copied link instead. Change it later in System Settings → Privacy & Security → Automation.
+
 The tools Nezzel uses (yt-dlp, ffmpeg and the rest) come inside the installer, so nothing is downloaded on first start. After that Nezzel keeps them and itself up to date; you can turn both off in Settings.
 
 On Linux Wayland, bind **Quick download** in your desktop's custom keyboard shortcuts to
@@ -104,7 +110,7 @@ Nezzel's window is in front.
 
 Tested with real public links: **YouTube, TikTok, X, Facebook, Instagram reels, Bluesky, Pinterest, Telegram channels, Reddit images, LinkedIn, Snapchat Spotlight, Vimeo, Dailymotion, Twitch clips** and **SoundCloud** audio. That includes photos and multi-photo posts from X, Bluesky, Pinterest and Telegram. Many more sites work through [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [gallery-dl](https://github.com/mikf/gallery-dl), which Nezzel keeps up to date.
 
-Some posts only open when you're signed in (many Instagram and Reddit posts, for example). Nezzel can then use the browser you're signed in with, but only after you say yes, and only that site's cookies are passed on. Private posts, paid content and DRM-protected video are not supported.
+Some posts only open when you're signed in (many Instagram and Reddit posts, for example). Nezzel then uses the browser you're signed in with automatically, only that site's cookies are used, on your computer, and you can switch it off in Settings → Logins. Private posts, paid content and DRM-protected video are not supported.
 
 A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/nezzel-desktop/issues/new/choose). No link is required.
 
@@ -132,7 +138,9 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 التطبيق غير موقّع بعد، لذلك يسألك النظام مرة واحدة قبل فتحه، وهذا متوقَّع. في macOS: افتح الملف الذي نزّلته، اضغط «تم» في التنبيه، ثم افتح «إعدادات النظام ← الخصوصية والأمن» واضغط «فتح على أي حال». في Windows: اضغط «مزيد من المعلومات» (More info) ثم «تشغيل على أي حال» (Run anyway).
 
-لا يوجد حساب في Nezzel. تُرسَل تقارير الأعطال والأخطاء إلى مشروعنا في Sentry (في الاتحاد الأوروبي)، وأعداد استخدام يومية مجهولة إلى خادمنا، دون الروابط أو أسماء الملفات أو المسارات أو الكوكيز. كلاهما مفعّل افتراضيًا ويمكنك إيقافه من الإعدادات. ولا يقرأ ملفات تعريف الارتباط (الكوكيز) من متصفحك إلا بعد موافقتك، ولا يمرّر إلا كوكيز الموقع الذي طلبها. التفاصيل في [PRIVACY.md](PRIVACY.md).
+عندما يطلب موقع تسجيل الدخول: بعض الروابط لا تُفتح إلا وأنت مسجّل الدخول. يقرأ Nezzel حينها تسجيل دخولك إلى ذلك الموقع من متصفحك على حاسوبك، ولا يُرسَل أي كوكيز أو كلمة سر إلى أي جهة. يلزم ذلك فقط للمحتوى الذي يتطلب حسابًا، ويمكنك إيقافه من «الإعدادات ← تسجيلات الدخول». في macOS قد يطلب النظام إذنك أولًا، وإن رفضت يفشل ذلك التنزيل وحده فتعيد المحاولة. «سلسلة المفاتيح» (Chrome وEdge وBrave): اضغط «السماح دائمًا» ليسألك مرة واحدة، أو «السماح» ليسألك في كل مرة. Safari: إن فشل التنزيل ففعّل Nezzel في «إعدادات النظام ← الخصوصية والأمن ← الوصول الكامل إلى القرص» ثم أعد تشغيله. «الأتمتة» (التحكم في المتصفح): تطلبها شريط التنزيل السريع لقراءة رابط تبويبك المفتوح؛ اضغط «السماح»، أو «رفض» فيستخدم Nezzel الرابط المنسوخ.
+
+لا يوجد حساب في Nezzel. تُرسَل تقارير الأعطال والأخطاء إلى مشروعنا في Sentry (في الاتحاد الأوروبي)، وأعداد استخدام يومية مجهولة إلى خادمنا، دون الروابط أو أسماء الملفات أو المسارات أو الكوكيز. كلاهما مفعّل افتراضيًا ويمكنك إيقافه من الإعدادات. وعندما يطلب موقع تسجيل الدخول يستخدم متصفحك تلقائيًا، ولا يستخدم إلا كوكيز ذلك الموقع على حاسوبك، ويمكنك إيقاف ذلك من «الإعدادات ← تسجيلات الدخول». التفاصيل في [PRIVACY.md](PRIVACY.md).
 
 يوجد أيضًا [Nezzel لأندرويد](https://github.com/ahmed-abdat/nezzel).
 
@@ -147,6 +155,8 @@ Copiez un lien : Nezzel le détecte (ou collez-le dans le champ). Choisissez la 
 Choisissez le fichier de votre système : `aarch64.dmg` pour un Mac Apple Silicon (M1 ou plus récent), `x64.dmg` pour un Mac Intel, `x64-setup.exe` pour Windows, `.deb`, `.rpm` ou `AppImage` pour Linux.
 
 L’application n’est pas encore signée : le système demande une confirmation, une seule fois. Sur macOS, ouvrez le fichier téléchargé, cliquez sur «&nbsp;Terminé&nbsp;», puis dans Réglages Système → Confidentialité et sécurité cliquez sur «&nbsp;Ouvrir quand même&nbsp;». Sur Windows, cliquez sur «&nbsp;Informations complémentaires&nbsp;» puis «&nbsp;Exécuter quand même&nbsp;».
+
+Quand un site demande votre connexion : certains liens ne s’ouvrent que si vous êtes connecté. Nezzel lit alors votre connexion à ce site depuis votre navigateur, sur votre ordinateur ; cookies et mots de passe ne sont envoyés nulle part. Cela ne sert que pour les contenus qui exigent un compte, et vous pouvez le désactiver dans Réglages → Connexions. Sur Mac, macOS peut demander l’autorisation d’abord ; si vous refusez, ce seul téléchargement échoue et vous pouvez réessayer. Trousseau (Chrome, Edge, Brave) : cliquez sur «&nbsp;Toujours autoriser&nbsp;» pour n’être sollicité qu’une fois, ou «&nbsp;Autoriser&nbsp;» pour l’être à chaque fois. Safari : si le téléchargement échoue, activez Nezzel dans Réglages Système → Confidentialité et sécurité → Accès complet au disque, puis relancez Nezzel. Automatisation («&nbsp;contrôler le navigateur&nbsp;») : demandée par la barre de téléchargement rapide pour lire le lien de l’onglet ouvert ; cliquez sur «&nbsp;Autoriser&nbsp;», ou «&nbsp;Refuser&nbsp;» et Nezzel utilise le lien copié.
 
 Il n’y a pas de compte Nezzel. Les rapports de plantage et d’erreur partent vers notre projet Sentry (UE) et des compteurs d’usage quotidiens anonymes vers notre serveur, sans liens, noms de fichiers, chemins ni cookies. Les deux sont activés par défaut et se désactivent dans les Réglages. Détails dans [PRIVACY.md](PRIVACY.md).
 
