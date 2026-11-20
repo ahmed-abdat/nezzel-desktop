@@ -67,6 +67,7 @@ shlex = "2.0.1"
 trash = "5.2.9"
 rusqlite = { version = "0.41.1", default-features = false, features = ["bundled"] }
 psl = "2.1.246"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 
 [dev-dependencies]
 lzma-rust2 = { version = "0.23.0", default-features = false, features = ["encoder"] }

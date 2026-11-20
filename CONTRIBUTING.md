@@ -13,7 +13,7 @@ Tauri 2 (Rust) with a Vue 3 + TypeScript front end. You need:
 - Python 3: the build fetches and verifies the bundled gallery-dl and aria2 helpers.
 
 ```sh
-git clone https://github.com/ahmed-abdat/nezzel-desktop.git && cd nezzel-desktop
+git clone https://github.com/hululsofthq/nezzel-desktop.git && cd nezzel-desktop
 pnpm install
 pnpm tauri dev      # run the app in development
 pnpm tauri build    # build an installer for this OS (also needs cargo-about for the licence file)

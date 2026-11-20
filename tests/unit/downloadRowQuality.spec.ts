@@ -189,6 +189,31 @@ describe('row phase mapping', () => {
 });
 
 describe('row saved files', () => {
+  function mockPhotoVisibility() {
+    let callback: IntersectionObserverCallback;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    const unobserve = vi.fn();
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(cb: IntersectionObserverCallback) { callback = cb; }
+      observe = observe;
+      unobserve = unobserve;
+      disconnect = disconnect;
+    });
+    const createObjectURL = vi.fn<(blob: Blob) => string>(() => 'blob:saved-photo');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+    return {
+      observe, disconnect, createObjectURL, revokeObjectURL,
+      visible(target: Element, isIntersecting: boolean) {
+        callback([{ target, isIntersecting } as IntersectionObserverEntry], {} as IntersectionObserver);
+      },
+    };
+  }
+
   async function savedRow(id: string, paths: string[], confidence = 100) {
     const groups = useMediaGroupStore();
     const item = { id: `${id}-item`, isLeader: true, url: 'https://www.instagram.com/p/x/', audioCodecs: [], formats: [], filesize: 0 };
@@ -202,6 +227,66 @@ describe('row saved files', () => {
     await router.push('/');
     return mount(DownloadRow, { props: { group: groups.findGroupById(id)! }, global: { plugins: [router, i18n] } });
   }
+
+  it.each([false, true])('requests only visible saved photos once; rejection=%s keeps the placeholder', async (rejects) => {
+    const visibility = mockPhotoVisibility();
+    const thumbnail = vi.fn(() => rejects ? Promise.reject('unavailable') : Promise.resolve([255, 216, 255, 217]));
+    installTauriMock({ saved_photo_thumbnail: thumbnail });
+    const row = await savedRow('files-preview', ['/d/صورة.jpg', '/d/unseen.png', '/d/video.mp4']);
+    try {
+      expect(thumbnail).not.toHaveBeenCalled();
+      await row.get('[data-testid="files-toggle"]').trigger('click');
+      const lines = row.findAll('[data-testid="saved-file"]');
+      expect(visibility.observe.mock.calls.map(([el]) => el)).toEqual([lines[0].element, lines[1].element]);
+      visibility.visible(lines[0].element, false);
+      await flushPromises();
+      expect(thumbnail).not.toHaveBeenCalled();
+      visibility.visible(lines[0].element, true);
+      visibility.visible(lines[0].element, true);
+      await flushPromises();
+      expect(thumbnail).toHaveBeenCalledExactlyOnceWith('saved_photo_thumbnail', { groupId: 'files-preview', path: '/d/صورة.jpg' });
+      const box = lines[0].get('[data-testid="saved-file-open"] > span');
+      expect(box.find('img').exists()).toBe(!rejects);
+      expect(box.find('svg').exists()).toBe(rejects);
+      expect(lines[1].find('img').exists()).toBe(false);
+      if (!rejects) {
+        expect(box.get('img').attributes('src')).toBe('blob:saved-photo');
+        expect(box.get('img').attributes('alt')).toBe('صورة.jpg');
+        expect(visibility.createObjectURL.mock.calls[0][0]).toMatchObject({ type: 'image/jpeg', size: 4 });
+      }
+      // Disclosure changes do not fetch the same photo a second time.
+      await row.get('[data-testid="files-toggle"]').trigger('click');
+      await row.get('[data-testid="files-toggle"]').trigger('click');
+      visibility.visible(row.get('[data-testid="saved-file"]').element, true);
+      expect(thumbnail).toHaveBeenCalledTimes(1);
+    } finally {
+      row.unmount();
+      expect(visibility.disconnect).toHaveBeenCalledOnce();
+      expect(visibility.revokeObjectURL.mock.calls).toEqual(rejects ? [] : [['blob:saved-photo']]);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not create a blob URL if the photo resolves after unmount', async () => {
+    const visibility = mockPhotoVisibility();
+    let resolve!: (bytes: number[]) => void;
+    installTauriMock({
+      saved_photo_thumbnail: () => new Promise<number[]>((done) => { resolve = done; }),
+    });
+    const row = await savedRow('files-late-preview', ['/d/a.jpg', '/d/b.jpg']);
+    try {
+      await row.get('[data-testid="files-toggle"]').trigger('click');
+      visibility.visible(row.get('[data-testid="saved-file"]').element, true);
+      await flushPromises();
+      row.unmount();
+      resolve([255, 216, 255, 217]);
+      await flushPromises();
+      expect(visibility.createObjectURL).not.toHaveBeenCalled();
+    } finally {
+      row.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
 
   it('lists every saved file in saved order once, for a multi-file row only', async () => {
     const model = (id: string) => {
@@ -244,7 +329,7 @@ describe('row saved files', () => {
     try {
       await row.get('[data-testid="files-toggle"]').trigger('click');
       for (const line of row.findAll('[data-testid="saved-file"]')) {
-        await line.findAll('button')[0].trigger('click');
+        await line.get('[data-testid="saved-file-open"]').trigger('click');
         await flushPromises();
       }
       expect(opened).toEqual(['/d/a.jpg']);
@@ -267,15 +352,35 @@ describe('row saved files', () => {
       await row.get('[data-testid="files-toggle"]').trigger('click');
       const lines = row.findAll('[data-testid="saved-file"]');
       expect(lines.map(line => line.text())).toEqual(['a.jpgOpen', 'b.jpgOpen', 'c.jpgOpen']);
-      await lines[1].findAll('button')[0].trigger('click');
+      const open = (line: (typeof lines)[number]) => line.findAll('button').find(button => button.text() === 'Open')!;
+      await open(lines[1]).trigger('click');
+      // The thumbnail and the name open the same file as Open.
+      await lines[0].get('[data-testid="saved-file-open"]').trigger('click');
       await flushPromises();
-      expect(opened).toEqual(['/d/b.jpg']);
+      expect(opened).toEqual(['/d/b.jpg', '/d/a.jpg']);
       // Show in folder cannot find the third file: its line says so and stops offering Open.
-      await lines[2].findAll('button')[1].trigger('click');
+      await lines[2].get('[aria-label="Show in folder"]').trigger('click');
       await flushPromises();
       const third = row.findAll('[data-testid="saved-file"]')[2];
       expect(third.text()).toContain('File not found');
-      expect(third.findAll('button')[0].attributes('disabled')).toBeDefined();
+      expect(open(third).attributes('disabled')).toBeDefined();
+      expect(third.get('[data-testid="saved-file-open"]').attributes('disabled')).toBeDefined();
+    } finally { row.unmount(); }
+  });
+
+  it('labels a numbered photo as the isolated title and its number, keeping the full name in the tooltip', async () => {
+    const name = 'خمس عادات - (1920p) - 002.jpg';
+    const row = await savedRow('files-label', [`/d/${name}`, '/d/plain.jpg']);
+    try {
+      useMediaGroupStore().findGroupById('files-label')!.title = 'خمس عادات';
+      await row.get('[data-testid="files-toggle"]').trigger('click');
+      const [numbered, plain] = row.findAll('[data-testid="saved-file-name"]');
+      const parts = numbered.findAll('bdi');
+      expect(parts.map(part => [part.attributes('dir'), part.text()])).toEqual([['auto', 'خمس عادات'], ['ltr', '002']]);
+      expect(numbered.text()).not.toContain('1920p');
+      expect(row.findAll('[data-testid="saved-file-open"]')[0].attributes('title')).toBe(name);
+      // A name without a post number is shown whole, still isolated.
+      expect(plain.findAll('bdi').map(part => [part.attributes('dir'), part.text()])).toEqual([['auto', 'plain.jpg']]);
     } finally { row.unmount(); }
   });
 });

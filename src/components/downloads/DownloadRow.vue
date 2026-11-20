@@ -270,16 +270,34 @@
       v-for="(file, i) in savedFiles"
       :id="fileLineId(i)"
       :key="file.path"
+      v-saved-photo="file.kind === 'image' ? file.path : null"
       class="group/file relative flex items-center gap-3 border-b border-hairline py-1 pe-4 ps-[68px] before:absolute before:inset-y-0 before:start-[43px] before:w-px before:bg-hairline animate-in fade-in-0 duration-150 motion-reduce:animate-none"
       data-testid="saved-file"
     >
-      <!-- Local files have no preview in the webview (no asset access): the file's kind stands in. -->
-      <span class="grid h-[27px] w-12 shrink-0 place-items-center rounded-[5px] bg-muted text-muted-foreground ring-1 ring-black/5 dark:ring-white/5" aria-hidden="true">
-        <component :is="FILE_ICONS[file.kind]" class="size-4" />
-      </span>
-      <p class="flex min-w-0 flex-1 items-center gap-2 text-[12.5px]">
-        <!-- Cut in the middle: the end (number, extension) is what tells a post's files apart. -->
-        <bdi :id="`${fileLineId(i)}-name`" dir="ltr" class="flex min-w-0" :title="file.name"><span class="truncate">{{ file.name.slice(0, -NAME_TAIL) }}</span><span class="shrink-0 whitespace-pre">{{ file.name.slice(-NAME_TAIL) }}</span></bdi>
+      <!-- Thumbnail and name open the file, like Open. The full file name stays in the tooltip. -->
+      <button
+        type="button"
+        class="group/open flex min-w-0 items-center gap-3 rounded-[5px] text-start outline-none enabled:cursor-pointer focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
+        :disabled="missingFiles.has(file.path)"
+        :title="file.name"
+        data-testid="saved-file-open"
+        @click="openSaved(file.path)"
+      >
+        <span class="grid h-[27px] w-12 shrink-0 place-items-center overflow-hidden rounded-[5px] bg-muted text-muted-foreground ring-1 ring-black/5 dark:ring-white/5">
+          <img v-if="photoUrls.has(file.path)" :src="photoUrls.get(file.path)" :alt="file.name" class="h-full w-full object-cover" @error="discardPhoto(file.path)">
+          <component :is="FILE_ICONS[file.kind]" v-else class="size-4" aria-hidden="true" />
+        </span>
+        <!-- Title and number are separate isolated boxes, so an RTL title never splits the number. -->
+        <span :id="`${fileLineId(i)}-name`" class="flex min-w-0 items-baseline gap-1.5 text-[12.5px]" data-testid="saved-file-name">
+          <template v-if="fileLabel(file.name)">
+            <bdi dir="auto" class="min-w-0 truncate decoration-foreground/40 underline-offset-2 group-enabled/open:group-hover/open:underline">{{ fileLabel(file.name)!.title }}</bdi>
+            <span class="shrink-0 text-muted-foreground" aria-hidden="true">{{ LABEL_DOT }}</span>
+            <bdi dir="ltr" class="shrink-0 text-muted-foreground tnum">{{ fileLabel(file.name)!.number }}</bdi>
+          </template>
+          <bdi v-else dir="auto" class="min-w-0 truncate decoration-foreground/40 underline-offset-2 group-enabled/open:group-hover/open:underline">{{ file.name }}</bdi>
+        </span>
+      </button>
+      <p class="flex min-w-0 flex-1 items-center text-[12.5px]">
         <span v-if="missingFiles.has(file.path)" class="inline-flex shrink-0 items-center gap-1 font-medium text-destructive-foreground" role="status">
           <triangle-alert class="size-3.5" aria-hidden="true" />{{ t('feedback.fileMissing') }}
         </span>
@@ -316,6 +334,7 @@
 
 <script setup lang="ts">
 import { open as chooseFolder } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from '../../stores/settings';
 import { remoteImagesAllowed } from '../../helpers/remoteImages';
 import LoginProfile from './LoginProfile.vue';
@@ -325,7 +344,7 @@ import { ROW_SELECTOR } from '../../helpers/domIds';
 import { hostOf } from '../../helpers/siteName';
 import { siteLogo } from '../../helpers/siteLogo';
 import { isPermanentError } from '../../helpers/errorOutcome';
-import { computed, nextTick, ref, toRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, toRef, watch, type ObjectDirective } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Check, ChevronRight, Copy, Ellipsis, ExternalLink, File, Film, FolderOpen, Image as ImageIcon, Images, Info, ListX, MessageSquareWarning, Music, Pause, Play, RotateCw, ThumbsUp, Trash2, TriangleAlert, Wrench, X } from '@lucide/vue';
 import type { RouteLocationRaw } from 'vue-router';
@@ -401,7 +420,57 @@ const hasFiles = computed(() => savedFiles.value.length > 1);
 const filesOpen = ref(false);
 const fileLineId = (index: number) => `saved-file-${group.value.id}-${index}`;
 const FILE_ICONS = { image: ImageIcon, video: Film, audio: Music, file: File };
-const NAME_TAIL = 12;
+const photoUrls = ref(new Map<string, string>());
+const requestedPhotos = new Set<string>();
+const photoElements = new Map<Element, string>();
+let photosDisposed = false;
+const photoObserver = typeof IntersectionObserver === 'undefined'
+  ? undefined
+  : new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const path = photoElements.get(entry.target);
+        if (!entry.isIntersecting || !path || requestedPhotos.has(path)) continue;
+        requestedPhotos.add(path);
+        photoObserver?.unobserve(entry.target);
+        void loadPhoto(path);
+      }
+    });
+async function loadPhoto(path: string) {
+  try {
+    const bytes = await invoke<number[]>('saved_photo_thumbnail', { groupId: group.value.id, path });
+    if (photosDisposed) return;
+    photoUrls.value.set(path, URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' })));
+  } catch { /* An unavailable preview keeps the file-kind icon. */ }
+}
+function discardPhoto(path: string) {
+  const url = photoUrls.value.get(path);
+  if (url) URL.revokeObjectURL(url);
+  photoUrls.value.delete(path);
+}
+const vSavedPhoto: ObjectDirective<HTMLElement, string | null> = {
+  mounted(el, { value }) {
+    if (!value || requestedPhotos.has(value)) return;
+    photoElements.set(el, value);
+    photoObserver?.observe(el);
+  },
+  unmounted(el) {
+    photoObserver?.unobserve(el);
+    photoElements.delete(el);
+  },
+};
+onBeforeUnmount(() => {
+  photosDisposed = true;
+  photoObserver?.disconnect();
+  for (const path of photoUrls.value.keys()) discardPhoto(path);
+  photoElements.clear();
+});
+/** Typographic separator, not copy. */
+const LABEL_DOT = '\u00b7';
+/** "<title> - (1920p) - 003.jpg" → the row's title and "003": the quality suffix tells photos of one post nothing. */
+function fileLabel(name: string) {
+  const number = /-\s*(\d{3,})\.[^.]+$/.exec(name)?.[1];
+  return number ? { title: title.value, number } : null;
+}
 /** Files this session found gone from disk: their line says so and stops offering Open. */
 const missingFiles = ref(new Set<string>());
 async function openSaved(path: string) {

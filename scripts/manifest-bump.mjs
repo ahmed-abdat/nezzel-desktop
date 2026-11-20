@@ -14,7 +14,7 @@ const json = value => `${JSON.stringify(value, null, 2)}\n`;
 
 async function request(url, fetcher = fetch, timeout = 300_000) {
   if (new URL(url).protocol !== 'https:') throw new Error('Tool sources must use HTTPS');
-  const headers = { 'User-Agent': 'Nezzel-manifest/1.0 (+https://github.com/ahmed-abdat/nezzel-desktop)' };
+  const headers = { 'User-Agent': 'Nezzel-manifest/1.0 (+https://github.com/hululsofthq/nezzel-desktop)' };
   // Never send the repository token to a tool host/CDN.
   if (new URL(url).origin === 'https://api.github.com' && process.env.GITHUB_TOKEN) {
     headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
@@ -143,7 +143,7 @@ export async function bump(manifest, gallery, aria2, fetcher = fetch) {
 }
 
 const UPSTREAM_FFMPEG = /^https:\/\/github\.com\/yt-dlp\/FFmpeg-Builds\/releases\/download\/(autobuild-[^/]+)\/([^/]+)$/;
-const MIRROR_REPO = 'ahmed-abdat/nezzel-desktop';
+const MIRROR_REPO = 'hululsofthq/nezzel-desktop';
 
 // Pure: upstream FFmpeg-Builds asset URL -> where our mirror release serves it.
 export function mirrorUrl(url, repo = MIRROR_REPO) {

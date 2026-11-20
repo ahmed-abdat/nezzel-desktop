@@ -82,6 +82,7 @@
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",
+        "installerHooks": "windows/hooks.nsh",
         "displayLanguageSelector": true,
         "languages": [
           "English",
@@ -104,7 +105,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzRTUyQzRBMTlBRDg3RDcKUldUWGg2MFpTaXpsODM4ejZQRDM0KzdyV3JYbTF0Nml1RWs5K09qQy8zM0hmc1hqS08wbHN0NTAK",
       "endpoints": [
-        "https://github.com/ahmed-abdat/nezzel-desktop/releases/latest/download/latest.json"
+        "https://github.com/hululsofthq/nezzel-desktop/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

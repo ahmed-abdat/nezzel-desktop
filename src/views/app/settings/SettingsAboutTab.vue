@@ -91,7 +91,7 @@ const OTHER_PRODUCTS = ['Najahi', 'Souki', 'Bgalti', 'cvite', 'Sorety', 'Mahdara
 const linkRowCls = 'group flex min-h-[52px] items-center justify-between gap-8 border-b border-hairline py-3 text-[13px] hover:text-primary';
 const links = computed(() => [
   { href: NEZZEL_URL, label: t('about.links.website') },
-  { href: 'https://github.com/ahmed-abdat/nezzel-desktop', label: t('about.links.github') },
+  { href: 'https://github.com/hululsofthq/nezzel-desktop', label: t('about.links.github') },
 ]);
 const { openInternalPath } = useOpener();
 const appVersion = typeof __APP_VERSION__ === 'undefined' ? '' : __APP_VERSION__;

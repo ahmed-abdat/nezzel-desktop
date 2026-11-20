@@ -1,8 +1,8 @@
 # Signed tool manifest
 
-The public repository `ahmed-abdat/nezzel-desktop` publishes `manifest.json` and
+The public repository `hululsofthq/nezzel-desktop` publishes `manifest.json` and
 `manifest.sig` on the fixed `tool-manifest` release. Release builds use
-`https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tool-manifest/manifest.json`.
+`https://github.com/hululsofthq/nezzel-desktop/releases/download/tool-manifest/manifest.json`.
 The signature is base64 Ed25519 over the exact JSON bytes, without a trailing
 newline in the signature file. The build-time public key is 32 raw bytes in hex.
 

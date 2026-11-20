@@ -17,7 +17,7 @@ on:
 jobs:
   update:
     # Off until #12 (signed tool manifest) sets the PAGES_ENABLED repo variable and signing secrets.
-    if: github.repository == 'ahmed-abdat/nezzel-desktop' && vars.PAGES_ENABLED == 'true'
+    if: github.repository == 'hululsofthq/nezzel-desktop' && vars.PAGES_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

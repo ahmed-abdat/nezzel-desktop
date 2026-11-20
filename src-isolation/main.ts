@@ -24,6 +24,7 @@ const allowedCommands: Set<string> = new Set([
     'media_size',
     'media_download',
     'media_trash_file',
+    'saved_photo_thumbnail',
     'library_list',
     'library_remove',
     'media_login_accept',

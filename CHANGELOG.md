@@ -8,6 +8,7 @@
 - A link you already saved now says "Already saved. Nothing new was downloaded", and the row menu has "Download again" when you want a second copy.
 - A cancelled download stays in the list as Cancelled after a restart, with Retry, and is never resumed by itself.
 - Clicking the toolbar right after copying a new link adds the new link, not the previous one.
+- Photo albums: each saved photo shows its own small preview, opens when you click its picture or name, and Arabic titles read correctly next to the photo number.
 - Flickr albums and YouTube pages that answer "too many requests" now say so instead of reporting success or an unknown error.
 - On a system with no Downloads folder, files go to Downloads/Nezzel in your home folder.
 - Signing in: when one browser's login does not work, Nezzel tries the next one, with a single sign-in window.

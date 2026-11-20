@@ -42,7 +42,7 @@ def sha256(path):
 
 def checked_download(asset, destination):
     # Some mirrors (ffmpeg.martin-riedl.de) refuse Python's default User-Agent.
-    request = urllib.request.Request(asset['url'], headers={'User-Agent': 'Nezzel-build/1.0 (+https://github.com/ahmed-abdat/nezzel-desktop)'})
+    request = urllib.request.Request(asset['url'], headers={'User-Agent': 'Nezzel-build/1.0 (+https://github.com/hululsofthq/nezzel-desktop)'})
     with urllib.request.urlopen(request, timeout=120) as response, destination.open('wb') as output:
         shutil.copyfileobj(response, output)
     if sha256(destination) != asset['sha256']:

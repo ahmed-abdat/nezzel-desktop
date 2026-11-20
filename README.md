@@ -9,13 +9,13 @@
 Save videos, audio and photos from public links on macOS, Windows and Linux.<br>
 Free and open source. No ads. In English, Arabic and French.
 
-<a href="https://github.com/ahmed-abdat/nezzel-desktop/releases/latest"><img src=".github/assets/download.svg" alt="Download Nezzel Desktop" height="64"></a>
+<a href="https://github.com/hululsofthq/nezzel-desktop/releases/latest"><img src=".github/assets/download.svg" alt="Download Nezzel Desktop" height="64"></a>
 
-[![Latest release](https://img.shields.io/github/v/release/ahmed-abdat/nezzel-desktop?include_prereleases&style=flat-square&color=006B5E&label=release)](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/hululsofthq/nezzel-desktop?include_prereleases&style=flat-square&color=006B5E&label=release)](https://github.com/hululsofthq/nezzel-desktop/releases/latest)
 [![macOS · Windows · Linux](https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-006B5E?style=flat-square)](#install)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-006B5E?style=flat-square)](LICENSE)
 
-[Website](https://nezzel.hululsoft.mr) · [Nezzel for Android](https://github.com/ahmed-abdat/nezzel) · [العربية](#بالعربية) · [Français](#en-français) · [Developers](#for-developers)
+[Website](https://nezzel.hululsoft.mr) · [Nezzel for Android](https://github.com/hululsofthq/nezzel) · [العربية](#بالعربية) · [Français](#en-français) · [Developers](#for-developers)
 
 <img src=".github/assets/demo-quickbar.gif" width="528" alt="The quick bar opens over another app, reads a copied YouTube link and offers best quality, audio only or 720p">
 
@@ -40,7 +40,7 @@ You only see qualities the site really offers. Your library keeps a list of what
 
 ## Install
 
-Download the file for your system from the [latest release](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest):
+Download the file for your system from the [latest release](https://github.com/hululsofthq/nezzel-desktop/releases/latest):
 
 | Your system | File to download |
 | --- | --- |
@@ -75,7 +75,7 @@ On macOS 14 or earlier you can right-click the app and choose Open instead. From
 1. Open the `-setup.exe`. A blue "Windows protected your PC" notice may appear.
 2. Click **More info**, then **Run anyway**.
 
-Comfortable with a command line? With [Scoop](https://scoop.sh) there is no warning screen: `scoop bucket add nezzel https://github.com/ahmed-abdat/scoop-nezzel`, then `scoop install nezzel/nezzel` (portable build; update with `scoop update nezzel`).
+Comfortable with a command line? With [Scoop](https://scoop.sh) there is no warning screen: `scoop bucket add nezzel https://github.com/hululsofthq/scoop-nezzel`, then `scoop install nezzel/nezzel` (portable build; update with `scoop update nezzel`).
 
 <details>
 <summary>Watch it on Windows 11 (39 s)</summary>
@@ -114,7 +114,7 @@ Tested with real public links: **YouTube, TikTok, X, Facebook, Instagram reels, 
 
 Some posts only open when you're signed in (many Instagram and Reddit posts, for example). Nezzel then uses the browser you're signed in with automatically, only that site's cookies are used, on your computer, and you can switch it off in Settings → Logins. Private posts, paid content and DRM-protected video are not supported.
 
-A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/nezzel-desktop/issues/new/choose). No link is required.
+A link doesn't work? [Open a site support issue](https://github.com/hululsofthq/nezzel-desktop/issues/new/choose). No link is required.
 
 ## FAQ
 
@@ -126,7 +126,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 **Where are my files?** In `Downloads/Nezzel` unless you pick another folder in Settings. Removing an item from the list never deletes the file.
 
-**Is there a phone version?** Yes: [Nezzel for Android](https://github.com/ahmed-abdat/nezzel).
+**Is there a phone version?** Yes: [Nezzel for Android](https://github.com/hululsofthq/nezzel).
 
 <div dir="rtl">
 
@@ -136,7 +136,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 انسخ الرابط، فيلتقطه Nezzel تلقائيًا (أو الصقه في خانة الرابط)، ثم اختر الجودة واضغط «تنزيل». تُحفظ الملفات في مجلد ‎`Downloads/Nezzel`‎.
 
-حمّل التطبيق من [صفحة الإصدارات](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest). اختر الملف المناسب لجهازك: ‎`aarch64.dmg`‎ لماك بمعالج Apple (M1 وما بعده)، ‎`x64.dmg`‎ لماك Intel، ‎`x64-setup.exe`‎ لويندوز، و‎`.deb`‎ أو ‎`.rpm`‎ أو ‎`AppImage`‎ للينكس.
+حمّل التطبيق من [صفحة الإصدارات](https://github.com/hululsofthq/nezzel-desktop/releases/latest). اختر الملف المناسب لجهازك: ‎`aarch64.dmg`‎ لماك بمعالج Apple (M1 وما بعده)، ‎`x64.dmg`‎ لماك Intel، ‎`x64-setup.exe`‎ لويندوز، و‎`.deb`‎ أو ‎`.rpm`‎ أو ‎`AppImage`‎ للينكس.
 
 التطبيق غير موقّع بعد، لذلك يسألك النظام مرة واحدة قبل فتحه، وهذا متوقَّع. في macOS: افتح الملف الذي نزّلته، اضغط «تم» في التنبيه، ثم افتح «إعدادات النظام ← الخصوصية والأمن» واضغط «فتح على أي حال». في Windows: اضغط «مزيد من المعلومات» (More info) ثم «تشغيل على أي حال» (Run anyway).
 
@@ -144,7 +144,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 لا يوجد حساب في Nezzel. تُرسَل تقارير الأعطال والأخطاء إلى مشروعنا في Sentry (في الاتحاد الأوروبي)، وأعداد استخدام يومية مجهولة إلى خادمنا، دون الروابط أو أسماء الملفات أو المسارات أو الكوكيز. كلاهما مفعّل افتراضيًا ويمكنك إيقافه من الإعدادات. وعندما يطلب موقع تسجيل الدخول يستخدم متصفحك تلقائيًا، ولا يستخدم إلا كوكيز ذلك الموقع على حاسوبك، ويمكنك إيقاف ذلك من «الإعدادات ← تسجيلات الدخول». التفاصيل في [PRIVACY.md](PRIVACY.md).
 
-يوجد أيضًا [Nezzel لأندرويد](https://github.com/ahmed-abdat/nezzel).
+يوجد أيضًا [Nezzel لأندرويد](https://github.com/hululsofthq/nezzel).
 
 </div>
 
@@ -152,7 +152,7 @@ A link doesn't work? [Open a site support issue](https://github.com/ahmed-abdat/
 
 **Nezzel Desktop** est une application gratuite et libre pour macOS, Windows et Linux qui enregistre vidéos, sons et photos depuis des liens publics, sans publicité.
 
-Copiez un lien : Nezzel le détecte (ou collez-le dans le champ). Choisissez la qualité, puis cliquez sur «&nbsp;Télécharger&nbsp;». Les fichiers vont dans `Downloads/Nezzel`. Téléchargez l’application depuis la [page des versions](https://github.com/ahmed-abdat/nezzel-desktop/releases/latest).
+Copiez un lien : Nezzel le détecte (ou collez-le dans le champ). Choisissez la qualité, puis cliquez sur «&nbsp;Télécharger&nbsp;». Les fichiers vont dans `Downloads/Nezzel`. Téléchargez l’application depuis la [page des versions](https://github.com/hululsofthq/nezzel-desktop/releases/latest).
 
 Choisissez le fichier de votre système : `aarch64.dmg` pour un Mac Apple Silicon (M1 ou plus récent), `x64.dmg` pour un Mac Intel, `x64-setup.exe` pour Windows, `.deb`, `.rpm` ou `AppImage` pour Linux.
 
@@ -167,7 +167,7 @@ Il n’y a pas de compte Nezzel. Les rapports de plantage et d’erreur partent 
 Tauri 2 (Rust) with a Vue 3 + TypeScript front end. Needs Node.js 22+, [pnpm](https://pnpm.io/) 12, Rust (rustup) and Python 3.
 
 ```sh
-git clone https://github.com/ahmed-abdat/nezzel-desktop.git && cd nezzel-desktop
+git clone https://github.com/hululsofthq/nezzel-desktop.git && cd nezzel-desktop
 pnpm install
 pnpm tauri dev      # run in development
 pnpm tauri build    # build an installer for this OS

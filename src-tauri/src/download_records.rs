@@ -13,13 +13,13 @@ use std::sync::Mutex;
 pub struct FileIdentity(u64, u64);
 
 #[cfg(unix)]
-fn identity_of(meta: &Metadata) -> FileIdentity {
+pub(crate) fn identity_of(meta: &Metadata) -> FileIdentity {
   use std::os::unix::fs::MetadataExt;
   FileIdentity(meta.dev(), meta.ino())
 }
 
 #[cfg(not(unix))]
-fn identity_of(meta: &Metadata) -> FileIdentity {
+pub(crate) fn identity_of(meta: &Metadata) -> FileIdentity {
   let modified = meta
     .modified()
     .ok()

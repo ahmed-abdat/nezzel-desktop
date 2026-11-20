@@ -5,7 +5,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ahmed-abdat/nezzel-desktop.git"
+    "url": "git+https://github.com/hululsofthq/nezzel-desktop.git"
   },
   "scripts": {
     "dev": "cross-env DEV=true vite",

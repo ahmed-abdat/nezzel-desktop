@@ -237,6 +237,7 @@ pub fn run() {
         media_playlist_expand,
         media_download,
         media_trash_file,
+        saved_photo_thumbnail,
         library::library_list,
         library::library_record_failure,
         library::library_remove,

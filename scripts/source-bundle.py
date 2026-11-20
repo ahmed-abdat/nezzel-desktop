@@ -123,7 +123,7 @@ def ffmpeg_source_url(asset):
     if source != url:
         prefix = 'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/'
         if not source.startswith(prefix) or url != (
-                'https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-' + source[len(prefix):]):
+                'https://github.com/hululsofthq/nezzel-desktop/releases/download/tools-ffmpeg-' + source[len(prefix):]):
             raise ValueError('Unrecognized FFmpeg mirror provenance: ' + url)
     return source
 
@@ -397,7 +397,7 @@ def main():
     parser.add_argument('outdir', nargs='?', type=Path)
     parser.add_argument('--dry-run', action='store_true', help='print JSON URLs/layout, no network or writes')
     parser.add_argument('--checksums-only', type=Path, help='hash every downloaded release asset except SHA256SUMS')
-    parser.add_argument('--repo', default='ahmed-abdat/nezzel-desktop')
+    parser.add_argument('--repo', default='hululsofthq/nezzel-desktop')
     args = parser.parse_args()
     if args.checksums_only:
         if args.dry_run or args.version or args.outdir:

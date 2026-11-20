@@ -1402,7 +1402,7 @@ mod tests {
         assert_eq!(url.scheme(), "https");
         assert!(["github.com", "ffmpeg.martin-riedl.de"].contains(&url.host_str().unwrap()));
         if url.host_str() == Some("github.com") {
-          assert!(["yt-dlp", "denoland", "wez", "ahmed-abdat"]
+          assert!(["yt-dlp", "denoland", "wez", "hululsofthq"]
             .contains(&url.path_segments().unwrap().next().unwrap()));
         }
         assert!(!url.path().contains("/latest/"));

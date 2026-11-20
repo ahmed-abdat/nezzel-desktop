@@ -100,7 +100,7 @@ for (const name of ['ffmpeg', 'ffprobe']) {
   for (const [platform, file] of Object.entries(input[0].tools[name].files)) {
     if (!platform.startsWith('darwin-')) {
       file.source = file.source || file.url;
-      file.url = `https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-pin/${platform}.zip`;
+      file.url = `https://github.com/hululsofthq/nezzel-desktop/releases/download/tools-ffmpeg-pin/${platform}.zip`;
     }
   }
 }
@@ -183,7 +183,7 @@ for (const name of ['ffmpeg', 'ffprobe']) {
     assert.deepEqual(file.bundle, old.bundle);
     if (platform.startsWith('darwin-')) assert.equal(file.url, old.url);
     else {
-      assert(file.url.startsWith('https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-'));
+      assert(file.url.startsWith('https://github.com/hululsofthq/nezzel-desktop/releases/download/tools-ffmpeg-'));
       assert.equal(file.source, old.url);
     }
   }
