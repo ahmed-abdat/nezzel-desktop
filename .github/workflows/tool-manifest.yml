@@ -30,7 +30,7 @@ jobs:
         env:
           NEZZEL_MANIFEST_PUBKEY: ${{ vars.NEZZEL_MANIFEST_PUBKEY }}
         run: test -n "$NEZZEL_MANIFEST_PUBKEY"
-      - name: Refresh hashes and sign
+      - name: Refresh tools and sign (FFmpeg mirror pins held)
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NEZZEL_MANIFEST_SIGNING_KEY: ${{ secrets.NEZZEL_MANIFEST_SIGNING_KEY }}

@@ -126,7 +126,9 @@ pub fn show_main(app: &AppHandle) {
   }
   set_dock(app, true);
   let _ = window.unminimize();
-  let _ = window.show();
+  if window.show().is_ok() {
+    crate::binaries::binaries_manager::BinariesManager::warm_tools(app);
+  }
   let _ = window.set_focus();
 }
 

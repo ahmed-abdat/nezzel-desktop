@@ -65,6 +65,13 @@ export function categoryNoticeCount(rows: Pick<ListRow, 'status' | 'kind' | 'nee
   return rows.filter(row => (type === 'all' || row.kind === type) && (row.status === 'failed' || row.needsAttention)).length;
 }
 
+/** Use failed wording only when every hidden row of this type has failed. */
+export function categoryNoticeKey(rows: Pick<ListRow, 'status' | 'kind' | 'needsAttention'>[], type: TypeFilter): 'downloads.list.failedNotice' | 'downloads.list.attentionNotice' {
+  return rows.some(row => (type === 'all' || row.kind === type) && row.needsAttention && row.status !== 'failed')
+    ? 'downloads.list.attentionNotice'
+    : 'downloads.list.failedNotice';
+}
+
 /**
  * Folds text for search: case, Latin accents, Arabic harakat/tatweel, and the Arabic letter
  * variants people type interchangeably (أ إ آ ٱ → ا, ى → ي, ة → ه, ؤ → و, ئ → ي).

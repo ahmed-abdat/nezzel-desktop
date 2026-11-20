@@ -95,8 +95,11 @@ def unpack(archive, asset, work, name):
     if rules and rules.get('keep_folder'):
         folder = safe_path(extracted, rules['folder_name']) if rules.get('folder_name') else extracted
         # Some release ZIPs put the onedir contents directly at the archive root.
-        if not folder.is_dir():
+        shared = name in ('ffmpeg', 'ffprobe') and rules['entry'].endswith('.exe')
+        if not folder.is_dir() and not shared:
             folder = extracted
+        if shared:
+            filter_shared_ffmpeg(folder)
         entry = safe_path(folder, rules['entry'])
         renamed = safe_path(folder, rules.get('rename_entry_to', rules['entry']))
         if not entry.is_file():
@@ -111,6 +114,43 @@ def unpack(archive, asset, work, name):
     return entry
 
 
+def shared_files_valid(files):
+    return ({'ffmpeg.exe', 'ffprobe.exe'} <= set(files)
+            and any(name.lower().endswith('.dll') for name in files)
+            and all('/' not in name and (name in ('ffmpeg.exe', 'ffprobe.exe') or name.lower().endswith('.dll'))
+                    for name in files))
+
+
+def filter_shared_ffmpeg(folder):
+    if not folder.is_dir():
+        raise ValueError('missing shared FFmpeg bin directory')
+    for child in folder.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        elif child.name not in ('ffmpeg.exe', 'ffprobe.exe') and child.suffix.lower() != '.dll':
+            child.unlink()
+    if not shared_files_valid([p.name for p in folder.iterdir() if p.is_file()]):
+        raise ValueError('shared FFmpeg requires both executables and DLLs')
+
+
+def shared_pair(platform):
+    if not platform.startswith('windows-'):
+        return False
+    tools = MANIFEST['tools']
+    pair = [tools[name]['files'][platform] for name in ('ffmpeg', 'ffprobe')]
+    if not any(file.get('bundle', {}).get('keep_folder') for file in pair):
+        return False
+    for name, file in zip(('ffmpeg', 'ffprobe'), pair):
+        rules = file.get('bundle', {})
+        if (not rules.get('keep_folder') or rules.get('entry') != name + '.exe'
+                or rules.get('rename_entry_to') or not rules.get('folder_name')
+                or any(file.get(key) != pair[0].get(key) for key in ('url', 'sha256', 'source'))
+                or rules.get('folder_name') != pair[0]['bundle']['folder_name']
+                or file.get('version', tools[name]['version']) != pair[0].get('version', tools['ffmpeg']['version'])):
+            raise ValueError('mismatched shared FFmpeg pair')
+    return True
+
+
 def install(target):
     if target not in TARGETS:
         raise ValueError(f'unsupported tool target: {target}')
@@ -118,6 +158,7 @@ def install(target):
                if MANIFEST['tools'][name]['files'][TARGETS[target]]['sha256'] in NONREDISTRIBUTABLE_SHA256]
     if blocked:
         raise ValueError(f"manifest pins nonfree, nonredistributable binaries for {target}: {', '.join(blocked)}; replace those manifest assets before bundling")
+    shared = shared_pair(TARGETS[target])
     binaries = ROOT / 'src-tauri/binaries'
     resources = binaries / 'tools'
     resources.mkdir(parents=True, exist_ok=True)
@@ -128,6 +169,9 @@ def install(target):
         cached = {}
     index = {'target': target, 'tools': {}}
     for name in TOOLS:
+        if shared and name == 'ffprobe':
+            index['tools'][name] = dict(index['tools']['ffmpeg'], entry='ffprobe.exe')
+            continue
         info = MANIFEST['tools'][name]
         asset = info['files'][TARGETS[target]]
         version = asset.get('version', info['version'])
@@ -136,7 +180,10 @@ def install(target):
         folder = bool(rules and rules.get('keep_folder'))
         out = resources / name if folder else binaries / f'{name}-{target}{suffix}'
         old = cached.get('tools', {}).get(name, {}) if cached.get('target') == target else {}
-        if old.get('version') == version and old.get('archive_sha256') == asset['sha256'] and old.get('files') and all(
+        cache_layout = not (shared and name == 'ffmpeg') or (
+            shared_files_valid(old.get('files', {})) and out.is_dir()
+            and {p.name for p in out.iterdir()} == set(old.get('files', {})))
+        if cache_layout and old.get('version') == version and old.get('archive_sha256') == asset['sha256'] and old.get('files') and all(
                 (out / rel if folder else out).is_file() and sha256(out / rel if folder else out) == digest
                 for rel, digest in old['files'].items()):
             index['tools'][name] = old

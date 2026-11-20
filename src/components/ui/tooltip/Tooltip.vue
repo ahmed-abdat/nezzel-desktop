@@ -11,7 +11,7 @@ const Provider = injectTooltipProviderContext(null) ? Passthrough : TooltipProvi
 
 <template>
   <component :is="Provider">
-    <TooltipRoot :disabled="disabled">
+    <TooltipRoot :disabled="disabled" ignore-non-keyboard-focus>
       <TooltipTrigger as-child><slot /></TooltipTrigger>
       <TooltipPortal>
         <TooltipContent :side="side" :side-offset="6" class="pointer-events-none z-[90] rounded-md bg-foreground px-2 py-1 text-[12px] text-background shadow-lg animate-in fade-in-0 zoom-in-95">

@@ -150,6 +150,15 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
 
   const retry = () => retryGroup(group.value);
 
+  async function downloadAgain() {
+    countUsage('retry');
+    try {
+      await useMediaStore().downloadAgain(group.value.id);
+    } catch {
+      if (reportErrors) toastStore.showToast(t('feedback.downloadFailed'), { style: 'error' });
+    }
+  }
+
   const destination = () => destinationStore.getPrimaryDestination(group.value.id)?.path;
 
   function fileMissing() {
@@ -262,5 +271,5 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
 
   const canTrash = computed(() => !isTrashRefused(group.value.id));
 
-  return { download, pause, remove, cancel, retry, recover, recoveryLabel, recoveryIsSwitch, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, trashFile, canTrash };
+  return { download, pause, remove, cancel, retry, downloadAgain, recover, recoveryLabel, recoveryIsSwitch, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, trashFile, canTrash };
 }

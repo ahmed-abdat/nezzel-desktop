@@ -1171,6 +1171,11 @@
         "message": "There is not enough space to save this download",
         "action": "Free space on the download disk, then try again"
       },
+      "outputFileBusy": {
+        "shortMessage": "The file could not be moved",
+        "message": "The finished file could not be moved to your folder. Another program may be using it; try again in a moment.",
+        "action": "Try again in a moment"
+      },
       "outputNameTooLong": {
         "shortMessage": "The file name is too long",
         "message": "The file name exceeds the disk’s limit",
@@ -1750,7 +1755,8 @@
       "cancelled": "Download cancelled",
       "cancelledState": "Cancelled",
       "alreadySaved": "Already saved",
-      "alreadyDownloaded": "Already downloaded",
+      "alreadyDownloaded": "Already saved. Nothing new was downloaded",
+      "downloadAgain": "Download again",
       "resuming": "Resuming…",
       "cancel": "Cancel download"
     },
@@ -1802,6 +1808,7 @@
       "noMatch": "No downloads match “{query}”",
       "clearFinished": "Remove from list",
       "failedNotice": "{n} failed download | {n} failed downloads",
+      "attentionNotice": "{n} download needs your attention | {n} downloads need your attention",
       "viewFailed": "View",
       "reportFailed": "Report all",
       "clearFailed": "Clear failed",

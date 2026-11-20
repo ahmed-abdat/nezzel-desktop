@@ -44,7 +44,7 @@ class SourceBundleTests(unittest.TestCase):
                     self.assertIn(f'https://ffmpeg.org/releases/ffmpeg-{version}.tar.xz', urls)
                 else:
                     self.assertIn('https://github.com/FFmpeg/FFmpeg/archive/' + version.split('-g')[1] + '.tar.gz', urls)
-                    tag = asset['url'].split('/download/')[1].split('/')[0]
+                    tag = asset.get('source', asset['url']).split('/download/')[1].split('/')[0]
                     self.assertIn('https://github.com/yt-dlp/FFmpeg-Builds/archive/refs/tags/' + tag + '.tar.gz', urls)
             self.assertIn('README.md', plan['layout'])
             self.assertIn('SHA256SUMS', plan['layout'])
@@ -55,6 +55,35 @@ class SourceBundleTests(unittest.TestCase):
                     contextlib.redirect_stdout(stdout):
                 bundle.main()
             self.assertEqual(json.loads(stdout.getvalue()), plan)
+
+    def test_shared_ffmpeg_sources_match_mirror_provenance_and_reject_bad_pairs(self):
+        import copy
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for path in ('scripts/aria2-manifest.json', 'scripts/gallery-dl-manifest.json', 'src-tauri/src/binaries/manifest.json'):
+                dest = root / path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / path, dest)
+            path = root / 'src-tauri/src/binaries/manifest.json'
+            manifest = json.loads(path.read_text())
+            original = copy.deepcopy(manifest)
+            for tool in ('ffmpeg', 'ffprobe'):
+                for arch in ('windows-x86_64', 'windows-aarch64'):
+                    file = manifest['tools'][tool]['files'][arch]
+                    file['url'] = file['source']
+            path.write_text(json.dumps(manifest))
+            direct = bundle.plan('0.1.1', root)
+            path.write_text(json.dumps(original))
+            mirrored = bundle.plan('0.1.1', root)
+            self.assertEqual(direct['downloads'], mirrored['downloads'])
+            file = original['tools']['ffprobe']['files']['windows-x86_64']
+            file['sha256'] = '0' * 64
+            path.write_text(json.dumps(original))
+            with self.assertRaisesRegex(ValueError, 'same provider archive'):
+                bundle.plan('0.1.1', root)
+            with self.assertRaisesRegex(ValueError, 'provenance'):
+                bundle.ffmpeg_source_url(dict(url='https://unknown.invalid/shared.zip', source=file['source']))
 
     def test_download_rejects_checksum_mismatch_and_html_instead_of_source(self):
         with tempfile.TemporaryDirectory() as tmp:

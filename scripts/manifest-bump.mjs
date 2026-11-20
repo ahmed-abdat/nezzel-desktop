@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { createHash, createPrivateKey, sign, verify, createPublicKey } from 'node:crypto';
 import { readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,14 +12,14 @@ import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 
-async function request(url, fetcher = fetch) {
+async function request(url, fetcher = fetch, timeout = 300_000) {
   if (new URL(url).protocol !== 'https:') throw new Error('Tool sources must use HTTPS');
   const headers = { 'User-Agent': 'Nezzel-manifest/1.0 (+https://github.com/ahmed-abdat/nezzel-desktop)' };
   // Never send the repository token to a tool host/CDN.
   if (new URL(url).origin === 'https://api.github.com' && process.env.GITHUB_TOKEN) {
     headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
   }
-  const response = await fetcher(url, { headers, signal: AbortSignal.timeout(300_000) });
+  const response = await fetcher(url, { headers, signal: AbortSignal.timeout(timeout) });
   if (!response.ok) throw new Error(`Fetch failed (${response.status}): ${url}`);
   if (response.url && new URL(response.url).protocol !== 'https:') throw new Error('Insecure redirect');
   return response;
@@ -112,47 +115,8 @@ export async function bump(manifest, gallery, aria2, fetcher = fetch) {
   manifest.tools.deno = await refresh('deno', manifest.tools.deno, async tool =>
     updateGithubTool(tool, await latest('denoland/deno', undefined, fetcher), hashes, fetcher));
 
-  let ffRelease;
-  async function getFfRelease() {
-    ffRelease ??= (async () => {
-      // /latest is a moving alias; preserve the immutable autobuild layout.
-      const releases = await (await request('https://api.github.com/repos/yt-dlp/FFmpeg-Builds/releases?per_page=10', fetcher)).json();
-      const release = releases.find(item => /^autobuild-/.test(item.tag_name)
-        && !item.draft && !item.prerelease && item.assets?.length);
-      if (!release) throw new Error('No immutable ffmpeg autobuild release');
-      return release;
-    })();
-    return ffRelease;
-  }
-  for (const name of ['ffmpeg', 'ffprobe']) {
-    manifest.tools[name] = await refresh(name, manifest.tools[name], async (tool) => {
-      const ff = await getFfRelease();
-      for (const [platform, file] of Object.entries(tool.files)) {
-        if (platform.startsWith('darwin-')) {
-          const arch = platform.endsWith('aarch64') ? 'arm64' : 'amd64';
-          const response = await request(`https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/${name}.zip`, fetcher);
-          // Resolve the existing provider's stable redirect to a versioned, immutable URL.
-          const match = new URL(response.url).pathname.match(/^\/download\/macos\/(amd64|arm64)\/\d+_([^/]+)\/(ffmpeg|ffprobe)\.zip$/);
-          await response.body?.cancel();
-          if (!match || new URL(response.url).hostname !== 'ffmpeg.martin-riedl.de') throw new Error('Unpinned macOS ffmpeg release');
-          file.url = response.url;
-          file.version = match[2];
-        } else {
-          const suffix = { 'linux-x86_64': 'linux64-gpl.tar.xz', 'linux-aarch64': 'linuxarm64-gpl.tar.xz',
-            'windows-x86_64': 'win64-gpl.zip', 'windows-aarch64': 'winarm64-gpl.zip' }[platform];
-          const matches = ff.assets.filter(item => item.name.startsWith('ffmpeg-N-') && item.name.endsWith(`-${suffix}`));
-          if (!suffix || matches.length !== 1) throw new Error(`Missing pinned ffmpeg asset: ${platform}`);
-          const filename = matches[0].name;
-          file.url = asset(ff, filename);
-          file.version = filename.slice(7, -suffix.length - 1);
-          const folder = filename.replace(/\.(tar\.xz|zip)$/, '');
-          file.entry = `${folder}/bin/${name}${platform.startsWith('windows-') ? '.exe' : ''}`;
-        }
-        file.sha256 = await hashed(file.url, hashes, fetcher);
-      }
-      tool.version = [...new Set(Object.values(tool.files).map(file => file.version))].join(' / ');
-    });
-  }
+  // FFmpeg archives expire upstream. Keep reviewed, mirrored pins verbatim; upgrades
+  // are explicit manifest edits followed by mirror-ffmpeg, never a daily refresh.
   // AtomicParsley stays pinned; it is not part of the daily update lane.
   gallery = await refresh('gallery-dl', gallery, async (gallery) => {
     const gal = await latest('mikf/gallery-dl', 'https://codeberg.org/api/v1', fetcher);
@@ -178,10 +142,138 @@ export async function bump(manifest, gallery, aria2, fetcher = fetch) {
   return { 'manifest.json': manifest, 'gallery-dl-manifest.json': gallery, 'aria2-manifest.json': aria2 };
 }
 
+const UPSTREAM_FFMPEG = /^https:\/\/github\.com\/yt-dlp\/FFmpeg-Builds\/releases\/download\/(autobuild-[^/]+)\/([^/]+)$/;
+const MIRROR_REPO = 'ahmed-abdat/nezzel-desktop';
+
+// Pure: upstream FFmpeg-Builds asset URL -> where our mirror release serves it.
+export function mirrorUrl(url, repo = MIRROR_REPO) {
+  const match = UPSTREAM_FFMPEG.exec(url);
+  if (!match) throw new Error(`Not a yt-dlp/FFmpeg-Builds autobuild asset URL: ${url}`);
+  const [, upstreamTag, name] = match;
+  const tag = `tools-ffmpeg-${upstreamTag}`;
+  return { upstreamTag, name, tag, url: `https://github.com/${repo}/releases/download/${tag}/${name}` };
+}
+
+// Pure: the unique archives to mirror (ffmpeg and ffprobe share them) and the manifest with URLs rewritten.
+// The upstream URL stays in `source` (the Rust manifest parser ignores unknown fields).
+export function planMirror(manifest, repo = MIRROR_REPO) {
+  const next = structuredClone(manifest);
+  const archives = new Map();
+  for (const [toolName, tool] of Object.entries(next.tools)) {
+    if (toolName !== 'ffmpeg' && toolName !== 'ffprobe') continue;
+    for (const file of Object.values(tool.files)) {
+      if (!UPSTREAM_FFMPEG.test(file.url)) continue;
+      const target = mirrorUrl(file.url, repo);
+      const known = archives.get(file.url);
+      if (known && known.sha256 !== file.sha256) throw new Error(`Conflicting sha256 for ${file.url}`);
+      archives.set(file.url, { ...target, upstream: file.url, sha256: file.sha256,
+        users: [...(known?.users ?? []), `${toolName}`] });
+      file.source = file.url;
+      file.url = target.url;
+    }
+  }
+  return { manifest: next, archives: [...archives.values()] };
+}
+
+function gh(args, options = {}) {
+  const result = spawnSync('gh', args, { encoding: 'utf8', ...options });
+  if (result.error) throw result.error;
+  return result;
+}
+
+async function download(url, path) {
+  const response = await request(url, fetch, 1_800_000);
+  if (!response.body) throw new Error(`Missing download body: ${url}`);
+  const hash = createHash('sha256');
+  let size = 0;
+  const body = Readable.fromWeb(response.body);
+  body.on('data', (chunk) => {
+    size += chunk.length;
+    hash.update(chunk);
+  });
+  await pipeline(body, createWriteStream(path));
+  return { size, sha256: hash.digest('hex') };
+}
+
+async function mirrorFfmpeg(dryRun) {
+  const manifestPath = join(root, 'src-tauri/src/binaries/manifest.json');
+  const { manifest, archives } = planMirror(JSON.parse(await readFile(manifestPath, 'utf8')));
+  if (!archives.length) {
+    console.log('No upstream FFmpeg-Builds URLs left in the manifest; nothing to mirror.');
+    return;
+  }
+  const temp = await mkdtemp(join(tmpdir(), 'nezzel-ffmpeg-mirror-'));
+  try {
+    const tags = [...new Set(archives.map(item => item.tag))];
+    const existing = new Map(); // tag -> Map(name -> size)
+    for (const tag of tags) {
+      const view = gh(['release', 'view', tag, '--repo', MIRROR_REPO, '--json', 'assets']);
+      // Only "not found" means the release is missing; auth, API or network failures must stop the run.
+      if (view.status !== 0 && !/release not found/i.test(view.stderr ?? '')) {
+        throw new Error(`release view failed for ${tag}: ${view.stderr}`);
+      }
+      existing.set(tag, view.status === 0
+        ? new Map(JSON.parse(view.stdout).assets.map(a => [a.name, a.size]))
+        : null);
+    }
+    let uploads = 0;
+    for (const item of archives) {
+      const path = join(temp, item.name);
+      let size;
+      if (dryRun) {
+        // Dry run: confirm the upstream asset still exists and read its size; the real run downloads and checks sha256.
+        const head = await fetch(item.upstream, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(60_000) });
+        if (!head.ok) throw new Error(`Upstream asset gone (${head.status}): ${item.upstream}`);
+        size = Number(head.headers.get('content-length'));
+      } else {
+        console.error(`Downloading ${item.upstream}`);
+        const got = await download(item.upstream, path);
+        if (got.sha256 !== item.sha256) throw new Error(`sha256 mismatch for ${item.name}: got ${got.sha256}, manifest ${item.sha256}`);
+        size = got.size;
+      }
+      const assets = existing.get(item.tag);
+      const same = assets?.get(item.name) === size;
+      console.log(`${same ? 'skip (same size)' : 'upload'}  ${item.name}  ${size} bytes  [${item.users.join('+')}]`);
+      console.log(`  ${item.upstream}\n  -> ${item.url}`);
+      if (dryRun || same) {
+        await rm(path, { force: true });
+        continue;
+      }
+      if (!assets && !existing.get(item.tag)) {
+        const notes = `Mirror of yt-dlp/FFmpeg-Builds \`${item.upstreamTag}\` (https://github.com/yt-dlp/FFmpeg-Builds/releases/tag/${item.upstreamTag}), kept because upstream deletes autobuilds after about two weeks. `
+          + 'Archives are byte-identical to upstream (sha256 checked against the app manifest). FFmpeg is GPLv3 in these builds; source and licence: https://github.com/yt-dlp/FFmpeg-Builds and https://ffmpeg.org.';
+        const made = gh(['release', 'create', item.tag, '--repo', MIRROR_REPO, '--prerelease', '--title', `FFmpeg builds ${item.upstreamTag} (mirror)`, '--notes', notes]);
+        if (made.status !== 0) throw new Error(`release create failed: ${made.stderr}`);
+        existing.set(item.tag, new Map());
+      }
+      const up = gh(['release', 'upload', item.tag, path, '--repo', MIRROR_REPO, '--clobber']);
+      if (up.status !== 0) throw new Error(`upload failed for ${item.name}: ${up.stderr}`);
+      uploads++;
+      await rm(path, { force: true });
+    }
+    console.log(`\n${archives.length} archives (${archives.map(a => a.name).join(', ')})`);
+    const rewritten = Object.entries(manifest.tools).filter(([n]) => n === 'ffmpeg' || n === 'ffprobe')
+      .flatMap(([n, t]) => Object.entries(t.files).map(([p, f]) => ({ n, p, url: f.url })));
+    console.log(`Manifest entries rewritten (${rewritten.filter(r => r.url.startsWith(`https://github.com/${MIRROR_REPO}/`)).length}):`);
+    for (const r of rewritten) console.log(`  ${r.n} ${r.p}: ${r.url}`);
+    if (dryRun) {
+      console.log('\nDry run: nothing uploaded, manifest.json untouched.');
+      return;
+    }
+    await writeFile(manifestPath, json(manifest));
+    console.log(`\nUploaded ${uploads}; manifest.json rewritten. Review, commit and re-run to confirm all skip.`);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
-  if (args.some(arg => arg !== '--dry-run')) throw new Error('Usage: node scripts/manifest-bump.mjs [--dry-run]');
-  const dryRun = args.includes('--dry-run');
+  const mirror = args[0] === 'mirror-ffmpeg';
+  const flags = mirror ? args.slice(1) : args;
+  if (flags.some(arg => arg !== '--dry-run')) throw new Error('Usage: node scripts/manifest-bump.mjs [mirror-ffmpeg] [--dry-run]');
+  const dryRun = flags.includes('--dry-run');
+  if (mirror) return mirrorFfmpeg(dryRun);
   if (!dryRun && !process.env.NEZZEL_MANIFEST_SIGNING_KEY) throw new Error('NEZZEL_MANIFEST_SIGNING_KEY is required');
   const paths = { 'manifest.json': 'src-tauri/src/binaries/manifest.json',
     'gallery-dl-manifest.json': 'scripts/gallery-dl-manifest.json', 'aria2-manifest.json': 'scripts/aria2-manifest.json' };

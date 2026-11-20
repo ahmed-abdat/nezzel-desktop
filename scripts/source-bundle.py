@@ -117,6 +117,17 @@ def library_sources(text, x264_revision=None):
     return sources, missing
 
 
+def ffmpeg_source_url(asset):
+    url = asset['url']
+    source = asset.get('source', url)
+    if source != url:
+        prefix = 'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/'
+        if not source.startswith(prefix) or url != (
+                'https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-' + source[len(prefix):]):
+            raise ValueError('Unrecognized FFmpeg mirror provenance: ' + url)
+    return source
+
+
 def plan(version, root=ROOT):
     if not re.fullmatch(r'[0-9]+(?:\.[0-9]+)+(?:[-+][A-Za-z0-9.-]+)?', version):
         raise ValueError('Invalid version (omit the v prefix)')
@@ -146,7 +157,7 @@ def plan(version, root=ROOT):
             raise ValueError('ffmpeg/ffprobe source versions differ: ' + platform)
         binaries.append(dict(component='ffmpeg/ffprobe', platform=platform, version=version_ff,
                              license='GPL-3.0-or-later', ffmpeg=asset, ffprobe=probe))
-        url = asset['url']
+        url = ffmpeg_source_url(asset)
         if url.startswith('https://ffmpeg.martin-riedl.de/download/macos/'):
             if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version_ff):
                 raise ValueError('Riedl asset must pin an FFmpeg release')
@@ -170,11 +181,11 @@ def plan(version, root=ROOT):
                 x264_revision=X264_REVISION)
             add(**X264_SOURCE)
         else:
-            match = re.fullmatch(r'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/(autobuild-[0-9-]+)/ffmpeg-.*-gpl\.(?:zip|tar\.xz)', url)
+            match = re.fullmatch(r'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/(autobuild-[0-9-]+)/ffmpeg-.*-gpl(?:-shared)?\.(?:zip|tar\.xz)', url)
             revision = re.fullmatch(r'N-[0-9]+-g([0-9a-f]{10,40})', version_ff)
             if not match or not revision:
                 raise ValueError('Unrecognized pinned FFmpeg provider/version: ' + url)
-            if probe['url'] != url:
+            if ffmpeg_source_url(probe) != url or probe['sha256'] != asset['sha256']:
                 raise ValueError('ffprobe must come from the same provider archive: ' + platform)
             tag, commit = match[1], revision[1]
             if tag != FFMPEG_BUILDS_TAG:

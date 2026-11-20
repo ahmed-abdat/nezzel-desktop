@@ -395,7 +395,7 @@ const cells = computed(() => [
   { key: 'size', value: columns.value.size, cls: 'w-20 text-end', num: true },
   { key: 'length', value: columns.value.length, cls: 'w-16 text-end', num: true },
 ]);
-const { download, pause, retry, recover, recoveryLabel, recoveryIsSwitch, remove, cancel, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, canTrash } = useDownloadActions(group);
+const { download, pause, retry, recover, recoveryLabel, recoveryIsSwitch, remove, cancel, downloadAgain, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, canTrash } = useDownloadActions(group);
 /** A finished row that saved several files lists them under it on demand (closed by default). */
 const hasFiles = computed(() => savedFiles.value.length > 1);
 const filesOpen = ref(false);
@@ -480,6 +480,7 @@ const menuGroups = computed<RowAction[][]>(() => {
   if (phase.value === 'done') {
     if (!revealsFile.value) primary.push({ key: 'open', label: t('downloads.row.open'), icon: File, run: openFile, disabled: !destination.value });
     primary.push({ key: 'show', label: t('downloads.row.show'), icon: FolderOpen, run: revealFile, disabled: !destination.value });
+    if (alreadySaved.value) primary.push({ key: 'again', label: t('downloads.row.downloadAgain'), icon: RotateCw, run: downloadAgain });
   }
   if (phase.value === 'downloading' && !processing.value) primary.push({ key: 'pause', label: t('downloads.row.pause'), icon: Pause, run: pause });
   if (phase.value === 'paused') primary.push({ key: 'resume', label: t('downloads.row.resume'), icon: Play, run: download });

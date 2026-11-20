@@ -142,7 +142,11 @@ impl std::fmt::Debug for Resolution {
 }
 
 pub async fn resolve(url: &str) -> Resolution {
-  match tokio::time::timeout(Duration::from_secs(20), read_site(url, &http::PublicHttp)).await {
+  resolve_with_limit(url, Duration::from_secs(20)).await
+}
+
+pub(crate) async fn resolve_with_limit(url: &str, limit: Duration) -> Resolution {
+  match tokio::time::timeout(limit, read_site(url, &http::PublicHttp)).await {
     Ok(verdict) => verdict.resolution(url),
     Err(_) => resolution_timeout(url),
   }

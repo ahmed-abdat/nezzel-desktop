@@ -1070,6 +1070,11 @@
         "message": "Il n’y a pas assez d’espace pour enregistrer ce téléchargement",
         "action": "Libérez de l’espace sur le disque de téléchargement, puis réessayez"
       },
+      "outputFileBusy": {
+        "shortMessage": "Impossible de déplacer le fichier",
+        "message": "Impossible de déplacer le fichier terminé vers votre dossier. Un autre programme l’utilise peut-être ; réessayez dans un instant.",
+        "action": "Réessayez dans un instant"
+      },
       "outputNameTooLong": {
         "shortMessage": "Le nom du fichier est trop long",
         "message": "Le nom du fichier dépasse la limite du disque",
@@ -1754,7 +1759,8 @@
       "cancelled": "Téléchargement annulé",
       "cancelledState": "Annulé",
       "alreadySaved": "Déjà enregistré",
-      "alreadyDownloaded": "Déjà téléchargé",
+      "alreadyDownloaded": "Déjà enregistré. Rien de nouveau n'a été téléchargé",
+      "downloadAgain": "Télécharger à nouveau",
       "resuming": "Reprise…",
       "cancel": "Annuler le téléchargement"
     },
@@ -1806,6 +1812,7 @@
       "noMatch": "Aucun téléchargement ne correspond à « {query} »",
       "clearFinished": "Retirer de la liste",
       "failedNotice": "{n} téléchargement échoué | {n} téléchargements échoués",
+      "attentionNotice": "{n} téléchargement nécessite votre attention | {n} téléchargements nécessitent votre attention",
       "viewFailed": "Voir",
       "reportFailed": "Tout signaler",
       "clearFailed": "Effacer les échecs",

@@ -58,10 +58,25 @@ jobs:
         with:
           args: '--no-bundle'
 
-      - name: Fetch tool binaries for MSIX
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm run manifest:fetch
+      - name: Stage pinned installer payload for MSIX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $appFolder = "msix-layout/Nezzel"
+          New-Item -ItemType Directory -Path "$appFolder/bin" -Force | Out-Null
+          foreach ($sidecar in @("aria2c.exe", "gallery-dl.exe", "deno.exe", "gallery-dl.sha256")) {
+            Copy-Item (Join-Path "src-tauri/target/release" $sidecar) -Destination $appFolder -Force
+          }
+          Copy-Item "src-tauri/target/release/tools" -Destination $appFolder -Recurse -Force
+          $ffmpegFolder = Join-Path $appFolder "tools/ffmpeg"
+          foreach ($tool in @("ffmpeg.exe", "ffprobe.exe")) {
+            if (-not (Test-Path (Join-Path $ffmpegFolder $tool) -PathType Leaf)) { throw "Missing shared $tool" }
+            if (Test-Path (Join-Path $appFolder $tool)) { throw "Unexpected static $tool" }
+          }
+          if (-not (Get-ChildItem $ffmpegFolder -File -Filter "*.dll")) { throw "Missing FFmpeg DLLs" }
+          if (Get-ChildItem $ffmpegFolder | Where-Object { $_.PSIsContainer -or ($_.Name -notin @("ffmpeg.exe", "ffprobe.exe") -and $_.Extension -ne ".dll") }) { throw "Unexpected FFmpeg payload" }
+          $metadata = @{ is_locked = $true; versions = @{} }
+          $metadata | ConvertTo-Json | Set-Content "$appFolder/bin/metadata.json"
 
       - name: Build and sign MSIX
         uses: ./.github/actions/msix-build-sign

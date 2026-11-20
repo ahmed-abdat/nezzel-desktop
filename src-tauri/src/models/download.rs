@@ -145,6 +145,8 @@ pub struct OutputOverrides {
   pub partial_download: Option<PartialDownloadOverride>,
   /// Folder for this download only (sheet "Save to > Change…"). Wins over the per-track folders.
   pub download_dir: Option<String>,
+  /// "Download again": keep the saved copy and write a new file next to it instead of reusing it.
+  pub keep_both: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

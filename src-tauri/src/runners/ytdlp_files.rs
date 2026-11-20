@@ -50,12 +50,26 @@ impl PendingFiles {
     }
   }
 
+  #[cfg(test)]
   pub fn publish(
     &self,
     stage: &Path,
     anchor: &Path,
     url: &str,
     receipts: &Path,
+    cancelled: impl Fn() -> bool,
+  ) -> io::Result<PublishOutcome> {
+    self.publish_with(stage, anchor, url, receipts, false, cancelled)
+  }
+
+  /// `fresh`: the user asked to download again, so never reuse a saved copy; take the next free name.
+  pub fn publish_with(
+    &self,
+    stage: &Path,
+    anchor: &Path,
+    url: &str,
+    receipts: &Path,
+    fresh: bool,
     cancelled: impl Fn() -> bool,
   ) -> io::Result<PublishOutcome> {
     if cancelled() {
@@ -130,7 +144,7 @@ impl PendingFiles {
         let bounded = crate::files::sanitize::limit_media_stem(stem, budget);
         target.set_file_name(format!("{bounded}.{extension}"));
       }
-      let published = publish_file(&source, &target, &media, receipts, &cancelled)?;
+      let published = publish_file_with(&source, &target, &media, receipts, fresh, &cancelled)?;
       // Every sidecar keeps its full suffix and follows the primary's collision suffix.
       let new_stem = published
         .path
@@ -141,11 +155,12 @@ impl PendingFiles {
         if cancelled() {
           return Err(io::ErrorKind::Interrupted.into());
         }
-        match publish_file(
+        match publish_file_with(
           sidecar,
           &published.path.with_file_name(format!("{new_stem}{suffix}")),
           &media,
           receipts,
+          fresh,
           &cancelled,
         ) {
           Ok(_) => {}
@@ -274,11 +289,23 @@ fn new_receipt(path: &Path) -> io::Result<fs::File> {
   options.open(path)
 }
 
+#[cfg(test)]
 fn publish_file(
   source: &Path,
   destination: &Path,
   media: &str,
   receipts: &Path,
+  cancelled: &impl Fn() -> bool,
+) -> io::Result<Published> {
+  publish_file_with(source, destination, media, receipts, false, cancelled)
+}
+
+fn publish_file_with(
+  source: &Path,
+  destination: &Path,
+  media: &str,
+  receipts: &Path,
+  fresh: bool,
   cancelled: &impl Fn() -> bool,
 ) -> io::Result<Published> {
   let parent = destination.parent().ok_or(io::ErrorKind::InvalidInput)?;
@@ -313,7 +340,7 @@ fn publish_file(
     let legacy = legacy_receipt(&path)?;
     if let Some(owner) = read_owner(&receipt).or_else(|| read_owner(&legacy)) {
       if let Some(identity) = regular_file_identity(&path) {
-        if owner.media == media && owner.identity.as_ref() == Some(&identity) {
+        if !fresh && owner.media == media && owner.identity.as_ref() == Some(&identity) {
           if !receipt.try_exists()? {
             let mut file = new_receipt(&receipt)?;
             file.write_all(&serde_json::to_vec(&owner)?)?;
@@ -757,6 +784,10 @@ mod tests {
         .unwrap()
         .reused
     );
+    // Download again: the same media is not reused, it takes the next free name.
+    let again =
+      publish_file_with(&source, &destination, "one", &receipts, true, &|| false).unwrap();
+    assert!(!again.reused && again.path.file_name().unwrap() == "Title-001.mp4");
     let other = root.path.join("other/Title.mp4");
     assert!(
       !publish_file(&source, &other, "one", &receipts, &|| false)

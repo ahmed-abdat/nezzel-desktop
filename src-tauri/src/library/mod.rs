@@ -83,7 +83,7 @@ fn configured_root<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
 
 fn protected_dirs() -> (Option<PathBuf>, Option<PathBuf>) {
   let home = dirs::home_dir();
-  let downloads = dirs::download_dir().or_else(|| home.as_ref().map(|p| p.join("Downloads")));
+  let downloads = crate::runners::ytdlp_args::downloads_dir(dirs::download_dir(), home.clone());
   (home, downloads)
 }
 

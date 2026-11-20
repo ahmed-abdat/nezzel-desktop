@@ -87,7 +87,7 @@ await hashAsset('https://github.com/test/asset', async (url, {headers}) => {
 """], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_manifest_bump_preserves_sources_and_pins_immutable_ffmpeg_release(self):
+    def test_manifest_bump_preserves_ffmpeg_pins_without_requests(self):
         result = subprocess.run(['node', '--input-type=module', '-e', r"""
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -96,6 +96,14 @@ const load = async path => JSON.parse(await readFile(path));
 const input = await Promise.all(['src-tauri/src/binaries/manifest.json',
   'scripts/gallery-dl-manifest.json', 'scripts/aria2-manifest.json'].map(load));
 input[0].tools['yt-dlp'].rollback = true;
+for (const name of ['ffmpeg', 'ffprobe']) {
+  for (const [platform, file] of Object.entries(input[0].tools[name].files)) {
+    if (!platform.startsWith('darwin-')) {
+      file.source = file.source || file.url;
+      file.url = `https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-pin/${platform}.zip`;
+    }
+  }
+}
 const original = structuredClone(input);
 const asset = (repo, tag, name) => ({name, browser_download_url: `https://github.com/${repo}/releases/download/${tag}/${name}`});
 const release = (repo, tag, names) => ({tag_name: tag, assets: names.map(name => asset(repo, tag, name))});
@@ -105,10 +113,12 @@ const releases = {
   'mikf/gallery-dl': release('mikf/gallery-dl', 'v1.33.0', ['gallery_dl-1.33.0.tar.gz', 'gallery-dl.bin', 'gallery-dl.exe']),
   'aria2/aria2': release('aria2/aria2', 'release-1.38.0', ['aria2-1.38.0.tar.xz', 'aria2-1.38.0-win-64bit-build1.zip']),
 };
-const ff = release('yt-dlp/FFmpeg-Builds', 'autobuild-2026-11-11-00-00',
-  ['linux64-gpl.tar.xz', 'linuxarm64-gpl.tar.xz', 'win64-gpl.zip', 'winarm64-gpl.zip'].map(s => `ffmpeg-N-123-gabc-${s}`));
+const ffRequests = [];
 const fetcher = async url => {
-  if (url.includes('FFmpeg-Builds/releases?')) return Response.json([{tag_name: 'latest', assets: []}, ff]);
+  if (/FFmpeg-Builds|martin-riedl|tools-ffmpeg/.test(url)) {
+    ffRequests.push(url);
+    throw new Error('FFmpeg must stay pinned');
+  }
   const match = url.match(/repos\/(.+)\/releases\/latest$/);
   if (match) { assert(releases[match[1]], url); return Response.json(releases[match[1]]); }
   if (url.includes('/redirect/latest/')) {
@@ -122,15 +132,13 @@ assert.deepEqual(input, original);
 const manifest = out['manifest.json'];
 assert.equal(manifest.tools['yt-dlp'].version, '2026.11.11');
 assert.equal(manifest.tools['yt-dlp'].rollback, undefined);
-assert.equal(manifest.tools.ffmpeg.files['linux-x86_64'].entry, 'ffmpeg-N-123-gabc-linux64-gpl/bin/ffmpeg');
-assert.equal(manifest.tools.ffprobe.files['windows-aarch64'].entry, 'ffmpeg-N-123-gabc-winarm64-gpl/bin/ffprobe.exe');
-assert.equal(manifest.tools.ffmpeg.files['darwin-aarch64'].version, '9.1.0');
-assert(manifest.tools.ffmpeg.files['linux-x86_64'].url.includes('/autobuild-2026-11-11-00-00/'));
+assert.deepEqual(ffRequests, []);
+for (const name of ['ffmpeg', 'ffprobe']) assert.deepEqual(manifest.tools[name], original[0].tools[name]);
 assert.deepEqual(manifest.tools['yt-dlp'].files['darwin-aarch64'].bundle, original[0].tools['yt-dlp'].files['darwin-aarch64'].bundle);
 assert.equal(out['gallery-dl-manifest.json'].version, '1.33.0');
 assert.equal(out['aria2-manifest.json'].version, '1.38.0');
 assert.deepEqual(manifest.tools.AtomicParsley, original[0].tools.AtomicParsley);
-for (const tool of ['yt-dlp', 'ffmpeg', 'ffprobe', 'deno']) {
+for (const tool of ['yt-dlp', 'deno']) {
   for (const file of Object.values(manifest.tools[tool].files))
     assert.equal(file.sha256, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
 }
@@ -142,12 +150,45 @@ const downloadFailure = await bump(...input, async url => url.endsWith('yt-dlp_w
   ? new Response('', {status: 502}) : fetcher(url));
 assert.deepEqual(downloadFailure['manifest.json'].tools['yt-dlp'], original[0].tools['yt-dlp']);
 assert.equal(downloadFailure['manifest.json'].tools.deno.version, 'v2.9.9');
-const ffFailure = await bump(...input, async url => url.endsWith('/release/ffmpeg.zip')
-  ? new Response('', {status: 502}) : fetcher(url));
-assert.deepEqual(ffFailure['manifest.json'].tools.ffmpeg, original[0].tools.ffmpeg);
-assert.equal(ffFailure['manifest.json'].tools.ffprobe.files['darwin-aarch64'].version, '9.1.0');
 await assert.rejects(bump(...input, async () => new Response('', {status: 502})), /Every tool source failed/);
 assert.deepEqual(input, original);
+"""], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_ffmpeg_mirror_rewrites_upstream_urls_and_keeps_hash_entry_and_source(self):
+        result = subprocess.run(['node', '--input-type=module', '-e', r"""
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {mirrorUrl, planMirror} from './scripts/manifest-bump.mjs';
+const up = 'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-1-gabc-win64-gpl.zip';
+assert.deepEqual(mirrorUrl(up, 'o/r'), {upstreamTag: 'autobuild-2026-11-16-23-35', name: 'ffmpeg-N-1-gabc-win64-gpl.zip',
+  tag: 'tools-ffmpeg-autobuild-2026-11-16-23-35',
+  url: 'https://github.com/o/r/releases/download/tools-ffmpeg-autobuild-2026-11-16-23-35/ffmpeg-N-1-gabc-win64-gpl.zip'});
+assert.throws(() => mirrorUrl('https://ffmpeg.martin-riedl.de/download/macos/arm64/1_9/ffmpeg.zip'), /Not a/);
+const manifest = JSON.parse(await readFile('src-tauri/src/binaries/manifest.json'));
+for (const tool of ['ffmpeg', 'ffprobe']) {
+  for (const file of Object.values(manifest.tools[tool].files)) {
+    if (file.source) file.url = file.source;
+  }
+}
+const before = structuredClone(manifest);
+const {manifest: next, archives} = planMirror(manifest);
+assert.deepEqual(manifest, before);
+assert.equal(archives.length, 4);
+for (const name of ['ffmpeg', 'ffprobe']) {
+  for (const [platform, file] of Object.entries(next.tools[name].files)) {
+    const old = before.tools[name].files[platform];
+    assert.equal(file.sha256, old.sha256);
+    assert.equal(file.entry, old.entry);
+    assert.deepEqual(file.bundle, old.bundle);
+    if (platform.startsWith('darwin-')) assert.equal(file.url, old.url);
+    else {
+      assert(file.url.startsWith('https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-'));
+      assert.equal(file.source, old.url);
+    }
+  }
+}
+assert.deepEqual(planMirror(next).archives, []);
 """], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -220,6 +261,59 @@ assert.deepEqual(input, original);
             self.assertEqual((binaries / 'ffprobe-aarch64-pc-windows-msvc.exe').read_bytes(), b'ffprobe')
             self.assertEqual((binaries / 'tools/yt-dlp/yt-dlp.exe').read_bytes(), b'ytdlp')
             self.assertEqual((binaries / 'tools/yt-dlp/_internal/python.dll').read_bytes(), b'python')
+
+    def test_windows_shared_pair_stages_once_and_verifies_every_file(self):
+        for arch in ('x86_64', 'aarch64'):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                archive = root / 'shared.zip'
+                with zipfile.ZipFile(archive, 'w') as bundle:
+                    for name in ('ffmpeg.exe', 'ffprobe.exe', 'codec.dll', 'extra.DLL', 'ffplay.exe'):
+                        bundle.writestr('build/bin/' + name, name.encode())
+                    bundle.writestr('build/doc/manual', b'doc')
+                asset = dict(url=archive.as_uri(), sha256=bootstrap.sha256(archive))
+                files = {name: dict(asset, bundle=dict(keep_folder=True, folder_name='build/bin', entry=name + '.exe'))
+                         for name in ('ffmpeg', 'ffprobe')}
+                platform = 'windows-' + arch
+                manifest = {'tools': {name: {'version': '1', 'files': {platform: file}} for name, file in files.items()}}
+                with patch.object(bootstrap, 'ROOT', root), patch.object(bootstrap, 'MANIFEST', manifest), \
+                        patch.object(bootstrap, 'TOOLS', ('ffmpeg', 'ffprobe')), \
+                        patch.object(bootstrap, 'checked_download', wraps=bootstrap.checked_download) as download:
+                    target = arch + '-pc-windows-msvc'
+                    index = bootstrap.install(target)['tools']
+                    folder = root / 'src-tauri/binaries/tools/ffmpeg'
+                    expected = {'ffmpeg.exe', 'ffprobe.exe', 'codec.dll', 'extra.DLL'}
+                    self.assertEqual({p.name for p in folder.iterdir()}, expected)
+                    self.assertFalse((folder.parent / 'ffprobe').exists())
+                    self.assertEqual(download.call_count, 1)
+                    for name in files:
+                        self.assertEqual(index[name]['entry'], name + '.exe')
+                        self.assertEqual(set(index[name]['files']), expected)
+                    bootstrap.install(target)
+                    self.assertEqual(download.call_count, 1)
+                    (folder / 'codec.dll').write_bytes(b'corrupt')
+                    bootstrap.install(target)
+                    self.assertEqual(download.call_count, 2)
+                    self.assertEqual((folder / 'codec.dll').read_bytes(), b'codec.dll')
+                    # Cache may not hide an extra DLL or stale ffplay.
+                    (folder / 'ffplay.exe').write_bytes(b'old')
+                    bootstrap.install(target)
+                    self.assertFalse((folder / 'ffplay.exe').exists())
+                    files['ffprobe']['sha256'] = '0' * 64
+                    with self.assertRaisesRegex(ValueError, 'pair'):
+                        bootstrap.install(target)
+
+    def test_shared_archive_requires_both_executables_and_dll(self):
+        for names in (('ffmpeg.exe', 'x.dll'), ('ffmpeg.exe', 'ffprobe.exe')):
+            with self.subTest(names=names), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                archive = root / 'shared.zip'
+                with zipfile.ZipFile(archive, 'w') as bundle:
+                    for name in names:
+                        bundle.writestr('build/bin/' + name, b'payload')
+                asset = dict(bundle=dict(keep_folder=True, folder_name='build/bin', entry='ffmpeg.exe'))
+                with self.assertRaisesRegex(ValueError, 'shared FFmpeg'):
+                    bootstrap.unpack(archive, asset, root, 'ffmpeg')
 
     def test_xz_archives_select_manifest_entries_and_record_file_versions(self):
         with tempfile.TemporaryDirectory() as tmp:

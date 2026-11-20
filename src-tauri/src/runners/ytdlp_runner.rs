@@ -281,12 +281,7 @@ impl<'a> YtdlpRunner<'a> {
       &self.cfg.output,
       overrides.and_then(|value| value.output.as_ref()),
     );
-    let system_downloads = self
-      .app
-      .path()
-      .download_dir()
-      .unwrap_or_else(|_| std::env::current_dir().expect("couldn’t get current dir"));
-    let fallback_dir = default_download_dir(&system_downloads);
+    let fallback_dir = default_download_dir();
     let path_preferences = path_preferences_for(
       &self.prefs.paths,
       overrides
@@ -535,12 +530,15 @@ impl<'a> YtdlpRunner<'a> {
         .tool_path("yt-dlp")
         .map_err(|error| error.to_string())?,
     );
-    command.args(&self.args).env(
-      "PATH",
-      manager
-        .tool_environment()
-        .map_err(|error| error.to_string())?,
-    );
+    command
+      .args(manager.ffmpeg_location_args())
+      .args(&self.args)
+      .env(
+        "PATH",
+        manager
+          .tool_environment()
+          .map_err(|error| error.to_string())?,
+      );
     Ok(command)
   }
 

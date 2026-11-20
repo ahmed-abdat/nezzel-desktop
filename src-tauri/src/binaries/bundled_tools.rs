@@ -19,6 +19,26 @@ struct Receipt {
   files: HashMap<String, String>,
 }
 
+/// Reserve once before awaiting: cancellation or failure must not restart warm-up.
+/// This flag is deliberately independent of capture's first-read allowance.
+pub(crate) async fn warm_once<F, Fut>(started: &std::sync::atomic::AtomicBool, run: F)
+where
+  F: Fn(&'static str) -> Fut,
+  Fut: std::future::Future<Output = io::Result<()>>,
+{
+  if started.swap(true, std::sync::atomic::Ordering::Relaxed) {
+    return;
+  }
+  for tool in ["yt-dlp", "deno"] {
+    match tokio::time::timeout(std::time::Duration::from_secs(60), run(tool)).await {
+      Ok(Ok(())) => {}
+      // No paths, output or foreground error state: warming is only best effort.
+      Ok(Err(_)) => tracing::debug!(tool, "Tool warm-up failed"),
+      Err(_) => tracing::debug!(tool, "Tool warm-up timed out"),
+    }
+  }
+}
+
 /// Where a bundled single-file tool may live, in lookup order. `name` carries the exe suffix.
 /// macOS (`Contents/MacOS`) and Windows ship tools next to the app binary. Linux packages
 /// ship them as resources (`/usr/lib/Nezzel/tools/`, `$APPDIR/usr/lib/Nezzel/tools/`, or
@@ -48,6 +68,58 @@ fn candidates_for(
     .into_iter()
     .flatten()
     .collect()
+}
+
+pub(super) fn shared_ffmpeg(tool: &str, windows: bool) -> bool {
+  windows && matches!(tool, "ffmpeg" | "ffprobe")
+}
+
+pub(super) fn ffmpeg_path(base: &Path, tool: &str) -> PathBuf {
+  base.join("ffmpeg").join(format!("{tool}.exe"))
+}
+
+pub(super) fn ffmpeg_files_valid<'a>(names: impl IntoIterator<Item = &'a str>) -> bool {
+  let names: Vec<_> = names.into_iter().collect();
+  names.contains(&"ffmpeg.exe")
+    && names.contains(&"ffprobe.exe")
+    && names
+      .iter()
+      .any(|name| name.to_ascii_lowercase().ends_with(".dll"))
+    && names.iter().all(|name| {
+      safe_relative(name)
+        && !name.contains('/')
+        && (matches!(*name, "ffmpeg.exe" | "ffprobe.exe")
+          || name.to_ascii_lowercase().ends_with(".dll"))
+    })
+}
+
+/// Installer signatures seal bytes; check the shared layout without hashing 185 MB at startup.
+pub(super) fn ffmpeg_bundle_present(root: &Path) -> bool {
+  let Ok(entries) = std::fs::read_dir(root) else {
+    return false;
+  };
+  let mut names = Vec::new();
+  for entry in entries {
+    let Ok(entry) = entry else { return false };
+    if entry.file_name() == RECEIPT {
+      continue;
+    }
+    if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+      return false;
+    }
+    names.push(entry.file_name().to_string_lossy().into_owned());
+  }
+  ffmpeg_files_valid(names.iter().map(String::as_str))
+}
+
+/// Preserve each argument as an OS string: resource paths may contain spaces or Unicode.
+pub(crate) fn ffmpeg_location_args(path: Option<&Path>, windows: bool) -> Vec<std::ffi::OsString> {
+  if windows {
+    if let Some(parent) = path.and_then(Path::parent) {
+      return vec!["--ffmpeg-location".into(), parent.as_os_str().to_owned()];
+    }
+  }
+  Vec::new()
 }
 
 /// A tool's file name on this platform (`yt-dlp.exe` on Windows). Archive entries whose names
@@ -169,7 +241,8 @@ pub(super) fn record_repair(
   version: &str,
   archive_sha256: &str,
 ) -> io::Result<()> {
-  let files = if tool == "yt-dlp" {
+  let shared = shared_ffmpeg(tool, entry.extension().is_some_and(|ext| ext == "exe"));
+  let files = if tool == "yt-dlp" || shared {
     file_hashes(root)?
   } else {
     HashMap::from([(
@@ -181,19 +254,22 @@ pub(super) fn record_repair(
       hash_file(entry)?,
     )])
   };
+  if shared && !ffmpeg_files_valid(files.keys().map(String::as_str)) {
+    return Err(io::Error::other("incomplete shared FFmpeg bundle"));
+  }
   let receipt = Receipt {
     version: version.into(),
     archive_sha256: archive_sha256.into(),
     files,
   };
-  let path = receipt_path(root, tool);
+  let path = receipt_path(root, tool, shared);
   let temporary = path.with_extension("json.tmp");
   std::fs::write(&temporary, serde_json::to_vec(&receipt)?)?;
   std::fs::rename(temporary, path)
 }
 
-fn receipt_path(root: &Path, tool: &str) -> PathBuf {
-  root.join(if tool == "yt-dlp" {
+fn receipt_path(root: &Path, tool: &str, shared: bool) -> PathBuf {
+  root.join(if tool == "yt-dlp" || shared {
     RECEIPT.into()
   } else {
     format!(".{tool}-integrity.json")
@@ -210,7 +286,8 @@ pub(super) fn verified_repair(
   let Some(root) = entry.parent() else {
     return false;
   };
-  let Ok(bytes) = std::fs::read(receipt_path(root, tool)) else {
+  let shared = shared_ffmpeg(tool, entry.extension().is_some_and(|ext| ext == "exe"));
+  let Ok(bytes) = std::fs::read(receipt_path(root, tool, shared)) else {
     return false;
   };
   let Ok(receipt) = serde_json::from_slice::<Receipt>(&bytes) else {
@@ -220,12 +297,144 @@ pub(super) fn verified_repair(
     // Newer yt-dlp receipts come from the existing upstream checksum-verified updater.
     (version != pinned_version || receipt.archive_sha256 == pinned_sha) &&
     receipt.files.contains_key(&entry.file_name().unwrap_or_default().to_string_lossy().into_owned()) &&
-    verify_files(root, &receipt.files)
+    verify_files(root, &receipt.files) &&
+    (!shared || (ffmpeg_files_valid(receipt.files.keys().map(String::as_str))
+      && file_hashes(root).is_ok_and(|actual| actual == receipt.files)))
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn shared_ffmpeg_receipt_covers_the_complete_pair_and_dll_set() {
+    let root = std::env::temp_dir().join(format!("ffmpeg-receipt-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    for name in ["ffmpeg.exe", "ffprobe.exe", "codec.dll", "other.DLL"] {
+      std::fs::write(root.join(name), name).unwrap();
+      #[cfg(unix)]
+      {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
+      }
+    }
+    let entry = root.join("ffmpeg.exe");
+    record_repair(&root, "ffmpeg", &entry, "1", "digest").unwrap();
+    for name in ["ffmpeg", "ffprobe"] {
+      assert!(verified_repair(
+        &root.join(format!("{name}.exe")),
+        name,
+        "1",
+        "digest",
+        "1"
+      ));
+    }
+    std::fs::write(root.join("codec.dll"), "corrupt").unwrap();
+    assert!(!verified_repair(&entry, "ffmpeg", "1", "digest", "1"));
+    std::fs::write(root.join("codec.dll"), "codec.dll").unwrap();
+    // A valid hash for only one executable must never count as a full repair.
+    let mut receipt: Receipt =
+      serde_json::from_slice(&std::fs::read(root.join(RECEIPT)).unwrap()).unwrap();
+    receipt.files.remove("other.DLL");
+    std::fs::write(root.join(RECEIPT), serde_json::to_vec(&receipt).unwrap()).unwrap();
+    assert!(!verified_repair(&entry, "ffmpeg", "1", "digest", "1"));
+    std::fs::remove_file(root.join("ffprobe.exe")).unwrap();
+    assert!(!ffmpeg_bundle_present(&root));
+    assert!(record_repair(&root, "ffmpeg", &entry, "1", "digest").is_err());
+    std::fs::remove_dir_all(root).unwrap();
+  }
+
+  #[test]
+  fn shared_ffmpeg_location_preserves_spaces_and_non_windows_behavior() {
+    let root = Path::new("install with spaces/tools");
+    let path = ffmpeg_path(root, "ffmpeg");
+    assert_eq!(path, root.join("ffmpeg/ffmpeg.exe"));
+    assert!(shared_ffmpeg("ffprobe", true));
+    assert!(!shared_ffmpeg("ffprobe", false));
+    assert!(!shared_ffmpeg("deno", true));
+    let args = ffmpeg_location_args(Some(&path), true);
+    assert_eq!(
+      args,
+      [
+        std::ffi::OsString::from("--ffmpeg-location"),
+        root.join("ffmpeg").into_os_string()
+      ]
+    );
+    assert!(ffmpeg_location_args(Some(&path), false).is_empty());
+    assert!(ffmpeg_location_args(None, true).is_empty());
+  }
+
+  #[tokio::test]
+  async fn ready_and_show_requests_warm_tools_once() {
+    let started = std::sync::atomic::AtomicBool::new(false);
+    let calls = std::sync::Mutex::new(Vec::new());
+    let run = |tool| {
+      calls.lock().unwrap().push(tool);
+      std::future::ready(Ok(()))
+    };
+    // Startup readiness, main-window show and quick-bar show may all request warming.
+    tokio::join!(
+      warm_once(&started, run),
+      warm_once(&started, run),
+      warm_once(&started, run)
+    );
+    assert_eq!(*calls.lock().unwrap(), ["yt-dlp", "deno"]);
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn warm_up_deadline_includes_lock_wait() {
+    let started = std::sync::atomic::AtomicBool::new(false);
+    let lock = tokio::sync::RwLock::new(());
+    let _writer = lock.write().await;
+    let calls = std::sync::Mutex::new(Vec::new());
+    let warm = warm_once(&started, |tool| {
+      let lock = &lock;
+      let calls = &calls;
+      async move {
+        let _held = if tool == "yt-dlp" {
+          Some(lock.read().await)
+        } else {
+          None
+        };
+        calls.lock().unwrap().push(tool);
+        Ok(())
+      }
+    });
+    tokio::pin!(warm);
+    assert!(futures::poll!(&mut warm).is_pending());
+    tokio::time::advance(std::time::Duration::from_secs(60)).await;
+    assert!(futures::poll!(&mut warm).is_ready());
+    assert_eq!(*calls.lock().unwrap(), ["deno"]);
+  }
+
+  #[tokio::test]
+  async fn failed_tool_does_not_stop_warm_up() {
+    let started = std::sync::atomic::AtomicBool::new(false);
+    let calls = std::sync::Mutex::new(Vec::new());
+    let run = |tool| {
+      calls.lock().unwrap().push(tool);
+      std::future::ready(Err(io::Error::other("injected failure")))
+    };
+    warm_once(&started, run).await;
+    assert_eq!(*calls.lock().unwrap(), ["yt-dlp", "deno"]);
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn cancelled_warm_up_is_not_restarted() {
+    let started = std::sync::atomic::AtomicBool::new(false);
+    let calls = std::sync::atomic::AtomicUsize::new(0);
+    let run = |_| {
+      calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+      std::future::pending::<io::Result<()>>()
+    };
+    {
+      let warm = warm_once(&started, run);
+      tokio::pin!(warm);
+      assert!(futures::poll!(&mut warm).is_pending());
+    }
+    warm_once(&started, run).await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+  }
 
   #[test]
   fn sidecars_resolve_in_every_package_layout_and_never_from_usr_bin() {

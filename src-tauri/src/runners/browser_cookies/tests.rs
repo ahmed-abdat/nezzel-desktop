@@ -168,6 +168,8 @@ fn cookie_error_text_maps_to_codes_and_localized_remedies() {
       parser.parse_line(text).unwrap().code,
       if text.contains("Unsupported URL") {
         "urlNotSupported"
+      } else if text.contains("Unable to rename file") {
+        "outputFileBusy"
       } else {
         "unknown"
       },

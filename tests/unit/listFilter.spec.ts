@@ -1,7 +1,8 @@
 import { buildListTree, parentStatus, type TreeInput } from '../../src/helpers/listTree';
 import { describe, expect, it } from 'vitest';
-import { categoryNoticeCount, needsAttention, countView, filterRows, finishedIds, matchesSearch, parseListView, statusOf, viewQuery, type ListRow, type ListView } from '../../src/helpers/listFilter';
+import { categoryNoticeKey, categoryNoticeCount, needsAttention, countView, filterRows, finishedIds, matchesSearch, parseListView, statusOf, viewQuery, type ListRow, type ListView } from '../../src/helpers/listFilter';
 import { kindFilterOf } from '../../src/helpers/groupView';
+import { i18n, loadLocaleMessages } from '../../src/i18n';
 import { MediaState } from '../../src/stores/media/state';
 
 const row = (id: string, status: ListRow['status'], kind: ListRow['kind'], title: string, site = ''): ListRow & { id: string } => ({ id, status, kind, title, site });
@@ -99,6 +100,38 @@ describe('category notices', () => {
 
   it.each([['video', 4], ['audio', 1], ['photos', 0], ['files', 0]] as const)('counts hidden failures and attention rows only for %s', (type, expected) => {
     expect(categoryNoticeCount(list, type)).toBe(expected);
+  });
+
+  it('describes hidden ready audio rows as needing attention, not failed', () => {
+    const ready = [1, 2].map(id => ({ ...row(String(id), statusOf(MediaState.configure), 'audio', ''), needsAttention: needsAttention(MediaState.configure, false) }));
+    expect(filterRows(ready, v('audio'), '')).toEqual([]);
+    expect(categoryNoticeKey(ready, 'audio')).toBe('downloads.list.attentionNotice');
+  });
+
+  it('keeps failed wording when every counted row failed, even with a login prompt', () => {
+    expect(categoryNoticeKey(list.filter(row => row.id !== 'ready'), 'video')).toBe('downloads.list.failedNotice');
+  });
+
+  it('uses attention wording for mixed failures and ready rows', () => {
+    expect(categoryNoticeKey(list, 'video')).toBe('downloads.list.attentionNotice');
+  });
+
+  it('ignores attention rows of other types when choosing failed wording', () => {
+    expect(categoryNoticeKey(list, 'audio')).toBe('downloads.list.failedNotice');
+  });
+
+  it.each([
+    ['en', 2, '2 downloads need your attention'],
+    ['fr', 2, '2 téléchargements nécessitent votre attention'],
+    ['ar', 0, 'لا تنزيلات تحتاج إلى انتباهك'],
+    ['ar', 1, 'تنزيل واحد يحتاج إلى انتباهك'],
+    ['ar', 2, 'تنزيلان يحتاجان إلى انتباهك'],
+    ['ar', 3, '3 تنزيلات تحتاج إلى انتباهك'],
+    ['ar', 11, '11 تنزيلًا يحتاج إلى انتباهك'],
+    ['ar', 100, '100 تنزيل يحتاج إلى انتباهك'],
+  ] as const)('renders attention wording in %s for %s rows', async (locale, n, expected) => {
+    await loadLocaleMessages(locale);
+    expect(i18n.global.t(categoryNoticeKey(list, 'video'), { n }, { locale, plural: n })).toBe(expected);
   });
 
   it('counts two video failures separately from an audio failure', () => {

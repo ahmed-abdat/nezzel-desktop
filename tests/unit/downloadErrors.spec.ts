@@ -15,6 +15,31 @@ import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
 import { useLoginStore } from '../../src/stores/login';
 
 describe('download failure presentation', () => {
+  it.each(['en', 'ar', 'fr'] as const)('shows the move failure and retry action without a local path in %s', async (locale) => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = locale;
+    installTauriMock({});
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'move', url: 'https://example.com/video', title: 'Finished video', total: 1, processed: 0, errored: 1, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0,
+      items: { item: { id: 'item', isLeader: true, url: 'https://example.com/video', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id: 'item', groupId: 'move', code: 'outputFileBusy', level: 'error', component: null,
+      message: '[WinError 5] Access is denied: \'C:\\private\\tmp\' -> \'C:\\private\\target\'', raw: '', timestamp: 1 });
+    useMediaStateStore().setGroupState('move', MediaState.error);
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const row = mount(DownloadRow, { props: { group: groups.findGroupById('move')! }, global: { plugins: [router, i18n] } });
+    try {
+      expect(i18n.global.te('errors.runner.outputFileBusy.shortMessage', locale)).toBe(true);
+      expect(row.get('[data-testid="row-error"]').text()).toBe(i18n.global.t('errors.rowLine', {
+        what: i18n.global.t('errors.runner.outputFileBusy.shortMessage'), action: i18n.global.t('errors.runner.outputFileBusy.action') }));
+      expect(row.text()).not.toContain('C:\\private');
+    } finally {
+      row.unmount();
+      i18n.global.locale.value = previous;
+    }
+  });
+
   it.each(['en', 'ar', 'fr'] as const)('acknowledges live requests immediately and opens protected pages in %s', async (locale) => {
     const previous = i18n.global.locale.value;
     i18n.global.locale.value = locale;

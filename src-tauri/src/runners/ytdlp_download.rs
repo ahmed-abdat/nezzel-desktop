@@ -56,6 +56,7 @@ pub(crate) struct DownloadPartial {
   group: String,
   item: String,
   discarded: std::sync::atomic::AtomicBool,
+  move_retried: std::sync::atomic::AtomicBool,
 }
 impl DownloadPartial {
   fn open(root: &std::path::Path, group: &str, item: &str) -> Result<Self, String> {
@@ -87,6 +88,7 @@ impl DownloadPartial {
         group: group.to_owned(),
         item: item.to_owned(),
         discarded: false.into(),
+        move_retried: false.into(),
       };
       partial.set_state(PartialState::Running)?;
       Ok(partial)
@@ -1576,8 +1578,9 @@ async fn run_download_attempts(
                 let receipts = super::ytdlp_files::receipt_directory(&app)
                   .map_err(|error| YtdlpDownloadError::RunnerError(error.to_string()))?;
                 let publish_cancel = cancel_rx.clone();
+                let fresh = entry.overrides.as_ref().and_then(|o| o.output.as_ref()).and_then(|o| o.keep_both).unwrap_or(false);
                 let outcome = tauri::async_runtime::spawn_blocking(move || {
-                  pending_files.publish(&stage, &anchor, &source_url, &receipts, || is_cancelled_now(&publish_cancel))
+                  pending_files.publish_with(&stage, &anchor, &source_url, &receipts, fresh, || is_cancelled_now(&publish_cancel))
                 }).await.map_err(|error| YtdlpDownloadError::RunnerError(error.to_string()))?;
                 let published = match outcome {
                   Ok(super::ytdlp_files::PublishOutcome::Files(files)) => files,
@@ -1630,6 +1633,19 @@ async fn run_download_attempts(
               if diagnostics.iter().any(|event| event.raw.contains("diskSpaceUnavailable")) {
                 super::reliability::fatal(&app, &entry, "diskSpaceUnavailable");
                 return Err(YtdlpDownloadError::RunnerError("diskSpaceUnavailable".into()));
+              }
+              let terminal_code = diagnostics.iter().rev()
+                .find(|event| matches!(event.level, crate::models::error::DiagnosticLevel::Error))
+                .map(|event| event.code.as_str());
+              if terminal_code == Some("outputFileBusy") {
+                // yt-dlp's file-access retries do not cover postprocessor moves. Reuse the
+                // same partials once, including across pause/resume, keeping transport budgets intact.
+                if retry_file_move(&temporary.move_retried, terminal_code, &mut cancel_rx, tokio::time::sleep).await {
+                  continue 'attempt;
+                }
+                if is_cancelled_now(&cancel_rx) { return Ok(()); }
+                super::reliability::fatal(&app, &entry, "outputFileBusy");
+                return Err(YtdlpDownloadError::NonZeroExit(term.code.unwrap_or(1)));
               }
               if busy_failure {
                 if let Some(delay) = recovery.busy_delay() {
@@ -1808,6 +1824,31 @@ fn is_cancelled_now(cancel_rx: &watch::Receiver<bool>) -> bool {
   !*cancel_rx.borrow()
 }
 
+async fn retry_file_move<F: std::future::Future<Output = ()>>(
+  used: &std::sync::atomic::AtomicBool,
+  code: Option<&str>,
+  cancel: &mut watch::Receiver<bool>,
+  delay: impl FnOnce(std::time::Duration) -> F,
+) -> bool {
+  if code != Some("outputFileBusy")
+    || is_cancelled_now(cancel)
+    || used.swap(true, std::sync::atomic::Ordering::AcqRel)
+  {
+    return false;
+  }
+  let wait = delay(std::time::Duration::from_secs(2));
+  tokio::pin!(wait);
+  loop {
+    tokio::select! {
+      biased;
+      changed = cancel.changed() => {
+        if changed.is_err() || is_cancelled_now(cancel) { return false; }
+      }
+      _ = &mut wait => return !is_cancelled_now(cancel),
+    }
+  }
+}
+
 fn store_log_line(
   line: &str,
   entry: &DownloadEntry,
@@ -1916,6 +1957,59 @@ fn keep_image_container(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[tokio::test]
+  async fn file_move_failure_exhausts_one_retry_without_retrying_other_errors() {
+    let used = std::sync::atomic::AtomicBool::new(false);
+    let (_sender, mut cancel) = watch::channel(true);
+    for (code, expected) in [
+      (Some("accessForbidden403"), false),
+      (Some("unknown"), false),
+      (Some("outputFileBusy"), true),
+      (Some("outputFileBusy"), false),
+    ] {
+      assert_eq!(
+        retry_file_move(&used, code, &mut cancel, |_| std::future::ready(())).await,
+        expected
+      );
+    }
+  }
+
+  #[tokio::test]
+  async fn file_move_retry_stops_when_paused_or_cancelled_during_delay() {
+    let used = std::sync::atomic::AtomicBool::new(false);
+    let (sender, mut cancel) = watch::channel(true);
+    assert!(
+      !retry_file_move(&used, Some("outputFileBusy"), &mut cancel, |_| async {
+        sender.send(false).unwrap();
+      })
+      .await
+    );
+    sender.send(true).unwrap();
+    assert!(
+      !retry_file_move(&used, Some("outputFileBusy"), &mut cancel, |_| {
+        std::future::ready(())
+      })
+      .await
+    );
+  }
+
+  #[tokio::test]
+  async fn file_move_retry_never_waits_after_cancellation() {
+    let used = std::sync::atomic::AtomicBool::new(false);
+    let (_sender, mut cancel) = watch::channel(false);
+    assert!(
+      !retry_file_move(
+        &used,
+        Some("outputFileBusy"),
+        &mut cancel,
+        |_| -> std::future::Ready<()> {
+          panic!("a cancelled download must not wait to retry");
+        }
+      )
+      .await
+    );
+  }
 
   #[test]
   fn zero_output_keeps_the_filter_warning_instead_of_a_save_error() {

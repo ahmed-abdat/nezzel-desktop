@@ -64,7 +64,7 @@
         </div>
       </div>
       <p v-if="view.type !== 'all' && failedCount" class="flex items-center gap-1 pe-4 ps-8 py-2 text-[12px] text-muted-foreground">
-        {{ t('downloads.list.failedNotice', { n: count(failedCount) }, failedCount) }}
+        {{ t(noticeKey, { n: count(failedCount) }, failedCount) }}
         <Button variant="link" class="h-auto p-0 text-[12px]" @click="showFailures">{{ t('downloads.list.viewFailed') }}</Button>
       </p>
       <!-- Finder-style column labels, only when the list is wide enough for columns (cells in DownloadRow). -->
@@ -194,7 +194,7 @@ import type { GroupNode, GroupRow } from '../../composables/useDownloadList';
 import { useDownloadBuckets } from '../../composables/useDownloadBuckets';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import { useDownloadList } from '../../composables/useDownloadList';
-import { categoryNoticeCount, parseListView, viewQuery, type StatusFilter } from '../../helpers/listFilter';
+import { categoryNoticeKey, categoryNoticeCount, parseListView, viewQuery, type StatusFilter } from '../../helpers/listFilter';
 import { useListVisibilityStore } from '../../stores/listVisibility';
 import { useListRemoval } from '../../composables/useListRemoval';
 import { useMediaStore } from '../../stores/media/media';
@@ -277,10 +277,13 @@ watch([() => route.name, () => view.value.type, () => view.value.status], () => 
 onBeforeUnmount(() => {
   query.value = '';
 });
+const noticeKey = computed(() => categoryNoticeKey(rows.value, view.value.type));
 const failedCount = computed(() => categoryNoticeCount(rows.value, view.value.type));
 function showFailures() {
   query.value = '';
-  void router.push({ name: 'home', query: viewQuery({ type: 'all', status: 'failed' }) });
+  // Ready rows are not under the Failed chip: when the notice counts any, show the whole list.
+  const status = noticeKey.value === 'downloads.list.failedNotice' ? 'failed' : 'all';
+  void router.push({ name: 'home', query: viewQuery({ type: 'all', status }) });
 }
 const statusCounts = computed(() => counts(view.value.type).statuses);
 const clearedCount = computed(() => rows.value.filter(row => row.cleared).length);

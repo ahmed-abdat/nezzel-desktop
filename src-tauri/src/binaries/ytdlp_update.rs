@@ -69,7 +69,10 @@ pub(super) fn cleanup_leftovers(bin: &Path) -> io::Result<()> {
     let entry = entry?;
     let name = entry.file_name();
     let name = name.to_string_lossy();
-    if name.starts_with(".yt-dlp-stage-") || name.starts_with(".extract-") {
+    if name.starts_with(".yt-dlp-stage-")
+      || name.starts_with(".ffmpeg-stage-")
+      || name.starts_with(".extract-")
+    {
       remove_path(&entry.path())?;
     } else if let Some(base) = backup_base(&name) {
       backups.entry(base).or_default().push(entry.path());
@@ -481,6 +484,9 @@ impl BinariesManager {
           let _process_guard = process_guard;
           std::fs::create_dir_all(&bin)?;
           recover_bundle(&bin.join(CURRENT_DIR))?;
+          if cfg!(windows) {
+            recover_bundle(&bin.join("ffmpeg"))?;
+          }
           // This runs once, before any prepare call can create a live stage directory.
           cleanup_leftovers(&bin)?;
           cleanup_legacy(&bin)
@@ -720,6 +726,9 @@ impl BinariesManager {
         YTDLP_PROCESSES.clone(),
       )
       .await?;
+      if matches!(outcome, InstallOutcome::Installed(_)) {
+        self.tools_changed();
+      }
       if let Ok(mut verified) = self.verified_repairs.lock() {
         verified.clear();
       }

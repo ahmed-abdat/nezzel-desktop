@@ -92,7 +92,7 @@ impl JsonBackedState for Config {
     Config::default()
   }
 
-  fn before_initialized(app: &AppHandle<Wry>, value: &mut Self) {
+  fn before_initialized(_app: &AppHandle<Wry>, value: &mut Self) {
     value.input.migrate_capture_shortcut();
     crate::runners::login::migrate_global_consent(&mut value.auth);
     if value.network.enable_proxy.is_none() {
@@ -100,11 +100,7 @@ impl JsonBackedState for Config {
         Some(value.network.proxy.as_ref().is_some_and(|v| !v.is_empty()));
     }
     if value.output.download_dir.is_none() {
-      let system_downloads = app
-        .path()
-        .download_dir()
-        .unwrap_or_else(|_| std::env::current_dir().expect("couldn’t get current dir"));
-      let download_path = crate::runners::ytdlp_args::default_download_dir(&system_downloads);
+      let download_path = crate::runners::ytdlp_args::default_download_dir();
       value.output.download_dir = Some(download_path.to_string_lossy().into_owned());
     }
   }

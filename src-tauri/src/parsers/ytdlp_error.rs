@@ -732,14 +732,19 @@ impl YtdlpErrorParser {
       matched_code
     };
 
+    let redact: fn(&str) -> String = if code == "outputFileBusy" {
+      redact_diagnostic
+    } else {
+      redact_urls
+    };
     Some(DiagnosticEvent {
       id: self.id.clone(),
       group_id: self.group_id.clone(),
       level,
       code: code.to_string(),
       component,
-      message: redact_urls(&message),
-      raw: redact_urls(trimmed),
+      message: redact(&message),
+      raw: redact(trimmed),
       timestamp: SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -1377,6 +1382,8 @@ ERROR: Unsupported URL: https://hackertube.org/";
       ("ERROR: [Reddit] Private subreddit; an account that has been approved is required", "signInRequired"),
       ("ERROR: [Reddit] Account authentication is required. Use --cookies", "signInRequired"),
       ("ERROR: HTTP Error 429: Too Many Requests. Use --cookies", "rateLimited429"),
+      ("WARNING: [youtube] abc: Unable to download webpage: HTTP Error 429: Too Many Requests (caused by <HTTPError 429: Too Many Requests>)", "rateLimited429"),
+      ("WARNING: [youtube] Unable to fetch GVS PO Token for web client: Missing required Visitor Data. You may need to pass Visitor Data with --extractor-args \"youtube:visitor_data=XXX\"", "unknown"),
       ("ERROR: [twitch] Your account does not have access to this subscriber-only content. Use --cookies", "membersOnly"),
       ("ERROR: [youtube] The uploader has not made this video available in your country", "geoBlocked"),
       ("ERROR: [Reddit] Your IP address is unable to access the Reddit API", "accessForbidden403"),
@@ -1583,6 +1590,24 @@ ERROR: Unsupported URL: https://hackertube.org/";
       ),
       ("ERROR: [Errno 22] Invalid argument", "unknown"),
       (
+        "ERROR: [WinError 5] Access is denied: 'C:\\private\\tmp' -> 'C:\\private\\target'",
+        "outputFileBusy",
+      ),
+      (
+        "ERROR: [WinError 32] The process cannot access the file because it is being used by another process: 'tmp' -> 'target'",
+        "outputFileBusy",
+      ),
+      (
+        "ERROR: [Errno 13] Permission denied: '/private/tmp' -> '/private/target'",
+        "outputFileBusy",
+      ),
+      (
+        "ERROR: Unable to rename file: [Errno 13] Permission denied",
+        "outputFileBusy",
+      ),
+      ("ERROR: HTTP Error 403: Forbidden", "accessForbidden403"),
+      ("ERROR: [Errno 13] Permission denied: '/private/cookies'", "permissionDenied"),
+      (
         "ERROR: [Errno 22] The filename or extension is too long",
         "outputNameTooLong",
       ),
@@ -1592,6 +1617,18 @@ ERROR: Unsupported URL: https://hackertube.org/";
       ),
     ] {
       assert_eq!(parser.parse_line(line).unwrap().code, code, "{line}");
+    }
+  }
+
+  #[test]
+  fn move_failures_do_not_expose_local_paths_in_diagnostic_details() {
+    let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
+    for line in [
+      "ERROR: [WinError 5] Access is denied: 'C:\\private\\tmp' -> 'C:\\private\\target'",
+      "ERROR: [Errno 13] Permission denied: '/private/tmp' -> '/private/target'",
+    ] {
+      let event = parser.parse_line(line).unwrap();
+      assert!(!format!("{} {}", event.message, event.raw).contains("private"));
     }
   }
 

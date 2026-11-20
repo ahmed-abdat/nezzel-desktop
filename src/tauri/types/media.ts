@@ -112,6 +112,8 @@ export type OutputOverrides = {
   partialDownload?: PartialDownload;
   /** Folder for this download only; wins over the per-track folders. */
   downloadDir?: string;
+  /** "Download again": write a new file next to the saved one instead of reusing it. */
+  keepBoth?: boolean;
 };
 
 export type Section = {

@@ -142,7 +142,7 @@ describe('saved download queue', () => {
     expect(calls).toContain('group_cancel');
     expect(calls).not.toContain('media_download');
   });
-  it('persists pending rows, retains an unanswered restore offer, and removes cancelled rows', async () => {
+  it('persists pending rows, retains an unanswered restore offer, and keeps cancelled rows flagged', async () => {
     writeQueue([saved()]);
     useMediaStore();
     const row = saved();
@@ -157,6 +157,30 @@ describe('saved download queue', () => {
     useMediaStateStore().setState('new-item', MediaState.cancelled);
     await nextTick();
     await vi.advanceTimersByTimeAsync(500);
-    expect(readQueue().map(row => row.group.id)).toEqual(['saved']);
+    expect(readQueue().map(row => [row.group.id, !!row.cancelled])).toEqual([['saved', false], ['new', true]]);
+  });
+  it('a cancelled row survives a restart as Cancelled, is not offered or resumed, and removing it clears it', async () => {
+    const calls: string[] = [];
+    mockIPC((cmd) => {
+      calls.push(cmd);
+      return undefined;
+    });
+    const row = saved();
+    row.cancelled = true;
+    writeQueue([row]);
+    const media = useMediaStore();
+    expect(useMediaStateStore().getState('item')).toBe(MediaState.cancelled);
+    expect(useMediaGroupStore().findGroupById('saved')).toBeDefined();
+    expect(media.restoreCount).toBe(0);
+    await media.resumeSavedDownloads();
+    expect(calls).not.toContain('media_download');
+    expect(useMediaStateStore().getState('item')).toBe(MediaState.cancelled);
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(readQueue().map(row => [row.group.id, !!row.cancelled])).toEqual([['saved', true]]);
+    await media.deleteGroup('saved');
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(readQueue()).toEqual([]);
   });
 });

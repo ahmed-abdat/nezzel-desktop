@@ -71,21 +71,28 @@
       "files": {
         "linux-x86_64": {
           "version": "N-128970-g11337618b2",
-          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linux64-gpl.tar.xz",
+          "url": "https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linux64-gpl.tar.xz",
           "sha256": "49d74477584a7a5d786003d7ef67e1e42304c022239ee1186ade87eefb480687",
+          "source": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linux64-gpl.tar.xz",
           "entry": "ffmpeg-N-128970-g11337618b2-linux64-gpl/bin/ffmpeg"
         },
         "linux-aarch64": {
           "version": "N-128970-g11337618b2",
-          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linuxarm64-gpl.tar.xz",
+          "url": "https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linuxarm64-gpl.tar.xz",
           "sha256": "ed02df7476f6d5faf57ccbb434519b2e52d53e91d09d03c8608261bee69af79d",
+          "source": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linuxarm64-gpl.tar.xz",
           "entry": "ffmpeg-N-128970-g11337618b2-linuxarm64-gpl/bin/ffmpeg"
         },
         "windows-x86_64": {
           "version": "N-128970-g11337618b2",
-          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-win64-gpl.zip",
-          "sha256": "66789a599f9b6606036f29980ee054abe75201f18a24ca24c623a78c9be3f7c0",
-          "entry": "ffmpeg-N-128970-g11337618b2-win64-gpl/bin/ffmpeg.exe"
+          "url": "https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-win64-gpl-shared.zip",
+          "sha256": "2a2b96289f2708b2c87294aa5b25efd72ad0c66b1660f858b144dda5ea278d15",
+          "source": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-win64-gpl-shared.zip",
+          "bundle": {
+            "keep_folder": true,
+            "folder_name": "ffmpeg-N-128970-g11337618b2-win64-gpl-shared/bin",
+            "entry": "ffmpeg.exe"
+          }
         },
         "darwin-x86_64": {
           "version": "9.0.2",
@@ -101,9 +108,14 @@
         },
         "windows-aarch64": {
           "version": "N-128970-g11337618b2",
-          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-winarm64-gpl.zip",
-          "sha256": "82e369cc7e9441e3f5da44b3b32c2efea14d60b20960d0da6d8f3bc61fdbf9da",
-          "entry": "ffmpeg-N-128970-g11337618b2-winarm64-gpl/bin/ffmpeg.exe"
+          "url": "https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-winarm64-gpl-shared.zip",
+          "sha256": "733236e9ea62fb5cdc80662f13a9fd5e5897158e78e5d8143a9a0acb4215a0ce",
+          "source": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-winarm64-gpl-shared.zip",
+          "bundle": {
+            "keep_folder": true,
+            "folder_name": "ffmpeg-N-128970-g11337618b2-winarm64-gpl-shared/bin",
+            "entry": "ffmpeg.exe"
+          }
         }
       }
     },
@@ -112,21 +124,28 @@
       "files": {
         "linux-x86_64": {
           "version": "N-128970-g11337618b2",
-          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linux64-gpl.tar.xz",
+          "url": "https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linux64-gpl.tar.xz",
           "sha256": "49d74477584a7a5d786003d7ef67e1e42304c022239ee1186ade87eefb480687",
+          "source": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linux64-gpl.tar.xz",
           "entry": "ffmpeg-N-128970-g11337618b2-linux64-gpl/bin/ffprobe"
         },
         "linux-aarch64": {
           "version": "N-128970-g11337618b2",
-          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linuxarm64-gpl.tar.xz",
+          "url": "https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linuxarm64-gpl.tar.xz",
           "sha256": "ed02df7476f6d5faf57ccbb434519b2e52d53e91d09d03c8608261bee69af79d",
+          "source": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-linuxarm64-gpl.tar.xz",
           "entry": "ffmpeg-N-128970-g11337618b2-linuxarm64-gpl/bin/ffprobe"
         },
         "windows-x86_64": {
           "version": "N-128970-g11337618b2",
-          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-win64-gpl.zip",
-          "sha256": "66789a599f9b6606036f29980ee054abe75201f18a24ca24c623a78c9be3f7c0",
-          "entry": "ffmpeg-N-128970-g11337618b2-win64-gpl/bin/ffprobe.exe"
+          "url": "https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-win64-gpl-shared.zip",
+          "sha256": "2a2b96289f2708b2c87294aa5b25efd72ad0c66b1660f858b144dda5ea278d15",
+          "source": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-win64-gpl-shared.zip",
+          "bundle": {
+            "keep_folder": true,
+            "folder_name": "ffmpeg-N-128970-g11337618b2-win64-gpl-shared/bin",
+            "entry": "ffprobe.exe"
+          }
         },
         "darwin-x86_64": {
           "version": "9.0.2",
@@ -142,9 +161,14 @@
         },
         "windows-aarch64": {
           "version": "N-128970-g11337618b2",
-          "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-winarm64-gpl.zip",
-          "sha256": "82e369cc7e9441e3f5da44b3b32c2efea14d60b20960d0da6d8f3bc61fdbf9da",
-          "entry": "ffmpeg-N-128970-g11337618b2-winarm64-gpl/bin/ffprobe.exe"
+          "url": "https://github.com/ahmed-abdat/nezzel-desktop/releases/download/tools-ffmpeg-autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-winarm64-gpl-shared.zip",
+          "sha256": "733236e9ea62fb5cdc80662f13a9fd5e5897158e78e5d8143a9a0acb4215a0ce",
+          "source": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-11-16-23-35/ffmpeg-N-128970-g11337618b2-winarm64-gpl-shared.zip",
+          "bundle": {
+            "keep_folder": true,
+            "folder_name": "ffmpeg-N-128970-g11337618b2-winarm64-gpl-shared/bin",
+            "entry": "ffprobe.exe"
+          }
         }
       }
     },

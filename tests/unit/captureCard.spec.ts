@@ -149,3 +149,26 @@ describe('copied-link card engagement', () => {
     expect(reports().at(-1)).toEqual({ id: 2, engaged: false });
   });
 });
+
+describe('copied-link card dismiss tooltip (#83)', () => {
+  it('stays closed on the focus the webview gives at open, opens on keyboard focus', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+    offer.value = { ...offer.value, id: 1, read: false };
+    const card = mount(CaptureCard, { attachTo: document.body, global: { plugins: [i18n] } });
+    const dismiss = card.get(`button[aria-label="${i18n.global.t('capture.dismiss')}"]`).element as HTMLButtonElement;
+    const focusVisible = vi.spyOn(dismiss, 'matches').mockImplementation(selector => selector !== ':focus-visible');
+    dismiss.focus();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(document.body.textContent).not.toContain(`${i18n.global.t('capture.dismiss')}${i18n.global.t('capture.dismiss')}`);
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+    dismiss.blur();
+    focusVisible.mockImplementation(() => true);
+    dismiss.focus();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+    card.unmount();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+});

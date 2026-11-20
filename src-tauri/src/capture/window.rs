@@ -190,7 +190,7 @@ pub(super) fn offer_with(
   let config = app.state::<SharedConfig>().load();
   let value = Offer {
     read_limit: if !resolving && !feed {
-      super::read::ytdlp_read_limit(&url, &state.youtube_cold_spent)
+      super::read::preview_read_limit(&url, &state.cold_read_spent)
     } else {
       super::read::READ_LIMIT
     },
@@ -234,6 +234,7 @@ pub(super) fn offer_with(
     }
   }
   native.show().map_err(|_| "capture unavailable")?;
+  crate::binaries::binaries_manager::BinariesManager::warm_tools(app);
   tracing::debug!(window = label, host = %value.site, "Capture window shown");
   if window.focusable() && !resolving {
     focus_alone(&native);

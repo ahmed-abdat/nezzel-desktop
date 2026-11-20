@@ -80,14 +80,25 @@ import { siteLogo } from '../../helpers/siteLogo';
 import { shortcutKeys } from '../../helpers/shortcut';
 import { usePlatform } from '../../composables/usePlatform';
 import { desktopOs } from './desktopOs';
+import { formatDuration } from '../../helpers/units';
+import { useLocaleNumber } from '../../composables/useLocaleNumber';
+import { WELCOME_SAMPLE } from './welcomeSample';
 import { TRY_LINK } from '@/generated/contract';
+
+const { t } = useI18n();
 
 /** The sample the "Try it" link opens ("Me at the zoo"); the facts on the card are plausible sample values. */
 const LINK = TRY_LINK.replace(/^https:\/\/www\./, '');
 const SITE = 'YouTube';
 const TITLE = 'Me at the zoo';
-/** Length, quality, container, size: sample values for the card and the saved row. */
-const FACTS = ['0:19', '360p', 'MP4', '1.2 MB'];
+/** Length, quality, container, size for the card and the saved row, formatted like the real card (one constant). */
+const { size: formatSize } = useLocaleNumber();
+const FACTS = computed(() => [
+  formatDuration(WELCOME_SAMPLE.seconds, { pad: true }),
+  t('capture.formats.height', { n: WELCOME_SAMPLE.height }),
+  WELCOME_SAMPLE.ext,
+  formatSize(WELCOME_SAMPLE.bytes),
+]);
 const logo = siteLogo(TRY_LINK) ?? '';
 
 /** One loop in ms; the CSS keyframes below use the same beats as percentages of it. */
@@ -100,7 +111,6 @@ const RESET = 7600;
 const FILL = [4370, 5870] as const;
 
 const emit = defineEmits<{ step: [step: number] }>();
-const { t } = useI18n();
 const os = computed(() => desktopOs(usePlatform().platform.value));
 const keys = computed(() => shortcutKeys('CommandOrControl+C', os.value === 'mac'));
 

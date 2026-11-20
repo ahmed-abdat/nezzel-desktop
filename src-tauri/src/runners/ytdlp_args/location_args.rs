@@ -7,10 +7,26 @@ use std::path::{Path, PathBuf};
 /// Folder inside the system Downloads folder where Nezzel saves by default (same as the Android app).
 pub const DEFAULT_DOWNLOAD_SUBDIR: &str = "Nezzel";
 
-/// Default save folder when the user has not picked one: `<system Downloads>/Nezzel`.
-/// yt-dlp creates it on the first download.
-pub fn default_download_dir(system_downloads: &Path) -> PathBuf {
-  system_downloads.join(DEFAULT_DOWNLOAD_SUBDIR)
+/// Platform Downloads folder, or the conventional home-relative path when unavailable.
+pub fn downloads_dir(downloads: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
+  downloads.or_else(|| home.map(|home| home.join("Downloads")))
+}
+
+/// Default save folder; yt-dlp creates it on the first download.
+pub fn default_download_dir() -> PathBuf {
+  default_download_dir_with(dirs::download_dir, dirs::home_dir, || {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+  })
+}
+
+pub(super) fn default_download_dir_with(
+  downloads: impl FnOnce() -> Option<PathBuf>,
+  home: impl FnOnce() -> Option<PathBuf>,
+  fallback: impl FnOnce() -> PathBuf,
+) -> PathBuf {
+  downloads_dir(downloads(), home())
+    .unwrap_or_else(fallback)
+    .join(DEFAULT_DOWNLOAD_SUBDIR)
 }
 
 /// Folder a download of `track_type` is saved under (before the directory template and file name).

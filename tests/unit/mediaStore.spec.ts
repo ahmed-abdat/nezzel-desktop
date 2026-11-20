@@ -258,6 +258,30 @@ describe('media store', () => {
     expect(groups.orderedGroups).toHaveLength(action === 'remove' ? 0 : 1);
   });
 
+  it('Download again re-reads a saved link, downloads with keepBoth once, then clears the flag', async () => {
+    const requests: { cmd: string; args: unknown }[] = [];
+    installTauriMock({
+      media_info: (cmd, args) => { requests.push({ cmd, args }); },
+      media_download: (cmd, args) => { requests.push({ cmd, args }); },
+    });
+    const groups = useMediaGroupStore();
+    const store = useMediaStore();
+    const group = createPlaylistGroup('saved-again', 1);
+    delete group.items.leader.entries;
+    groups.createGroup(group);
+    useMediaStateStore().setGroupState(group.id, MediaState.done);
+    useMediaDestinationStore().addDestination(group.id, { path: '/Downloads/a.mp4', confidence: 100, alreadyDownloaded: true });
+    const again = store.downloadAgain(group.id);
+    await flushPromises();
+    expect(useMediaStateStore().getGroupState(group.id)).toBe(MediaState.fetching);
+    expect(useMediaDestinationStore().getDestinations(group.id)).toEqual([]);
+    store.processMediaAddPayload({ groupId: group.id, total: 1, item: { ...Object.values(group.items)[0], formats: [] } });
+    await again;
+    const download = requests.find(r => r.cmd === 'media_download')!.args as { items: { overrides?: { output?: { keepBoth?: boolean } } }[]; overrides?: { output?: { keepBoth?: boolean } } };
+    expect(JSON.stringify(download)).toContain('"keepBoth":true');
+    expect(useMediaOptionsStore().getOverrides(group.id)?.output?.keepBoth).toBeFalsy();
+  });
+
   it('Undo keeps three finished playlist items and submits only the seven unfinished items', async () => {
     const download = vi.fn();
     installTauriMock({ media_download: download });

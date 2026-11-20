@@ -348,6 +348,62 @@ pub async fn extract_tar_xz(
   .await?
 }
 
+/// Extract only the Windows shared payload, never ffplay/docs/import libraries.
+pub(super) async fn extract_shared_ffmpeg(
+  archive: &Path,
+  destination: &Path,
+  folder: &str,
+) -> Result<(), super::binaries_manager::AnyError> {
+  let archive = archive.to_owned();
+  let destination = destination.to_owned();
+  let folder = folder.to_owned();
+  tokio::task::spawn_blocking(move || -> Result<(), super::binaries_manager::AnyError> {
+    let mut zip = ZipArchive::new(std::fs::File::open(archive)?)?;
+    std::fs::create_dir_all(&destination)?;
+    // Validate the manifest path as well as every archive path.
+    safe_join(&destination, Path::new(&folder))?;
+    for i in 0..zip.len() {
+      let mut entry = zip.by_index(i)?;
+      let name = entry.name()?.into_owned();
+      let path = Path::new(&name);
+      safe_join(&destination, path)?;
+      if entry.is_dir() || path.parent() != Some(Path::new(&folder)) {
+        continue;
+      }
+      let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
+        continue;
+      };
+      if !matches!(filename, "ffmpeg.exe" | "ffprobe.exe")
+        && !filename.to_ascii_lowercase().ends_with(".dll")
+      {
+        continue;
+      }
+      if entry
+        .unix_mode()
+        .is_some_and(|mode| mode & 0o170000 == 0o120000)
+      {
+        return Err("shared FFmpeg contains symlink".into());
+      }
+      let output = destination.join(filename);
+      let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output)?;
+      std::io::copy(&mut entry, &mut file)?;
+      #[cfg(unix)]
+      {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(output, std::fs::Permissions::from_mode(0o755))?;
+      }
+    }
+    if !super::bundled_tools::ffmpeg_bundle_present(&destination) {
+      return Err("shared FFmpeg requires both executables and DLLs".into());
+    }
+    Ok(())
+  })
+  .await?
+}
+
 pub async fn extract_zip_bundle(
   archive: &Path,
   out_parent: &Path,
@@ -545,6 +601,67 @@ fn list_tree(root: &Path, max: usize) -> EntriesDisplay {
 
 #[cfg(test)]
 mod tests {
+  use super::extract_shared_ffmpeg;
+
+  #[tokio::test]
+  async fn shared_ffmpeg_archive_selects_bin_and_requires_pair_and_dlls() {
+    use std::io::Write;
+    let root = std::env::temp_dir().join(format!("ffmpeg-extract-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    for (label, files, success) in [
+      (
+        "complete",
+        vec![
+          "build/bin/ffmpeg.exe",
+          "build/bin/ffprobe.exe",
+          "build/bin/a.dll",
+          "build/bin/b.DLL",
+          "build/bin/ffplay.exe",
+          "build/doc/readme",
+          "build/lib/import.lib",
+        ],
+        true,
+      ),
+      (
+        "missing-probe",
+        vec!["build/bin/ffmpeg.exe", "build/bin/a.dll"],
+        false,
+      ),
+      (
+        "missing-dll",
+        vec!["build/bin/ffmpeg.exe", "build/bin/ffprobe.exe"],
+        false,
+      ),
+      ("traversal", vec!["../escape.dll"], false),
+    ] {
+      let archive = root.join(format!("{label}.zip"));
+      let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+      for name in files {
+        zip
+          .start_file(name, zip::write::SimpleFileOptions::default())
+          .unwrap();
+        zip.write_all(name.as_bytes()).unwrap();
+      }
+      zip.finish().unwrap();
+      let destination = root.join(label);
+      assert_eq!(
+        extract_shared_ffmpeg(&archive, &destination, "build/bin")
+          .await
+          .is_ok(),
+        success,
+        "{label}"
+      );
+      if success {
+        let files = super::super::bundled_tools::file_hashes(&destination).unwrap();
+        assert_eq!(files.len(), 4);
+        assert!(files.contains_key("ffprobe.exe"));
+        assert!(files.contains_key("b.DLL"));
+        assert!(!destination.join("ffplay.exe").exists());
+      }
+    }
+    std::fs::remove_dir_all(root).unwrap();
+  }
+
   use super::{atomic_dir_replace, atomic_file_replace, extract_zip, extract_zip_bundle};
   use std::io::Write;
   use std::path::Path;

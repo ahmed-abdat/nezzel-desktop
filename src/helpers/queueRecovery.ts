@@ -10,6 +10,8 @@ export type SavedDownload = {
   attachmentIds?: string[];
   /** Playlist row this download sits under (no thumbnail: it can be a signed CDN link). */
   parent?: PlaylistParent;
+  /** Cancelled by the user: shown again in the Cancelled state after a restart, never resumed. */
+  cancelled?: true;
 };
 const KEY = 'nezzel.pending-downloads.v1';
 
@@ -43,7 +45,7 @@ export function encodeQueue(rows: SavedDownload[]): string {
         overrides: safeOverrides(item.overrides),
       }])),
     },
-    options: row.options, overrides: safeOverrides(row.overrides),
+    options: row.options, overrides: safeOverrides(row.overrides), cancelled: row.cancelled ? true : undefined,
     encodings: row.encodings, tracks: row.tracks, attachmentIds: row.attachmentIds,
     parent: row.parent && typeof row.parent.id === 'string' && row.parent.id === row.group.parentId
       ? { id: row.parent.id, url: safeLink(row.parent.url), title: row.parent.title, count: Number(row.parent.count) || 0, skipped: 0 }

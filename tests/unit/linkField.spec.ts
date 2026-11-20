@@ -289,6 +289,37 @@ describe('LinkField', () => {
     expect(addUrlBatch).toHaveBeenCalledTimes(2);
   });
 
+  it('a click right after copying link B adds B, not the stale placeholder A', async () => {
+    settingsState.input.autoFillClipboard = true;
+    clipboardContent.value = 'https://example.com/a';
+    const { wrapper } = await mountField();
+    invoke.mockImplementation((cmd: string) => cmd === 'capture_read_clipboard'
+      ? Promise.resolve('https://example.com/a')
+      : Promise.reject(new Error('unexpected')));
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+    expect(addUrlBatch).toHaveBeenLastCalledWith(['https://example.com/a']);
+    // B is now on the clipboard; the watcher's prefill has not reached the field yet (placeholder still A).
+    invoke.mockImplementation((cmd: string) => cmd === 'capture_read_clipboard'
+      ? Promise.resolve('https://example.com/b')
+      : Promise.reject(new Error('unexpected')));
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+    expect(addUrlBatch).toHaveBeenCalledTimes(2);
+    expect(addUrlBatch).toHaveBeenLastCalledWith(['https://example.com/b']);
+  });
+
+  it('a click after the copied link stopped being a supported link never re-adds the old one', async () => {
+    settingsState.input.autoFillClipboard = true;
+    clipboardContent.value = 'https://example.com/a';
+    const { wrapper } = await mountField();
+    invoke.mockImplementation((cmd: string) => cmd === 'capture_read_clipboard' ? Promise.resolve('') : Promise.reject(new Error('unexpected')));
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+    expect(addUrlBatch).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith(expect.any(String), { style: 'warning' });
+  });
+
   it('pastes native clipboard text without submitting or adding it twice', async () => {
     invoke.mockImplementation((cmd: string) => cmd === 'capture_read_clipboard'
       ? Promise.resolve('https://example.com/pasted')

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "externalBin": ["binaries/aria2c", "binaries/gallery-dl", "binaries/deno"],
+    "resources": {
+      "binaries/tools/ffmpeg/": "tools/ffmpeg/"
+    }
+  }
+}

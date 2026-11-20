@@ -58,13 +58,12 @@ fn record_preview(
 const READ_SECS: u64 = 20;
 pub(super) const READ_LIMIT: Duration = Duration::from_secs(READ_SECS);
 const COLD_READ_SECS: u64 = 60;
-pub(super) fn ytdlp_read_limit(url: &str, cold_spent: &std::sync::atomic::AtomicBool) -> Duration {
-  let youtube = reqwest::Url::parse(url)
-    .ok()
-    .and_then(|u| u.host_str().and_then(crate::sites::site_of))
-    == Some(crate::sites::SiteId::YouTube);
-  // Reserve the one cold attempt before spawning it: a hang/cancel cannot renew the allowance.
-  if youtube && !cold_spent.swap(true, std::sync::atomic::Ordering::Relaxed) {
+pub(super) fn preview_read_limit(
+  url: &str,
+  cold_spent: &std::sync::atomic::AtomicBool,
+) -> Duration {
+  // Reserve the first actual read before spawning it: a hang/cancel cannot renew the allowance.
+  if !url.is_empty() && !cold_spent.swap(true, std::sync::atomic::Ordering::Relaxed) {
     Duration::from_secs(COLD_READ_SECS)
   } else {
     READ_LIMIT
@@ -151,7 +150,7 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewIt
           return Err(FailReason::Unknown);
         }
         return tokio::time::timeout(
-          READ_LIMIT,
+          value.read_limit(),
           crate::files::runner::preview(&value.url, row.clone()),
         )
         .await
@@ -160,7 +159,14 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewIt
         .map(|item| Some((with_engine(item, FetchEngine::Files), None)));
       }
       Engine::Gallery => {
-        match crate::runners::gallery::preview_media(app, &target.url, row.clone(), &network).await
+        match crate::runners::gallery::preview_media(
+          app,
+          &target.url,
+          row.clone(),
+          &network,
+          value.read_limit(),
+        )
+        .await
         {
           Ok(Some(item)) => return Ok(Some((with_engine(item, FetchEngine::Gallery), None))),
           // A login wall leaves the media type unknown. The foreground fetch must resolve it with
@@ -171,28 +177,30 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewIt
           _ => {}
         }
       }
-      Engine::Reader => match crate::resolve::resolve(&value.url).await {
-        crate::resolve::Resolution::Passthrough(url) => target.rewrite(url),
-        crate::resolve::Resolution::PostMedia { url, title, .. } => {
-          post_title = title;
-          target.rewrite(url);
+      Engine::Reader => {
+        match crate::resolve::resolve_with_limit(&value.url, value.read_limit()).await {
+          crate::resolve::Resolution::Passthrough(url) => target.rewrite(url),
+          crate::resolve::Resolution::PostMedia { url, title, .. } => {
+            post_title = title;
+            target.rewrite(url);
+          }
+          crate::resolve::Resolution::Attachments { metadata } => {
+            return reader_item(&metadata, &row)
+              .map(|item| Some((item, None)))
+              .ok_or(FailReason::Unknown);
+          }
+          crate::resolve::Resolution::Failed { .. } => return Err(FailReason::Network),
+          crate::resolve::Resolution::Unsupported {
+            reason: crate::resolve::Reason::Login,
+          } => return Err(FailReason::Login),
+          crate::resolve::Resolution::Unsupported {
+            reason: crate::resolve::Reason::Unavailable,
+          } => return Err(FailReason::Unknown),
+          crate::resolve::Resolution::Unsupported { .. } => {
+            failed.get_or_insert(FailReason::Unsupported);
+          }
         }
-        crate::resolve::Resolution::Attachments { metadata } => {
-          return reader_item(&metadata, &row)
-            .map(|item| Some((item, None)))
-            .ok_or(FailReason::Unknown);
-        }
-        crate::resolve::Resolution::Failed { .. } => return Err(FailReason::Network),
-        crate::resolve::Resolution::Unsupported {
-          reason: crate::resolve::Reason::Login,
-        } => return Err(FailReason::Login),
-        crate::resolve::Resolution::Unsupported {
-          reason: crate::resolve::Reason::Unavailable,
-        } => return Err(FailReason::Unknown),
-        crate::resolve::Resolution::Unsupported { .. } => {
-          failed.get_or_insert(FailReason::Unsupported);
-        }
-      },
+      }
       // A reader that found no video (photos only) leaves yt-dlp nothing to read.
       Engine::Ytdlp if failed.is_some() || crate::resolve::facebook_photo_target(&target.url) => {}
       Engine::Ytdlp => match preview_ytdlp(app, value, &target, &network).await {
@@ -261,6 +269,7 @@ async fn preview_ytdlp(
   let executable = manager
     .tool_path("yt-dlp")
     .map_err(|_| FailReason::Unknown)?;
+  let ffmpeg_args = manager.ffmpeg_location_args();
   let mut input = target.clone();
   input.rewrite(target.url.clone());
   let mut first_vimeo_reason = None;
@@ -274,9 +283,10 @@ async fn preview_ytdlp(
         let input = &input;
         let executable = &executable;
         let path = &path;
+        let ffmpeg_args = &ffmpeg_args;
         async move {
           let process_guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
-          let mut command = preview_command(executable, network, input, fast)
+          let mut command = preview_command(executable, network, input, fast, ffmpeg_args)
             .ok_or((FailReason::Unknown, String::new()))?;
           command.env("PATH", path);
           preview::read_output_stderr_with_limit(&mut command, process_guard, limit).await
@@ -429,6 +439,7 @@ fn preview_command(
   network: &crate::state::config_models::NetworkSettings,
   input: &crate::resolve::ResolvedInput,
   fast: bool,
+  ffmpeg_args: &[std::ffi::OsString],
 ) -> Option<tokio::process::Command> {
   // Background previews never load cookies, user yt-dlp config, or engine diagnostics.
   let mut command = crate::runners::tool_process::async_command(executable).ok()?;
@@ -457,7 +468,7 @@ fn preview_command(
   if fast {
     command.args(["--extractor-args", "youtube:skip=hls,dash,translated_subs"]);
   }
-  command.args(input.args());
+  command.args(ffmpeg_args).args(input.args());
   Some(command)
 }
 
@@ -470,6 +481,7 @@ mod login_privacy_tests {
       &crate::state::config_models::NetworkSettings::default(),
       &crate::resolve::ResolvedInput::new("https://example.com/post"),
       false,
+      &[],
     )
     .unwrap();
     let args: Vec<_> = command
@@ -518,38 +530,83 @@ mod tests {
     assert_eq!(offer.details.title.as_deref(), Some("NASA clip"));
   }
 
-  #[tokio::test(start_paused = true)]
-  async fn cold_youtube_read_survives_windows_first_run_latency() {
-    let url = "https://www.youtube.com/watch?v=abc";
-    for (seconds, succeeds) in [(26, true), (61, false)] {
+  #[test]
+  fn first_read_gets_cold_budget_for_any_host() {
+    for (url, engine) in [
+      ("https://www.youtube.com/watch?v=abc", Engine::Ytdlp),
+      ("https://www.instagram.com/p/abc/", Engine::Gallery),
+      ("https://facebook.com/nasa/posts/123", Engine::Reader),
+      ("https://drive.google.com/file/d/abc123/view", Engine::Files),
+    ] {
+      assert_eq!(preview_plan(url, false).first(), Some(&engine));
       let state = CaptureState::default();
       assert_eq!(
-        ytdlp_read_limit("https://example.com/v", &state.youtube_cold_spent),
-        READ_LIMIT
-      );
-      let read_limit = ytdlp_read_limit(url, &state.youtube_cold_spent);
-      let offer = Offer {
-        read_limit,
-        ..Offer::default()
-      };
-      assert_eq!(offer.card_limit(), Duration::from_secs(65));
-      assert_eq!(offer.item_wait(), Duration::from_secs(126));
-      let result = tokio::time::timeout(read_limit, async {
-        tokio::time::sleep(Duration::from_secs(seconds)).await;
-      })
-      .await;
-      assert_eq!(result.is_ok(), succeeds);
-      let next = Offer {
-        read_limit: ytdlp_read_limit(url, &state.youtube_cold_spent),
-        ..Offer::default()
-      };
-      assert_eq!(next.read_limit(), READ_LIMIT);
-      assert_eq!(next.card_limit(), Duration::from_secs(25));
-      assert_eq!(next.item_wait(), Duration::from_secs(46));
-      state.tools_changed();
-      assert_eq!(
-        ytdlp_read_limit(url, &state.youtube_cold_spent),
+        preview_read_limit(url, &state.cold_read_spent),
         Duration::from_secs(60)
+      );
+    }
+  }
+
+  #[test]
+  fn second_read_gets_normal_budget_even_on_another_host() {
+    let state = CaptureState::default();
+    preview_read_limit("https://vimeo.com/123", &state.cold_read_spent);
+    assert_eq!(
+      preview_read_limit(
+        "https://www.youtube.com/watch?v=abc",
+        &state.cold_read_spent
+      ),
+      READ_LIMIT
+    );
+  }
+
+  #[test]
+  fn empty_offer_does_not_spend_first_read_budget() {
+    let state = CaptureState::default();
+    preview_read_limit("", &state.cold_read_spent);
+    assert_eq!(
+      preview_read_limit("https://vimeo.com/123", &state.cold_read_spent),
+      Duration::from_secs(60)
+    );
+  }
+
+  #[test]
+  fn tool_replacement_rearms_one_cold_read() {
+    let state = CaptureState::default();
+    let url = "https://vimeo.com/123";
+    preview_read_limit(url, &state.cold_read_spent);
+    state.tools_changed();
+    assert_eq!(
+      [
+        preview_read_limit(url, &state.cold_read_spent),
+        preview_read_limit(url, &state.cold_read_spent)
+      ],
+      [Duration::from_secs(60), READ_LIMIT]
+    );
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn hanging_first_read_for_any_engine_times_out_at_sixty_seconds() {
+    for url in [
+      "https://www.youtube.com/watch?v=abc",
+      "https://www.instagram.com/p/abc/",
+      "https://facebook.com/nasa/posts/123",
+      "https://drive.google.com/file/d/abc123/view",
+    ] {
+      let state = CaptureState::default();
+      let offer = Offer {
+        read_limit: preview_read_limit(url, &state.cold_read_spent),
+        ..Offer::default()
+      };
+      let read = tokio::time::timeout(offer.read_limit(), std::future::pending::<()>());
+      tokio::pin!(read);
+      assert!(futures::poll!(&mut read).is_pending());
+      tokio::time::advance(Duration::from_secs(26)).await;
+      assert!(futures::poll!(&mut read).is_pending(), "{url}");
+      tokio::time::advance(Duration::from_secs(34)).await;
+      assert!(
+        matches!(futures::poll!(&mut read), std::task::Poll::Ready(Err(_))),
+        "{url}"
       );
     }
   }
@@ -817,6 +874,7 @@ mod tests {
       &Default::default(),
       &input,
       false,
+      &[],
     )
     .unwrap();
     let args: Vec<_> = command
@@ -866,6 +924,7 @@ mod tests {
         network,
         &crate::resolve::ResolvedInput::new("https://example.com/v"),
         false,
+        &[],
       )
       .map(|command| {
         command
@@ -897,6 +956,12 @@ mod tests {
       &Default::default(),
       &input,
       true,
+      &crate::binaries::bundled_tools::ffmpeg_location_args(
+        Some(std::path::Path::new(
+          "install with spaces/tools/ffmpeg/ffmpeg.exe",
+        )),
+        true,
+      ),
     )
     .unwrap();
     let args: Vec<_> = command
@@ -914,6 +979,12 @@ mod tests {
       "fast probes retain the source referer and resolved target"
     );
     assert!(flags < args.iter().position(|arg| *arg == "--").unwrap());
+    let location = args
+      .iter()
+      .position(|arg| *arg == "--ffmpeg-location")
+      .unwrap();
+    assert_eq!(args[location + 1], "install with spaces/tools/ffmpeg");
+    assert!(location < args.iter().position(|arg| *arg == "--").unwrap());
   }
 
   #[test]

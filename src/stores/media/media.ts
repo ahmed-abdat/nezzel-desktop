@@ -66,7 +66,19 @@ export const useMediaStore = defineStore('media', () => {
   const { defaultChoice } = useUiPrefs();
   const duplicateFocus = ref<{ id: string } | null>(null);
 
-  const pendingRestore = ref<SavedDownload[]>(readQueue());
+  const savedQueue = readQueue();
+  const pendingRestore = ref<SavedDownload[]>(savedQueue.filter(row => !row.cancelled));
+  // Cancelled rows come back as Cancelled (Retry/Remove) and are never offered for resuming.
+  for (const row of savedQueue.filter(row => row.cancelled)) {
+    if (row.parent && !playlistStore.findPlaylist(row.parent.id)) playlistStore.register({ ...row.parent });
+    groupStore.createGroup(row.group);
+    optionsStore.setOptions(row.group.id, row.options);
+    if (row.overrides) optionsStore.setOverrides(row.group.id, row.overrides);
+    if (row.encodings) optionsStore.setEncodings(row.group.id, row.encodings);
+    if (row.tracks) optionsStore.setTracks(row.group.id, row.tracks);
+    if (row.attachmentIds) optionsStore.setAttachmentSelection(row.group.id, row.attachmentIds);
+    for (const item of Object.values(row.group.items)) stateStore.setState(item.id, MediaState.cancelled);
+  }
   const restoreCount = computed(() => pendingRestore.value.reduce((sum, row) => sum + Object.values(row.group.items).filter(item => !item.entries).length, 0));
   const startupSweep = invoke('group_sweep_partials', {
     saved: pendingRestore.value.flatMap(row => Object.values(row.group.items).filter(item => !item.entries).map(item => [row.group.id, item.id])),
@@ -86,13 +98,18 @@ export const useMediaStore = defineStore('media', () => {
         const state = stateStore.getState(item.id);
         return !!item.entries || (state != null && [MediaState.downloading, MediaState.downloadingList, MediaState.paused, MediaState.pausedList].includes(state));
       }));
-      if (!Object.values(items).some(item => !item.entries)) continue;
+      const cancelled = !Object.values(items).some(item => !item.entries)
+        && Object.values(group.items).some(item => !item.entries)
+        && stateStore.getGroupState(group.id) === MediaState.cancelled;
+      if (cancelled) {
+        for (const item of Object.values(group.items)) if (!item.entries) items[item.id] = item;
+      } else if (!Object.values(items).some(item => !item.entries)) continue;
       const overrides = optionsStore.getOverrides(group.id);
       const paths = usePreferencesStore().preferences.paths;
       const fileRoot = settingsStore.settings.output.downloadDir;
       const filesFolder = group.mediaKind === 'file' && fileRoot ? `${fileRoot.replace(/[\\/]$/, '')}/Files` : undefined;
       const downloadDir = overrides?.output?.downloadDir || filesFolder || (options.trackType === TrackType.audio ? paths.audioDownloadDir : paths.videoDownloadDir) || settingsStore.settings.output.downloadDir;
-      rows.push({ group: { ...group, items }, options, overrides: { ...overrides, output: { ...overrides?.output, ...(downloadDir ? { downloadDir } : {}) } },
+      rows.push({ ...(cancelled ? { cancelled: true as const } : {}), group: { ...group, items }, options, overrides: { ...overrides, output: { ...overrides?.output, ...(downloadDir ? { downloadDir } : {}) } },
         encodings: optionsStore.getEncodings(group.id), tracks: optionsStore.getTracks(group.id),
         attachmentIds: group.attachments?.length ? optionsStore.getAttachmentSelection(group.id) : undefined,
         parent: group.parentId ? playlistStore.findPlaylist(group.parentId) : undefined });
@@ -693,6 +710,24 @@ export const useMediaStore = defineStore('media', () => {
     await fetchMediaInfoForGroup(groupId);
   }
 
+  /** A saved link on purpose: re-read it, then download with `keepBoth` so the saved copy is not reused. */
+  async function downloadAgain(groupId: string) {
+    const overrides = optionsStore.getOverrides(groupId);
+    optionsStore.setOverrides(groupId, { ...overrides, output: { ...overrides?.output, keepBoth: true } });
+    const clearFlag = () => {
+      const current = optionsStore.getOverrides(groupId);
+      if (current?.output) optionsStore.setOverrides(groupId, { ...current, output: { ...current.output, keepBoth: undefined } });
+    };
+    try {
+      const ready = waitForGroupReady(groupId);
+      await retryGroup(groupId);
+      await ready;
+      return await downloadGroup(groupId, getDownloadOptions(groupId));
+    } finally {
+      clearFlag();
+    }
+  }
+
   async function dispatchMediaInfoFetch(
     url: string,
     fromShortcut: boolean = false,
@@ -1094,6 +1129,7 @@ export const useMediaStore = defineStore('media', () => {
     resumeAllGroups,
     deleteGroup,
     cancelDownload,
+    downloadAgain,
     deleteAllGroups,
     deleteGroupsByState,
     rememberFailedGroup,

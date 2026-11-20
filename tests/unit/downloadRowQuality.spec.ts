@@ -573,6 +573,39 @@ describe('row cancellation controls', () => {
     }
   });
 
+  it('offers Download again only on an already-saved row, and choosing it calls the store', async () => {
+    installTauriMock({});
+    const groups = useMediaGroupStore();
+    const url = 'https://example.com/again';
+    for (const id of ['again-saved', 'again-fresh']) {
+      groups.createGroup({ id, url, title: id, mediaKind: 'video', total: 1, processed: 1, errored: 0, isCombined: false,
+        audioCodecs: [], formats: [], filesize: 0, items: { [`${id}-item`]: { id: `${id}-item`, isLeader: true, url, audioCodecs: [], formats: [], filesize: 0 } } });
+      useMediaStateStore().setGroupState(id, MediaState.done);
+      useMediaDestinationStore().addDestination(id, { path: `/${id}.mp4`, confidence: 100, alreadyDownloaded: id === 'again-saved' });
+    }
+    const again = vi.spyOn(useMediaStore(), 'downloadAgain').mockResolvedValue(undefined as never);
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    // reka menus do not open in jsdom: render the items inline.
+    const passthrough = { template: '<div><slot /></div>' };
+    const item = { template: '<button type="button" data-menu-item @click="$emit(\'select\')"><slot /></button>', emits: ['select'] };
+    const stubs = { DropdownMenu: passthrough, DropdownMenuTrigger: passthrough, DropdownMenuContent: passthrough, DropdownMenuSeparator: passthrough, DropdownMenuItem: item,
+      ContextMenu: passthrough, ContextMenuTrigger: passthrough, ContextMenuContent: passthrough, ContextMenuSeparator: passthrough, ContextMenuItem: item };
+    const label = i18n.global.t('downloads.row.downloadAgain');
+    const menuItems = (row: ReturnType<typeof mount>) => row.findAll('[data-menu-item]').filter(entry => entry.text().includes(label));
+    const saved = mount(DownloadRow, { props: { group: groups.findGroupById('again-saved')! }, global: { plugins: [router, i18n], stubs } });
+    const fresh = mount(DownloadRow, { props: { group: groups.findGroupById('again-fresh')! }, global: { plugins: [router, i18n], stubs } });
+    try {
+      expect(menuItems(fresh)).toHaveLength(0);
+      expect(menuItems(saved).length).toBeGreaterThan(0);
+      await menuItems(saved)[0].trigger('click');
+      expect(again).toHaveBeenCalledWith('again-saved');
+    } finally {
+      saved.unmount();
+      fresh.unmount();
+    }
+  });
+
   it.each(['button', 'Delete'] as const)('cancels immediately using %s', async (gesture) => {
     const cancel = vi.fn();
     installTauriMock({ group_cancel: cancel });

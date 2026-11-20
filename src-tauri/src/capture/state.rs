@@ -382,7 +382,7 @@ impl Offers {
 }
 
 pub struct CaptureState {
-  pub(super) youtube_cold_spent: AtomicBool,
+  pub(super) cold_read_spent: AtomicBool,
   pub(super) policy: Mutex<CapturePolicy>,
   pub(super) offers: Mutex<Offers>,
   pub(super) sequence: AtomicU64,
@@ -414,7 +414,7 @@ pub struct CaptureState {
 impl CaptureState {
   pub(crate) fn tools_changed(&self) {
     self
-      .youtube_cold_spent
+      .cold_read_spent
       .store(false, std::sync::atomic::Ordering::Relaxed);
   }
 }
@@ -422,7 +422,7 @@ impl CaptureState {
 impl Default for CaptureState {
   fn default() -> Self {
     Self {
-      youtube_cold_spent: AtomicBool::new(false),
+      cold_read_spent: AtomicBool::new(false),
       policy: Mutex::default(),
       offers: Mutex::default(),
       sequence: AtomicU64::new(0),

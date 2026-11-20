@@ -17,6 +17,14 @@
       ]
     },
     {
+      "code": "outputFileBusy",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)(?:\\[WinError (?:5|32)\\]|permission denied).* -> " },
+        { "kind": "regex", "value": "(?i)unable to (?:rename|move) file:.*(?:\\[WinError (?:5|32)\\]|permission denied)" }
+      ]
+    },
+    {
       "code": "outputNameTooLong",
       "appliesTo": "error",
       "patterns": [
@@ -531,6 +539,13 @@
       "appliesTo": "warning",
       "patterns": [
         { "kind": "substr", "value": "Retrying fragment download" }
+      ]
+    },
+    {
+      "code": "rateLimited429",
+      "appliesTo": "warning",
+      "patterns": [
+        { "kind": "substr", "value": "Unable to download webpage: HTTP Error 429" }
       ]
     },
     {

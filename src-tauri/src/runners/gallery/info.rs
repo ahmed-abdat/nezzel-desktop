@@ -76,11 +76,12 @@ pub async fn preview_media(
   source: &str,
   id: String,
   network: &NetworkSettings,
+  limit: Duration,
 ) -> Result<Option<Value>, GalleryError> {
   let runner = GalleryRunner::anonymous(bundled_path(app)?, network, source)?;
   let group = format!("capture-preview-{id}");
   // Match the yt-dlp preview budget, including all gallery redirect attempts.
-  let result = tokio::time::timeout(Duration::from_secs(20), runner.probe(source, &group)).await;
+  let result = tokio::time::timeout(limit, runner.probe(source, &group)).await;
   crate::scheduling::group_state::remove_group(&group);
   preview_from_post(result.map_err(|_| GalleryError::Unavailable)?, id)
 }

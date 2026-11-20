@@ -16,6 +16,373 @@ use crate::scheduling::{
 use crate::state::config_models::AuthSettings;
 use tauri::Manager;
 use tokio::sync::watch;
+// Synthetic IO records exports/window opens; schedule() still parks and queues real requests.
+#[derive(Default)]
+struct AutomaticIo {
+  candidates: Vec<&'static str>,
+  exports: Mutex<Vec<String>>,
+  browser_error_once: Mutex<Option<&'static str>>,
+  windows: std::sync::atomic::AtomicUsize,
+  block: std::sync::atomic::AtomicBool,
+  started: tokio::sync::Notify,
+  dropped: std::sync::Arc<tokio::sync::Notify>,
+}
+struct NotifyOnDrop(std::sync::Arc<tokio::sync::Notify>);
+impl Drop for NotifyOnDrop {
+  fn drop(&mut self) {
+    self.0.notify_one();
+  }
+}
+impl automatic::LoginRuntime for tauri::test::MockRuntime {
+  fn login_enabled(_: &tauri::AppHandle<Self>) -> bool {
+    true
+  }
+  fn park_login(
+    app: &tauri::AppHandle<Self>,
+    token: String,
+    payload: LoginNeeded,
+    request: LoginRequest,
+  ) {
+    let mut parked = pending(request.ids().1);
+    parked.automatic = payload.reason == "automaticLogin";
+    parked.request = request;
+    parked.cleanup = CleanupChannels {
+      fetch: app.state::<FetchSender>().inner().clone(),
+      download: app.state::<DownloadSender>().inner().clone(),
+    };
+    queue_pending(&mut PENDING.lock().unwrap(), token, parked);
+  }
+  fn choose_login(
+    app: tauri::AppHandle<Self>,
+    _source: String,
+    _host: String,
+    state: std::sync::Arc<Mutex<automatic::RowAttempts>>,
+  ) -> futures::future::BoxFuture<'static, automatic::LoginResult> {
+    Box::pin(async move {
+      let io = app.state::<AutomaticIo>();
+      if io.block.load(std::sync::atomic::Ordering::SeqCst) {
+        let _dropped = NotifyOnDrop(io.dropped.clone());
+        io.started.notify_one();
+        std::future::pending::<()>().await;
+      }
+      automatic::choose_phases(
+        async {
+          let mut state = state.lock().unwrap();
+          state.claim(NEZZEL_SESSION); // No stored app session in this fixture.
+          for source in &io.candidates {
+            if state.claim(source) {
+              io.exports.lock().unwrap().push((*source).into());
+              if let Some(error) = io.browser_error_once.lock().unwrap().take() {
+                return Err(error);
+              }
+              state.browser_proven = true;
+              return Ok(Some((*source).into()));
+            }
+          }
+          Ok(None)
+        },
+        || async {
+          let mut state = state.lock().unwrap();
+          if !state.may_open_sign_in() {
+            return Err("browserLoginExhausted");
+          }
+          state.opened = true;
+          io.windows.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+          Ok(NEZZEL_SESSION.into())
+        },
+      )
+      .await
+    })
+  }
+}
+
+struct AutomaticFixture {
+  app: tauri::App<tauri::test::MockRuntime>,
+  queued: tokio::sync::mpsc::UnboundedReceiver<DispatchRequest<FetchRequest>>,
+  group: String,
+  url: String,
+}
+impl AutomaticFixture {
+  fn new(candidates: &[&'static str]) -> Self {
+    let group = uuid::Uuid::new_v4().to_string();
+    crate::scheduling::group_state::ensure_group_running(&group);
+    let app = tauri::test::mock_app();
+    let (tx, queued) = tokio::sync::mpsc::unbounded_channel();
+    app.manage(FetchSender(tx));
+    app.manage(DownloadSender(tokio::sync::mpsc::unbounded_channel().0));
+    app.manage(AutomaticIo {
+      candidates: candidates.to_vec(),
+      ..Default::default()
+    });
+    Self {
+      app,
+      queued,
+      url: format!("https://{group}.test/private"),
+      group,
+    }
+  }
+  fn schedule(&self, id: &str, expired: bool) -> RetryAction {
+    let LoginRequest::Fetch(mut entry) = pending(&self.group).request else {
+      unreachable!();
+    };
+    entry.id = id.into();
+    entry.url = self.url.clone();
+    automatic::schedule(self.app.handle(), LoginRequest::Fetch(entry), expired, None)
+  }
+  async fn next_source(&mut self) -> Option<String> {
+    match self.queued.recv().await.unwrap() {
+      DispatchRequest::Pipeline(FetchRequest::Resume(entry)) => entry.login_browser,
+      DispatchRequest::Cleanup { .. } => None,
+      _ => panic!("unexpected automatic login queue action"),
+    }
+  }
+}
+impl Drop for AutomaticFixture {
+  fn drop(&mut self) {
+    forget_group(&self.group);
+  }
+}
+
+#[tokio::test]
+async fn automatic_schedule_rejected_browser_uses_second_proven_browser() {
+  let mut fixture = AutomaticFixture::new(&["firefox:first", "chrome:second"]);
+  assert_eq!(fixture.schedule("row", false), RetryAction::Pending);
+  assert_eq!(
+    fixture.next_source().await.as_deref(),
+    Some("firefox:first")
+  );
+  assert_eq!(fixture.schedule("row", true), RetryAction::Pending);
+  assert_eq!(
+    fixture.next_source().await.as_deref(),
+    Some("chrome:second")
+  );
+}
+
+#[tokio::test]
+async fn automatic_schedule_rejected_only_browser_opens_sign_in_once() {
+  let mut fixture = AutomaticFixture::new(&["firefox:first"]);
+  fixture.schedule("row", false);
+  assert_eq!(
+    fixture.next_source().await.as_deref(),
+    Some("firefox:first")
+  );
+  fixture.schedule("row", true);
+  let source = fixture.next_source().await;
+  let io = fixture.app.state::<AutomaticIo>();
+  assert_eq!(
+    (
+      source.as_deref(),
+      io.windows.load(std::sync::atomic::Ordering::SeqCst)
+    ),
+    (Some(NEZZEL_SESSION), 1)
+  );
+  assert_eq!(fixture.schedule("row", true), RetryAction::Stop);
+}
+
+#[tokio::test]
+async fn automatic_schedule_delayed_host_rows_share_exports_and_one_sign_in() {
+  let mut fixture = AutomaticFixture::new(&["firefox:first", "chrome:second"]);
+  for row in ["first", "second"] {
+    assert_eq!(fixture.schedule(row, false), RetryAction::Pending);
+  }
+  for _ in 0..2 {
+    assert_eq!(
+      fixture.next_source().await.as_deref(),
+      Some("firefox:first")
+    );
+  }
+  for expected in ["chrome:second", NEZZEL_SESSION] {
+    assert_eq!(fixture.schedule("first", true), RetryAction::Pending);
+    assert_eq!(fixture.next_source().await.as_deref(), Some(expected));
+  }
+  // A slower row rejects its old browser, not the fresh sign-in it has not used yet.
+  assert_eq!(fixture.schedule("second", true), RetryAction::Pending);
+  assert_eq!(fixture.next_source().await.as_deref(), Some(NEZZEL_SESSION));
+  // A delayed sibling receives the latest outcome, never already-rejected cookies.
+  assert_eq!(fixture.schedule("third", false), RetryAction::Pending);
+  assert_eq!(fixture.next_source().await.as_deref(), Some(NEZZEL_SESSION));
+  let io = fixture.app.state::<AutomaticIo>();
+  assert_eq!(
+    (
+      io.exports.lock().unwrap().clone(),
+      io.windows.load(std::sync::atomic::Ordering::SeqCst)
+    ),
+    (vec!["firefox:first".into(), "chrome:second".into()], 1)
+  );
+}
+
+#[tokio::test]
+async fn automatic_schedule_group_cleanup_removes_retained_host_attempt() {
+  let mut fixture = AutomaticFixture::new(&["firefox:first"]);
+  fixture.schedule("row", false);
+  assert_eq!(
+    fixture.next_source().await.as_deref(),
+    Some("firefox:first")
+  );
+  let host = format!("{}.test", fixture.group);
+  assert!(automatic::has_shared_attempt(&host));
+  forget_group(&fixture.group);
+  assert!(!automatic::has_shared_attempt(&host));
+}
+
+#[tokio::test]
+async fn automatic_schedule_last_row_cancellation_removes_retained_host_attempt() {
+  let mut fixture = AutomaticFixture::new(&["firefox:first"]);
+  fixture.schedule("row", false);
+  assert_eq!(
+    fixture.next_source().await.as_deref(),
+    Some("firefox:first")
+  );
+  let host = format!("{}.test", fixture.group);
+  assert!(automatic::has_shared_attempt(&host));
+  crate::scheduling::group_state::cancel_group(&fixture.group);
+  assert!(!automatic::has_shared_attempt(&host));
+}
+
+#[tokio::test]
+async fn automatic_schedule_cancelling_last_waiter_drops_inflight_work() {
+  let fixture = AutomaticFixture::new(&["firefox:first"]);
+  let io = fixture.app.state::<AutomaticIo>();
+  io.block.store(true, std::sync::atomic::Ordering::SeqCst);
+  assert_eq!(fixture.schedule("row", false), RetryAction::Pending);
+  io.started.notified().await;
+  crate::scheduling::group_state::cancel_group(&fixture.group);
+  io.dropped.notified().await;
+  assert!(!automatic::has_shared_attempt(&format!(
+    "{}.test",
+    fixture.group
+  )));
+}
+
+#[tokio::test]
+async fn automatic_schedule_browser_error_allows_later_row_to_try_next_source() {
+  let mut fixture = AutomaticFixture::new(&["firefox:first", "chrome:second"]);
+  *fixture
+    .app
+    .state::<AutomaticIo>()
+    .browser_error_once
+    .lock()
+    .unwrap() = Some("browserCookiesUnreadable");
+  assert_eq!(fixture.schedule("first", false), RetryAction::Pending);
+  assert_eq!(fixture.next_source().await, None);
+  assert_eq!(fixture.schedule("later", false), RetryAction::Pending);
+  assert_eq!(
+    fixture.next_source().await.as_deref(),
+    Some("chrome:second")
+  );
+  assert_eq!(
+    *fixture.app.state::<AutomaticIo>().exports.lock().unwrap(),
+    ["firefox:first", "chrome:second"]
+  );
+}
+
+#[tokio::test]
+async fn automatic_schedule_finished_group_does_not_spend_next_groups_window() {
+  let mut first = AutomaticFixture::new(&[]);
+  assert_eq!(first.schedule("row", false), RetryAction::Pending);
+  assert_eq!(first.next_source().await.as_deref(), Some(NEZZEL_SESSION));
+  assert_eq!(first.schedule("row", true), RetryAction::Stop);
+  // Normal completion sends Cleanup; the dispatcher removes the run and login history.
+  crate::scheduling::fetch_pipeline::finish_fetch(
+    &first.app.state::<FetchSender>().0,
+    &first.group,
+  );
+  let DispatchRequest::Cleanup {
+    group_id,
+    generation,
+  } = first.queued.recv().await.unwrap()
+  else {
+    panic!("expected normal group cleanup");
+  };
+  assert!(crate::scheduling::group_state::remove_group_if(
+    &group_id, generation
+  ));
+  let mut later = AutomaticFixture::new(&[]);
+  later.url = first.url.clone();
+  assert_eq!(later.schedule("row", false), RetryAction::Pending);
+  assert_eq!(later.next_source().await.as_deref(), Some(NEZZEL_SESSION));
+  assert_eq!(
+    later
+      .app
+      .state::<AutomaticIo>()
+      .windows
+      .load(std::sync::atomic::Ordering::SeqCst),
+    1
+  );
+}
+
+#[tokio::test]
+async fn automatic_schedule_reused_group_after_cleanup_gets_fresh_window() {
+  let mut fixture = AutomaticFixture::new(&[]);
+  assert_eq!(
+    fixture.schedule("first-run-row", false),
+    RetryAction::Pending
+  );
+  assert_eq!(fixture.next_source().await.as_deref(), Some(NEZZEL_SESSION));
+  assert_eq!(fixture.schedule("first-run-row", true), RetryAction::Stop);
+  crate::scheduling::fetch_pipeline::finish_fetch(
+    &fixture.app.state::<FetchSender>().0,
+    &fixture.group,
+  );
+  let DispatchRequest::Cleanup {
+    group_id,
+    generation,
+  } = fixture.queued.recv().await.unwrap()
+  else {
+    panic!("expected normal group cleanup");
+  };
+  assert!(crate::scheduling::group_state::remove_group_if(
+    &group_id, generation
+  ));
+  // Reuse the ID immediately, while the previous login history is still within its TTL.
+  crate::scheduling::group_state::ensure_group_running(&fixture.group);
+  assert_eq!(
+    fixture.schedule("second-run-row", false),
+    RetryAction::Pending
+  );
+  assert_eq!(fixture.next_source().await.as_deref(), Some(NEZZEL_SESSION));
+  assert_eq!(
+    fixture
+      .app
+      .state::<AutomaticIo>()
+      .windows
+      .load(std::sync::atomic::Ordering::SeqCst),
+    2
+  );
+}
+
+#[tokio::test]
+async fn automatic_schedule_item_failure_preserves_siblings_proven_source() {
+  let mut fixture = AutomaticFixture::new(&["firefox:first"]);
+  assert_eq!(
+    fixture.schedule("restricted-item", false),
+    RetryAction::Pending
+  );
+  assert_eq!(
+    fixture.next_source().await.as_deref(),
+    Some("firefox:first")
+  );
+  // A non-session failure must close this row's loop without invalidating host proof.
+  assert_eq!(
+    fixture.schedule("restricted-item", false),
+    RetryAction::Pending
+  );
+  assert_eq!(fixture.next_source().await, None);
+  assert_eq!(fixture.schedule("sibling", false), RetryAction::Pending);
+  assert_eq!(
+    fixture.next_source().await.as_deref(),
+    Some("firefox:first")
+  );
+  let io = fixture.app.state::<AutomaticIo>();
+  assert_eq!(
+    (
+      io.exports.lock().unwrap().clone(),
+      io.windows.load(std::sync::atomic::Ordering::SeqCst)
+    ),
+    (vec!["firefox:first".to_owned()], 0)
+  );
+}
+
 #[test]
 fn fixed_browser_fetch_uses_the_saved_profile_without_another_prompt() {
   use crate::runners::browsers::{BrowserSource, CookieSource};

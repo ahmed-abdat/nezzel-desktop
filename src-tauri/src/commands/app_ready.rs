@@ -10,8 +10,8 @@ pub fn app_ready(app: AppHandle, cfg_handle: State<'_, SharedConfig>) {
   // Sign-in launch with "Start with my computer": stay in the tray / menu bar.
   if cfg.system.auto_start_minimised && is_autostart {
     crate::background::start_hidden(&app);
-    return;
+  } else {
+    crate::background::show_main(&app);
   }
-
-  crate::background::show_main(&app);
+  crate::binaries::binaries_manager::BinariesManager::warm_tools(&app);
 }

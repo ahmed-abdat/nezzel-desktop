@@ -5,6 +5,21 @@ use super::{
 use reqwest::Url;
 
 #[test]
+fn media_names_fit_utf8_byte_budget_with_suffix_and_extension_intact() {
+  use super::sanitize::limit_media_name;
+
+  for (title, suffix, kept_title) in [
+    ("a".repeat(240), ".mp4", "a".repeat(196)),
+    ("ع".repeat(140), ".webm", "ع".repeat(97)),
+    ("ع".repeat(140), "-(1080p)-001.mp4", "ع".repeat(92)),
+  ] {
+    let name = limit_media_name(&format!("{title}{suffix}"));
+    assert_eq!(name, format!("{kept_title}{suffix}"));
+    assert!(name.len() <= 200, "{} UTF-8 bytes", name.len());
+  }
+}
+
+#[test]
 fn content_disposition_names_are_safe_and_preserve_arabic() {
   let url = Url::parse("https://files.example/report%20one.pdf").unwrap();
   for (header, expected) in [

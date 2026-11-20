@@ -231,6 +231,68 @@ struct BundleInfo {
   rename_entry_to: Option<String>,
 }
 
+fn ffmpeg_pair<'a>(
+  manifest: &'a Manifest,
+  arch: &str,
+) -> Result<(&'a ToolInfo, &'a FileInfo), AnyError> {
+  let info = manifest.tools.get("ffmpeg").ok_or("missing ffmpeg pin")?;
+  let file = info.files.get(arch).ok_or("missing ffmpeg platform")?;
+  let probe = manifest.tools.get("ffprobe").ok_or("missing ffprobe pin")?;
+  let peer = probe.files.get(arch).ok_or("missing ffprobe platform")?;
+  let rules = file.bundle.as_ref().ok_or("missing shared FFmpeg bundle")?;
+  let peer_rules = peer
+    .bundle
+    .as_ref()
+    .ok_or("missing shared FFmpeg probe bundle")?;
+  if file.url != peer.url
+    || file.sha256 != peer.sha256
+    || info.version_for(arch) != probe.version_for(arch)
+    || !rules.keep_folder
+    || !peer_rules.keep_folder
+    || rules.folder_name.is_none()
+    || rules.folder_name != peer_rules.folder_name
+    || rules.entry != "ffmpeg.exe"
+    || peer_rules.entry != "ffprobe.exe"
+    || rules.rename_entry_to.is_some()
+    || peer_rules.rename_entry_to.is_some()
+  {
+    return Err("mismatched shared FFmpeg pair".into());
+  }
+  Ok((info, file))
+}
+
+async fn commit_ffmpeg_pair(
+  bin: &Path,
+  staged: &Path,
+  version: &str,
+  operation: Arc<tokio::sync::Mutex<()>>,
+  processes: Arc<tokio::sync::RwLock<()>>,
+) -> Result<(), AnyError> {
+  let operation = operation.lock_owned().await;
+  let metadata = bin.join("metadata.json");
+  let mut meta = read_metadata(&metadata).await?;
+  if meta.is_locked {
+    return Err("FFmpeg repair is locked".into());
+  }
+  let processes = processes
+    .try_write_owned()
+    .map_err(|_| "FFmpeg repair deferred while tools are running")?;
+  for tool in ["ffmpeg", "ffprobe"] {
+    meta.versions.insert(tool.into(), version.into());
+  }
+  let bytes = serde_json::to_vec(&meta)?;
+  let current = bin.join("ffmpeg");
+  let staged = staged.to_owned();
+  // Own both locks through rollback, even if the async caller is cancelled.
+  tokio::task::spawn_blocking(move || {
+    let _operation = operation;
+    let _processes = processes;
+    super::ytdlp_update::swap_bundle(&staged, &current, || write_metadata(&metadata, &bytes))
+  })
+  .await??;
+  Ok(())
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub(super) struct Metadata {
   pub(super) versions: HashMap<String, String>,
@@ -282,6 +344,7 @@ pub struct BinariesManager {
   pub(super) operation: Arc<tokio::sync::Mutex<()>>,
   pub(super) update_check: tokio::sync::Mutex<()>,
   pub(super) maintenance: tokio::sync::OnceCell<()>,
+  warm_started: std::sync::atomic::AtomicBool,
   bundled: std::sync::OnceLock<HashMap<String, PathBuf>>,
   pub(super) verified_repairs: std::sync::Mutex<HashMap<(PathBuf, String), bool>>,
 }
@@ -295,6 +358,7 @@ impl BinariesManager {
       operation: Arc::new(tokio::sync::Mutex::new(())),
       update_check: tokio::sync::Mutex::new(()),
       maintenance: tokio::sync::OnceCell::new(),
+      warm_started: std::sync::atomic::AtomicBool::new(false),
       bundled: std::sync::OnceLock::new(),
       verified_repairs: std::sync::Mutex::new(HashMap::new()),
     }
@@ -306,6 +370,59 @@ impl BinariesManager {
       app.manage(Self::new(app));
     }
     app.state::<Self>()
+  }
+
+  /// Called after window show, or frontend readiness for tray launches; never blocks the UI.
+  pub(crate) fn warm_tools(app: &AppHandle<Wry>) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+      let manager = Self::for_app(&app);
+      let manager = &*manager;
+      bundled_tools::warm_once(&manager.warm_started, |tool| async move {
+        let path = manager
+          .bundled_paths()
+          .get(tool)
+          .cloned()
+          .ok_or_else(|| std::io::Error::other("bundled tool missing"))?;
+        // warm_once's timeout includes this acquisition. Deno needs no yt-dlp update lock.
+        let held = if tool == "yt-dlp" {
+          Some(super::YTDLP_PROCESSES.clone().read_owned().await)
+        } else {
+          None
+        };
+        // Process creation itself can be slow under antivirus. Keep it off runtime/UI threads.
+        let mut spawned = tokio::task::spawn_blocking(move || {
+          let mut command = crate::runners::tool_process::command(path)?;
+          if tool == "yt-dlp" {
+            command.arg("--ignore-config");
+          }
+          command
+            .arg("--version")
+            .env("DENO_NO_UPDATE_CHECK", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+          crate::runners::tool_process::ToolProcess::spawn(&mut command, held)
+        })
+        .await
+        .map_err(std::io::Error::other)??;
+        if spawned.process.wait().await?.success() {
+          Ok(())
+        } else {
+          Err(std::io::Error::other("version command failed"))
+        }
+      })
+      .await;
+    });
+  }
+
+  pub(super) fn tools_changed(&self) {
+    if let Some(capture) = self.app.try_state::<crate::capture::CaptureState>() {
+      capture.tools_changed();
+    }
+    self
+      .warm_started
+      .store(false, std::sync::atomic::Ordering::Relaxed);
   }
 
   pub(super) fn bundled_paths(&self) -> &HashMap<String, PathBuf> {
@@ -326,7 +443,16 @@ impl BinariesManager {
       });
       for tool in bundled_tools::TOOLS {
         let name = format!("{tool}{}", std::env::consts::EXE_SUFFIX);
-        let candidates = if tool == "yt-dlp" {
+        let candidates = if bundled_tools::shared_ffmpeg(tool, cfg!(windows)) {
+          vec![resources
+            .as_ref()
+            .map(|dir| bundled_tools::ffmpeg_path(&dir.join("tools"), tool))
+            .filter(|path| {
+              path
+                .parent()
+                .is_some_and(bundled_tools::ffmpeg_bundle_present)
+            })]
+        } else if tool == "yt-dlp" {
           vec![resources
             .as_ref()
             .map(|dir| dir.join("tools/yt-dlp").join(&name))]
@@ -359,7 +485,13 @@ impl BinariesManager {
     let bundled = self
       .bundled_paths()
       .get(tool)
-      .filter(|path| bundled_tools::executable(path))
+      .filter(|path| {
+        bundled_tools::executable(path)
+          && (!bundled_tools::shared_ffmpeg(tool, cfg!(windows))
+            || path
+              .parent()
+              .is_some_and(bundled_tools::ffmpeg_bundle_present))
+      })
       .cloned();
     let version = meta.versions.get(tool);
     let data = Self::canonical_path(&self.bin_dir, tool).ok()?;
@@ -408,6 +540,10 @@ impl BinariesManager {
     self
       .resolved_tool(tool, info, &meta)
       .ok_or_else(|| format!("{tool} requires repair").into())
+  }
+
+  pub(crate) fn ffmpeg_location_args(&self) -> Vec<std::ffi::OsString> {
+    bundled_tools::ffmpeg_location_args(self.tool_path("ffmpeg").ok().as_deref(), cfg!(windows))
   }
 
   /// (tool, version) of the copy in use for problem reports; "missing" when none resolves.
@@ -487,6 +623,9 @@ impl BinariesManager {
     if tool == "yt-dlp" {
       return Ok(super::ytdlp_update::executable(base));
     }
+    if bundled_tools::shared_ffmpeg(tool, cfg!(windows)) {
+      return Ok(bundled_tools::ffmpeg_path(base, tool));
+    }
     Ok(base.join(bundled_tools::exe_name(tool)))
   }
 
@@ -561,7 +700,29 @@ impl BinariesManager {
     }
     let mut successes = Vec::new();
     let mut failures = Vec::new();
+    let mut shared_handled = false;
     for (name, info) in plan {
+      if bundled_tools::shared_ffmpeg(name, cfg!(windows)) {
+        if shared_handled {
+          continue;
+        }
+        shared_handled = true;
+        match self.install_ffmpeg_pair(&client, &manifest, &arch).await {
+          Ok(()) => successes.extend(["ffmpeg".to_string(), "ffprobe".to_string()]),
+          Err(error) => {
+            for tool in ["ffmpeg", "ffprobe"] {
+              self.emit_tool_error(tool, info.version_for(&arch), "install", error.to_string());
+              failures.push(ToolError {
+                tool: tool.into(),
+                version: info.version_for(&arch).into(),
+                stage: "install".into(),
+                error: error.to_string(),
+              });
+            }
+          }
+        }
+        continue;
+      }
       let result = if name == "yt-dlp" {
         match self.install_ytdlp(&client, &arch, info, None).await {
           Ok(InstallOutcome::Installed(_) | InstallOutcome::UpToDate) => Ok(()),
@@ -600,13 +761,9 @@ impl BinariesManager {
       }
     }
     let failed = !failures.is_empty();
-    if successes
-      .iter()
-      .any(|tool| matches!(tool.as_str(), "yt-dlp" | "deno"))
-    {
-      if let Some(capture) = self.app.try_state::<crate::capture::CaptureState>() {
-        capture.tools_changed();
-      }
+    // yt-dlp's transactional installer resets on an actual replacement, including auto-updates.
+    if successes.iter().any(|tool| tool == "deno") {
+      self.tools_changed();
     }
     let _ = self.app.emit(
       "binary_update_complete",
@@ -620,6 +777,63 @@ impl BinariesManager {
       return Err("one or more tools failed to install".into());
     }
     Ok(())
+  }
+
+  async fn install_ffmpeg_pair(
+    &self,
+    client: &reqwest::Client,
+    manifest: &Manifest,
+    arch: &str,
+  ) -> Result<(), AnyError> {
+    let (info, file) = ffmpeg_pair(manifest, arch)?;
+    let version = info.version_for(arch);
+    let stage = self
+      .bin_dir
+      .join(format!(".ffmpeg-stage-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&stage).await?;
+    let result = async {
+      for tool in ["ffmpeg", "ffprobe"] {
+        let _ = self.app.emit(
+          "binary_download_start",
+          ToolStart {
+            tool: tool.into(),
+            version: version.into(),
+          },
+        );
+      }
+      self
+        .download_and_verify(client, "ffmpeg", file, &stage.join("ffmpeg.zip"))
+        .await?;
+      let staged = stage.join("ffmpeg");
+      bundled_tools::record_repair(
+        &staged,
+        "ffmpeg",
+        &staged.join("ffmpeg.exe"),
+        version,
+        &file.sha256,
+      )?;
+      commit_ffmpeg_pair(
+        &self.bin_dir,
+        &staged,
+        version,
+        self.operation.clone(),
+        super::YTDLP_PROCESSES.clone(),
+      )
+      .await?;
+      if let Ok(mut verified) = self.verified_repairs.lock() {
+        verified.clear();
+      }
+      for tool in ["ffmpeg", "ffprobe"] {
+        let _ = self.app.emit(
+          "binary_download_complete",
+          ToolComplete { tool: tool.into() },
+        );
+      }
+      Ok::<_, AnyError>(())
+    }
+    .await;
+    let _ = fs::remove_dir_all(stage).await;
+    result
   }
 
   pub(super) async fn install_single_tool(
@@ -791,6 +1005,19 @@ impl BinariesManager {
 
     let parent = dest.parent().ok_or("binary destination has no parent")?;
     let canonical = Self::canonical_path(parent, tool)?;
+    if bundled_tools::shared_ffmpeg(tool, cfg!(windows)) {
+      let rules = bundle.ok_or("missing shared FFmpeg bundle rules")?;
+      let folder = rules
+        .folder_name
+        .as_deref()
+        .ok_or("missing shared FFmpeg bin folder")?;
+      let destination = canonical
+        .parent()
+        .ok_or("missing shared FFmpeg destination")?;
+      super::binaries_extractor::extract_shared_ffmpeg(dest, destination, folder).await?;
+      fs::remove_file(dest).await?;
+      return Ok(());
+    }
 
     if let Some(ext) = dest.extension().and_then(|e| e.to_str()) {
       match ext {
@@ -917,9 +1144,87 @@ pub(super) fn write_metadata(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-  use super::{fetch_manifest, manifest_requests, read_metadata, verify_manifest, BinariesManager};
+  #[test]
+  fn shared_ffmpeg_manifest_pair_must_match_on_each_windows_architecture() {
+    let mut manifest: Manifest = serde_json::from_slice(BUNDLED_MANIFEST).unwrap();
+    for arch in ["windows-x86_64", "windows-aarch64"] {
+      let (_, file) = ffmpeg_pair(&manifest, arch).unwrap();
+      assert!(file.url.ends_with("-gpl-shared.zip"));
+      manifest
+        .tools
+        .get_mut("ffprobe")
+        .unwrap()
+        .files
+        .get_mut(arch)
+        .unwrap()
+        .sha256 = "wrong".into();
+      assert!(ffmpeg_pair(&manifest, arch).is_err());
+    }
+  }
+
+  #[tokio::test]
+  async fn shared_ffmpeg_commit_updates_pair_together_and_respects_process_lock() {
+    let root = std::env::temp_dir().join(format!("ffmpeg-commit-{}", uuid::Uuid::new_v4()));
+    let staged = root.join("stage");
+    let current = root.join("ffmpeg");
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::create_dir_all(&current).unwrap();
+    std::fs::write(current.join("obsolete.dll"), "old").unwrap();
+    for name in ["ffmpeg.exe", "ffprobe.exe", "new.dll"] {
+      std::fs::write(staged.join(name), "new").unwrap();
+    }
+    let operation = Arc::new(tokio::sync::Mutex::new(()));
+    let processes = Arc::new(tokio::sync::RwLock::new(()));
+    let guard = processes.read().await;
+    assert!(
+      commit_ffmpeg_pair(&root, &staged, "new", operation.clone(), processes.clone())
+        .await
+        .is_err()
+    );
+    assert!(current.join("obsolete.dll").exists());
+    drop(guard);
+    let meta = Metadata {
+      versions: HashMap::from([("deno".into(), "kept".into())]),
+      ..Default::default()
+    };
+    write_metadata(
+      &root.join("metadata.json"),
+      &serde_json::to_vec(&meta).unwrap(),
+    )
+    .unwrap();
+    // A failed metadata write rolls the whole pair back.
+    std::fs::create_dir(root.join("metadata.json.tmp")).unwrap();
+    assert!(
+      commit_ffmpeg_pair(&root, &staged, "new", operation.clone(), processes.clone())
+        .await
+        .is_err()
+    );
+    assert!(current.join("obsolete.dll").exists());
+    assert!(staged.join("new.dll").exists());
+    std::fs::remove_dir(root.join("metadata.json.tmp")).unwrap();
+    commit_ffmpeg_pair(&root, &staged, "new", operation, processes)
+      .await
+      .unwrap();
+    let meta = read_metadata(&root.join("metadata.json")).await.unwrap();
+    assert_eq!(meta.versions["ffmpeg"], "new");
+    assert_eq!(meta.versions["ffprobe"], "new");
+    assert_eq!(meta.versions["deno"], "kept");
+    assert!(!current.join("obsolete.dll").exists());
+    assert!(current.join("new.dll").exists());
+    // Existing recovery handles an interrupted rename for this folder too.
+    std::fs::rename(&current, current.with_extension("previous")).unwrap();
+    super::super::ytdlp_update::recover_bundle(&current).unwrap();
+    assert!(current.join("ffprobe.exe").exists());
+    std::fs::remove_dir_all(root).unwrap();
+  }
+
+  use super::{
+    commit_ffmpeg_pair, fetch_manifest, ffmpeg_pair, manifest_requests, read_metadata,
+    verify_manifest, write_metadata, BinariesManager, Manifest, Metadata, BUNDLED_MANIFEST,
+  };
   use base64::{engine::general_purpose::STANDARD, Engine};
   use ed25519_dalek::{SignatureError, Signer, SigningKey};
+  use std::{collections::HashMap, sync::Arc};
 
   #[tokio::test]
   async fn damaged_metadata_reads_as_nothing_installed_and_is_set_aside() {
@@ -1097,9 +1402,8 @@ mod tests {
         assert_eq!(url.scheme(), "https");
         assert!(["github.com", "ffmpeg.martin-riedl.de"].contains(&url.host_str().unwrap()));
         if url.host_str() == Some("github.com") {
-          assert!(
-            ["yt-dlp", "denoland", "wez"].contains(&url.path_segments().unwrap().next().unwrap())
-          );
+          assert!(["yt-dlp", "denoland", "wez", "ahmed-abdat"]
+            .contains(&url.path_segments().unwrap().next().unwrap()));
         }
         assert!(!url.path().contains("/latest/"));
         assert_eq!(hex::decode(&file.sha256).unwrap().len(), 32);

@@ -140,7 +140,7 @@ function onSubmit() {
     pointAtField();
     return;
   }
-  submit(false);
+  void submit(false);
 }
 
 /** Empty submit: focus the field and swap its placeholder for a short "paste a link first" for a moment. */

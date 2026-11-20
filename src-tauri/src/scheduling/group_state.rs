@@ -133,6 +133,11 @@ pub fn remove_group_if(group_id: &str, generation: Option<u64>) -> bool {
   if stale {
     map.remove(group_id);
   }
+  // Login scheduling takes its attempt lock before reading group state.
+  drop(map);
+  if stale {
+    crate::runners::login::automatic::forget_group(group_id);
+  }
   stale
 }
 

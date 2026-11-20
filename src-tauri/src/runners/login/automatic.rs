@@ -19,11 +19,13 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-struct RowAttempts {
+pub(super) struct RowAttempts {
   sources: HashSet<String>,
+  completed: Option<Arc<SharedAttempt>>,
+  last_used: Option<Weak<SharedAttempt>>,
   attempts: u8,
-  opened: bool,
-  browser_proven: bool,
+  pub(super) opened: bool,
+  pub(super) browser_proven: bool,
   running: bool,
   created: Instant,
 }
@@ -31,6 +33,8 @@ impl RowAttempts {
   fn new() -> Self {
     Self {
       sources: HashSet::new(),
+      completed: None,
+      last_used: None,
       attempts: 0,
       opened: false,
       browser_proven: false,
@@ -38,7 +42,7 @@ impl RowAttempts {
       created: Instant::now(),
     }
   }
-  fn claim(&mut self, source: &str) -> bool {
+  pub(super) fn claim(&mut self, source: &str) -> bool {
     self.sources.insert(source.into())
   }
   fn session_expired(&mut self) {
@@ -58,7 +62,7 @@ impl RowAttempts {
     self.attempts += 1;
     Ok(())
   }
-  fn may_open_sign_in(&self) -> bool {
+  pub(super) fn may_open_sign_in(&self) -> bool {
     !self.opened && !self.browser_proven
   }
   fn merge(&mut self, shared: &Self) {
@@ -71,7 +75,12 @@ impl RowAttempts {
     // Check this row's history before importing the shared attempt's newly claimed sources.
     // Other rows may still legitimately retry this source for the first time.
     let result = match result {
-      Ok(source) if self.sources.contains(&source) => Err("browserLoginExhausted"),
+      Ok(source)
+        if self.sources.contains(&source)
+          && !(source == NEZZEL_SESSION && shared.opened && !self.opened) =>
+      {
+        Err("browserLoginExhausted")
+      }
       result => result,
     };
     self.merge(shared);
@@ -82,48 +91,99 @@ type AttemptKey = (String, String, String);
 static ATTEMPTS: LazyLock<Mutex<HashMap<AttemptKey, RowAttempts>>> =
   LazyLock::new(|| Mutex::new(HashMap::new()));
 
-type LoginResult = Result<String, &'static str>;
+pub(super) type LoginResult = Result<String, &'static str>;
 struct SharedAttempt {
   result: futures::future::Shared<futures::future::BoxFuture<'static, LoginResult>>,
   state: std::sync::Arc<Mutex<RowAttempts>>,
+  rejected: std::sync::atomic::AtomicBool,
 }
-static SHARED_ATTEMPTS: LazyLock<Mutex<HashMap<String, Weak<SharedAttempt>>>> =
+type SharedKey = (String, String); // group, host
+static SHARED_ATTEMPTS: LazyLock<Mutex<HashMap<SharedKey, Weak<SharedAttempt>>>> =
   LazyLock::new(|| Mutex::new(HashMap::new()));
 const AUTOMATIC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const MAX_AUTOMATIC_ATTEMPTS: u8 = 3;
 
-// Weak entries share only an in-flight attempt. Dropping the last waiter cancels its work;
-// one cancelled group cannot abort another group's browser selection or sign-in window.
+// In-flight work belongs to its waiters, so dropping the last waiter cancels it.
+// Rows retain the latest group/host outcome until cleanup. Delayed siblings skip rejected
+// sources and reuse sign-in; unrelated groups receive their own attempt budget.
 fn shared_attempt<F>(
+  group: &str,
   host: &str,
+  mut sources: HashSet<String>,
   choose: impl FnOnce(std::sync::Arc<Mutex<RowAttempts>>) -> F,
 ) -> std::sync::Arc<SharedAttempt>
 where
   F: std::future::Future<Output = LoginResult> + Send + 'static,
 {
   use futures::FutureExt;
+  let key = (group.to_owned(), host.to_owned());
   let mut attempts = SHARED_ATTEMPTS.lock().unwrap();
   attempts.retain(|_, attempt| attempt.strong_count() > 0);
-  if let Some(attempt) = attempts
-    .get(host)
-    .and_then(Weak::upgrade)
-    .filter(|attempt| attempt.result.peek().is_none())
-  {
-    return attempt;
+  let mut opened = false;
+  if let Some(attempt) = attempts.get(&key).and_then(Weak::upgrade) {
+    // A sibling rejecting just after reuse can cost this row one extra attempt.
+    // Reuse adds no export or window; the row's three-attempt cap bounds the race.
+    if !attempt.rejected.load(std::sync::atomic::Ordering::SeqCst)
+      && attempt.result.peek().is_none_or(Result::is_ok)
+    {
+      return attempt;
+    }
+    let previous = attempt.state.lock().unwrap();
+    sources.extend(previous.sources.iter().cloned());
+    opened = previous.opened;
   }
-  // A host-wide attempt belongs to all waiting rows, not to the first row's history.
-  let state = Arc::new(Mutex::new(RowAttempts::new()));
-  let work = choose(state.clone());
+  // Carry claims and the host's window budget, not rejected proof, into the next phase.
+  let state = Arc::new(Mutex::new(RowAttempts {
+    sources,
+    opened,
+    ..RowAttempts::new()
+  }));
+  let result = if opened {
+    futures::future::ready(Err("browserLoginExhausted"))
+      .boxed()
+      .shared()
+  } else {
+    choose(state.clone()).boxed().shared()
+  };
   let attempt = Arc::new(SharedAttempt {
     state,
-    result: work.boxed().shared(),
+    result,
+    rejected: std::sync::atomic::AtomicBool::new(false),
   });
-  attempts.insert(host.to_owned(), Arc::downgrade(&attempt));
+  attempts.insert(key, Arc::downgrade(&attempt));
   attempt
 }
 
-pub(super) fn forget_group(group: &str) {
-  ATTEMPTS.lock().unwrap().retain(|(g, _, _), _| g != group);
+pub(crate) fn forget_group(group: &str) {
+  let mut rows = ATTEMPTS.lock().unwrap();
+  rows.retain(|(g, _, _), _| g != group);
+  SHARED_ATTEMPTS
+    .lock()
+    .unwrap()
+    .retain(|(g, _), _| g != group);
+}
+
+// Cancellation can race the gap between registering a row and starting its shared work.
+struct HostCleanup {
+  key: SharedKey,
+}
+impl Drop for HostCleanup {
+  fn drop(&mut self) {
+    let rows = ATTEMPTS.lock().unwrap();
+    let (group, host) = &self.key;
+    if !rows.keys().any(|(g, _, h)| g == group && h == host) {
+      SHARED_ATTEMPTS.lock().unwrap().remove(&self.key);
+    }
+  }
+}
+
+#[cfg(test)]
+pub(super) fn has_shared_attempt(host: &str) -> bool {
+  SHARED_ATTEMPTS
+    .lock()
+    .unwrap()
+    .keys()
+    .any(|(_, h)| h == host)
 }
 
 pub(crate) fn source_order(
@@ -145,8 +205,37 @@ pub(crate) fn source_order(
   ))
 }
 
-pub(super) fn schedule(
-  app: &AppHandle,
+// Keep OS effects replaceable while tests exercise the actual scheduler and queue.
+pub(super) trait LoginRuntime: tauri::Runtime {
+  fn login_enabled(app: &AppHandle<Self>) -> bool;
+  fn park_login(app: &AppHandle<Self>, token: String, payload: LoginNeeded, request: LoginRequest);
+  fn choose_login(
+    app: AppHandle<Self>,
+    source: String,
+    host: String,
+    state: Arc<Mutex<RowAttempts>>,
+  ) -> futures::future::BoxFuture<'static, LoginResult>;
+}
+
+impl LoginRuntime for tauri::Wry {
+  fn login_enabled(app: &AppHandle<Self>) -> bool {
+    enabled(app)
+  }
+  fn park_login(app: &AppHandle<Self>, token: String, payload: LoginNeeded, request: LoginRequest) {
+    park(app, &payload.host.clone(), token, payload, request, vec![]);
+  }
+  fn choose_login(
+    app: AppHandle<Self>,
+    source: String,
+    host: String,
+    state: Arc<Mutex<RowAttempts>>,
+  ) -> futures::future::BoxFuture<'static, LoginResult> {
+    Box::pin(async move { choose_source(&app, &source, &host, &state).await })
+  }
+}
+
+pub(super) fn schedule<R: LoginRuntime>(
+  app: &AppHandle<R>,
   request: LoginRequest,
   expired: bool,
   failure: Option<crate::models::error::DiagnosticEvent>,
@@ -156,7 +245,7 @@ pub(super) fn schedule(
   };
   let (id, group) = request.ids();
   let key = (group.to_owned(), id.to_owned(), host.clone());
-  {
+  let sources = {
     let mut rows = ATTEMPTS.lock().unwrap();
     // A slow active download must not acquire a fresh retry budget when the TTL elapses.
     rows.retain(|(group, _, _), row| {
@@ -170,14 +259,20 @@ pub(super) fn schedule(
     if rows.len() >= 128 && !rows.contains_key(&key) {
       return RetryAction::Stop;
     }
-    if let Err(action) = rows
-      .entry(key.clone())
-      .or_insert_with(RowAttempts::new)
-      .begin()
-    {
+    let row = rows.entry(key.clone()).or_insert_with(RowAttempts::new);
+    // Only session rejection invalidates shared proof, even if this row is at its cap.
+    if expired && !row.running {
+      if let Some(attempt) = row.last_used.as_ref().and_then(Weak::upgrade) {
+        attempt
+          .rejected
+          .store(true, std::sync::atomic::Ordering::SeqCst);
+      }
+    }
+    if let Err(action) = row.begin() {
       return action;
     }
-  }
+    row.sources.clone()
+  };
   let token = uuid::Uuid::new_v4().to_string();
   let payload = LoginNeeded {
     request_id: token.clone(),
@@ -190,15 +285,22 @@ pub(super) fn schedule(
     candidates: vec![],
     change_only: false,
   };
-  park(app, &host, token.clone(), payload, request.clone(), vec![]);
+  R::park_login(app, token.clone(), payload, request.clone());
   let app = app.clone();
   let choose_app = app.clone();
   let choose_host = host.clone();
   let source = request.url().to_owned();
-  let attempt = shared_attempt(&host, move |state| async move {
-    choose_source(&choose_app, &source, &choose_host, &state).await
-  });
+  let shared_key = (key.0.clone(), host.clone());
+  let attempt = shared_attempt(
+    &shared_key.0,
+    &shared_key.1,
+    sources,
+    move |state| async move { R::choose_login(choose_app, source, choose_host, state).await },
+  );
   tauri::async_runtime::spawn(async move {
+    let _cleanup = HostCleanup {
+      key: shared_key.clone(),
+    };
     let mut cancel = crate::scheduling::group_state::subscribe_group(&key.0);
     if !*cancel.borrow() {
       if let Some(pending) = PENDING.lock().unwrap().remove(&token) {
@@ -217,9 +319,31 @@ pub(super) fn schedule(
       _ = wait_disabled(&app) => Err("browserLoginDisabled"),
       result = attempt.result.clone() => result,
     };
-    if let Some(row) = ATTEMPTS.lock().unwrap().get_mut(&key) {
-      let shared = attempt.state.lock().unwrap();
-      result = row.complete(&shared, result);
+    {
+      let mut rows = ATTEMPTS.lock().unwrap();
+      if let Some(row) = rows.get_mut(&key) {
+        let shared = attempt.state.lock().unwrap();
+        result = row.complete(&shared, result);
+        if result.is_ok() {
+          row.last_used = Some(Arc::downgrade(&attempt));
+        }
+      }
+      let latest = SHARED_ATTEMPTS
+        .lock()
+        .unwrap()
+        .get(&shared_key)
+        .and_then(Weak::upgrade);
+      if attempt.result.peek().is_some()
+        && latest.is_some_and(|latest| Arc::ptr_eq(&latest, &attempt))
+      {
+        // Keep only the latest group/host outcome alive, including for rows using an
+        // earlier source. Never pin in-flight work after its last waiter cancels.
+        for ((row_group, _, row_host), row) in rows.iter_mut() {
+          if row_group == &key.0 && row_host == &host {
+            row.completed = Some(attempt.clone());
+          }
+        }
+      }
     }
     let pending = PENDING.lock().unwrap().remove(&token);
     let Some(pending) = pending else {
@@ -231,7 +355,7 @@ pub(super) fn schedule(
         continue;
       }
       match &result {
-        Ok(source) if enabled(&app) => {
+        Ok(source) if R::login_enabled(&app) => {
           if row.request.clone().enqueue(&app, source.clone()).is_err() {
             row
               .request
@@ -281,7 +405,7 @@ pub(crate) fn enabled(app: &AppHandle) -> bool {
   super::global_consent(&app.state::<SharedConfig>().load().auth) == Some(true)
 }
 // Browser IO is bounded separately: an interactive window keeps webview_session's LOGIN_TTL.
-async fn choose_phases<B, I>(browser: B, interactive: impl FnOnce() -> I) -> LoginResult
+pub(super) async fn choose_phases<B, I>(browser: B, interactive: impl FnOnce() -> I) -> LoginResult
 where
   B: std::future::Future<Output = Result<Option<String>, &'static str>>,
   I: std::future::Future<Output = LoginResult>,
@@ -392,8 +516,8 @@ async fn choose_browser_source(
   Ok(None)
 }
 
-async fn wait_disabled(app: &AppHandle) {
-  while enabled(app) {
+async fn wait_disabled<R: LoginRuntime>(app: &AppHandle<R>) {
+  while R::login_enabled(app) {
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
   }
 }
@@ -404,6 +528,8 @@ mod tests {
   fn fresh_attempt() -> RowAttempts {
     RowAttempts {
       sources: HashSet::new(),
+      completed: None,
+      last_used: None,
       attempts: 0,
       opened: false,
       browser_proven: false,
@@ -433,13 +559,15 @@ mod tests {
         Ok("chrome:fixture".to_owned())
       }
     };
-    let first = shared_attempt(&host, choose);
-    let second = shared_attempt(&host, choose);
+    let first = shared_attempt("test-group", &host, HashSet::new(), choose);
+    let second = shared_attempt("test-group", &host, HashSet::new(), choose);
     let (a, b) = tokio::join!(first.result.clone(), second.result.clone());
     assert_eq!(a, b);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    let retry = shared_attempt(&host, |_| async { Err("browserLoginExhausted") });
-    assert_eq!(retry.result.clone().await, Err("browserLoginExhausted"));
+    let retry = shared_attempt("test-group", &host, HashSet::new(), |_| async {
+      Err("browserLoginExhausted")
+    });
+    assert_eq!(retry.result.clone().await, Ok("chrome:fixture".into()));
     drop(retry);
     assert!(second
       .state
@@ -450,19 +578,23 @@ mod tests {
     drop(first);
     assert_eq!(second.result.clone().await, Ok("chrome:fixture".into()));
     drop(second);
-    let next = shared_attempt(&host, |_| async { Err("browserLoginRemedy") });
+    let next = shared_attempt("test-group", &host, HashSet::new(), |_| async {
+      Err("browserLoginRemedy")
+    });
     assert_eq!(next.result.clone().await, Err("browserLoginRemedy"));
   }
 
   #[tokio::test(start_paused = true)]
   async fn stalled_login_is_bounded_and_shared_with_waiters() {
     let host = uuid::Uuid::new_v4().to_string();
-    let first = shared_attempt(&host, |_| {
+    let first = shared_attempt("test-group", &host, HashSet::new(), |_| {
       choose_phases(std::future::pending(), || async {
         panic!("a browser timeout must not open a window")
       })
     });
-    let second = shared_attempt(&host, |_| async { Ok("must-not-run".into()) });
+    let second = shared_attempt("test-group", &host, HashSet::new(), |_| async {
+      Ok("must-not-run".into())
+    });
     drop(first); // A cancelled leader must leave the attempt alive for its follower.
     let result =
       tokio::time::timeout(std::time::Duration::from_secs(31), second.result.clone()).await;
@@ -472,7 +604,7 @@ mod tests {
   #[tokio::test(start_paused = true)]
   async fn interactive_sign_in_outlives_browser_phase_timeout() {
     let host = uuid::Uuid::new_v4().to_string();
-    let attempt = shared_attempt(&host, |state| {
+    let attempt = shared_attempt("test-group", &host, HashSet::new(), |state| {
       choose_phases(async { Ok(None) }, || async move {
         state.lock().unwrap().opened = true;
         tokio::time::sleep(std::time::Duration::from_secs(90)).await;
@@ -485,7 +617,7 @@ mod tests {
   #[tokio::test(start_paused = true)]
   async fn browser_phase_timeout_does_not_consume_window_budget() {
     let host = uuid::Uuid::new_v4().to_string();
-    let attempt = shared_attempt(&host, |_| {
+    let attempt = shared_attempt("test-group", &host, HashSet::new(), |_| {
       choose_phases(std::future::pending(), || async {
         panic!("a browser timeout must not open a window")
       })
@@ -508,7 +640,7 @@ mod tests {
       // The queued download reports signInRequired despite cookies being present.
       row.session_expired();
       assert_eq!(row.begin(), Ok(()));
-      let attempt = shared_attempt(&host, |state| async move {
+      let attempt = shared_attempt("test-group", &host, HashSet::new(), |state| async move {
         let mut state = state.lock().unwrap();
         assert!(state.claim("chrome:rejected"));
         state.browser_proven = true;
@@ -556,7 +688,7 @@ mod tests {
     let mut exhausted = fresh_attempt();
     exhausted.opened = true;
     exhausted.sources.insert("chrome:stale".into());
-    let first = shared_attempt(&host, |state| async move {
+    let first = shared_attempt("test-group", &host, HashSet::new(), |state| async move {
       let mut state = state.lock().unwrap();
       if !state.may_open_sign_in() || !state.claim("chrome:stale") {
         return Err("browserLoginExhausted");
@@ -564,7 +696,7 @@ mod tests {
       state.opened = true;
       Ok(NEZZEL_SESSION.into())
     });
-    let second = shared_attempt(&host, |_| async {
+    let second = shared_attempt("test-group", &host, HashSet::new(), |_| async {
       panic!("must join the in-flight attempt")
     });
     assert_eq!(second.result.clone().await, Ok(NEZZEL_SESSION.into()));
@@ -581,6 +713,8 @@ mod tests {
   fn proved_browser_exhaustion_never_opens_sign_in() {
     let mut row = RowAttempts {
       sources: HashSet::new(),
+      completed: None,
+      last_used: None,
       attempts: 0,
       opened: false,
       browser_proven: false,
@@ -601,6 +735,8 @@ mod tests {
   fn second_proven_browser_can_be_tried_without_opening_sign_in() {
     let mut row = RowAttempts {
       sources: HashSet::from(["firefox:stale".into()]),
+      completed: None,
+      last_used: None,
       attempts: 0,
       opened: false,
       browser_proven: true,
@@ -615,6 +751,8 @@ mod tests {
   fn expired_browser_proof_allows_sign_in_once() {
     let mut row = RowAttempts {
       sources: HashSet::from(["chrome:Default".into()]),
+      completed: None,
+      last_used: None,
       attempts: 0,
       opened: false,
       browser_proven: true,
@@ -677,6 +815,8 @@ mod tests {
         key.clone(),
         RowAttempts {
           sources: HashSet::new(),
+          completed: None,
+          last_used: None,
           attempts: 0,
           opened: false,
           browser_proven: false,

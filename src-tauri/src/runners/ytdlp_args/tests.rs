@@ -1,6 +1,6 @@
 use super::{
   build_format_args, build_input_filter_args, build_location_args, build_output_args,
-  default_download_dir, path_preferences_for,
+  path_preferences_for,
 };
 use crate::models::download::{
   AudioFormat, AudioPostprocessPreset, DownloadSection, FormatOptions, InputFilterOptions,
@@ -908,12 +908,25 @@ fn location_args_use_track_specific_preferences() {
 }
 
 #[test]
-fn default_download_dir_is_nezzel_inside_system_downloads() {
-  let downloads = PathBuf::from("/Users/someone/Downloads");
-  assert_eq!(
-    default_download_dir(&downloads),
-    PathBuf::from("/Users/someone/Downloads/Nezzel")
-  );
+fn location_default_download_dir_uses_platform_home_then_fallback() {
+  for (downloads, home, expected) in [
+    (
+      Some("/custom/Downloads"),
+      Some("/home/user"),
+      "/custom/Downloads/Nezzel",
+    ),
+    (None, Some("/home/user"), "/home/user/Downloads/Nezzel"),
+    (None, None, "/working/Nezzel"),
+  ] {
+    assert_eq!(
+      super::location_args::default_download_dir_with(
+        || downloads.map(PathBuf::from),
+        || home.map(PathBuf::from),
+        || PathBuf::from("/working"),
+      ),
+      PathBuf::from(expected),
+    );
+  }
 }
 
 #[test]
@@ -924,7 +937,7 @@ fn location_args_unset_folders_save_to_downloads_nezzel() {
   let output = OutputSettings::default();
   assert!(output.download_dir.is_none());
   let prefs = PathPreferences::default();
-  let fallback = default_download_dir(&PathBuf::from("/home/someone/Downloads"));
+  let fallback = PathBuf::from("/home/someone/Downloads/Nezzel");
 
   for track in [TrackType::Video, TrackType::Audio, TrackType::Both] {
     let args = build_location_args(&track, &template_context, &output, &prefs, fallback.clone());
@@ -946,7 +959,7 @@ fn location_args_user_folder_wins_over_default() {
     ..OutputSettings::default()
   };
   let prefs = PathPreferences::default();
-  let fallback = default_download_dir(&PathBuf::from("/home/someone/Downloads"));
+  let fallback = PathBuf::from("/home/someone/Downloads/Nezzel");
 
   let args = build_location_args(
     &TrackType::Video,

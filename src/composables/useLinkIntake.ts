@@ -6,6 +6,7 @@ import { useSettingsStore } from '../stores/settings';
 import { useWatchClipboardStore } from '../stores/watchClipboard';
 import { useToastStore } from '../stores/toast';
 import { useClipboard } from './useClipboard';
+import { readClipboardLink } from '../tauri/clipboard';
 import { isValidUrl } from '../helpers/url';
 import {
   getUrlImportReadErrorToast,
@@ -75,9 +76,21 @@ export function useLinkIntake() {
     }
   }
 
-  function submit(immediateDownload = false) {
+  async function submit(immediateDownload = false) {
     const hasDraft = url.value.trim().length > 0;
-    const text = hasDraft ? url.value : clipboardContent.value;
+    let text = hasDraft ? url.value : clipboardContent.value;
+    if (!hasDraft && doPolling.value) {
+      // The placeholder can be a link behind: a copy just now has not reached the field yet. Read the clipboard
+      // itself, and never fall back to the older link.
+      const fresh = await readClipboardLink();
+      if (url.value.trim()) return;
+      clipboardContent.value = fresh || null;
+      text = fresh;
+      if (!fresh) {
+        toastStore.showToast(t('feedback.invalidLink'), { style: 'warning' });
+        return;
+      }
+    }
     if (!text) return;
     const parsed = parseUrlInputText(text);
     if (parsed.urls.length === 0) {

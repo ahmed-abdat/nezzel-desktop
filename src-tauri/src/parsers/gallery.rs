@@ -125,6 +125,19 @@ pub(crate) fn stderr_failure(message: &str, cdn: bool) -> GalleryError {
   } else {
     failure(&errors)
   };
+  // A CDN 429 is only a [downloader.http][warning]; the final [error] just says "Failed to download".
+  if cdn
+    && failed == GalleryError::Refused("imageSourceUnavailable")
+    && !errors.is_empty()
+    && message.lines().any(|line| {
+      line.starts_with("[downloader.http][warning]")
+        && line
+          .to_ascii_lowercase()
+          .contains("'429 too many requests'")
+    })
+  {
+    return GalleryError::Refused("rateLimited429");
+  }
   // gallery-dl logs a DNS outage as a [warning] and still exits 0 with a generic stdout error.
   if matches!(
     failed,
@@ -1359,6 +1372,26 @@ mod tests {
     assert_eq!(
       stderr_failure("[download][error] HTTP Error 429: Too Many Requests", false),
       GalleryError::Refused("rateLimited429")
+    );
+  }
+
+  #[test]
+  fn cdn_429_warning_before_a_failed_download_is_a_rate_limit() {
+    let flickr = "[downloader.http][warning] '429 Too Many Requests' for 'https://live.staticflickr.com/65535/1_o.jpg'\n[download][error] Failed to download asset.jpg";
+    assert_eq!(
+      stderr_failure(flickr, true),
+      GalleryError::Refused("rateLimited429")
+    );
+    assert_eq!(
+      stderr_failure(flickr, false),
+      GalleryError::Refused("imageSourceUnavailable")
+    );
+    assert_eq!(
+      stderr_failure(
+        "[downloader.http][warning] '429 Too Many Requests' for 'https://x/1.jpg'",
+        true
+      ),
+      GalleryError::Refused("imageSourceUnavailable")
     );
   }
 

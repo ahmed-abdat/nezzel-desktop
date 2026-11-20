@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1
+
+- Windows: a first download that Windows blocked while it was still checking the new file ("Access is denied") is now retried once by itself; if it still cannot be moved, the message says so instead of a plain "Couldn't download".
+- Windows: the first link you read after installing no longer ends in "taking too long to answer"; the first read gets more time and the built-in tools are started once in the background.
+- Windows: smaller once installed (the video tools share their libraries instead of shipping them twice), and the installer lists Hululsoft as the publisher.
+- A link you already saved now says "Already saved. Nothing new was downloaded", and the row menu has "Download again" when you want a second copy.
+- A cancelled download stays in the list as Cancelled after a restart, with Retry, and is never resumed by itself.
+- Clicking the toolbar right after copying a new link adds the new link, not the previous one.
+- Flickr albums and YouTube pages that answer "too many requests" now say so instead of reporting success or an unknown error.
+- On a system with no Downloads folder, files go to Downloads/Nezzel in your home folder.
+- Signing in: when one browser's login does not work, Nezzel tries the next one, with a single sign-in window.
+- The welcome screen's sample card shows the real clip's quality and size.
+
 ## 0.1.0
 
 First stable release.
