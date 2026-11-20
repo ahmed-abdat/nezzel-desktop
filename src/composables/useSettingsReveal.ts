@@ -1,4 +1,5 @@
 import { nextTick, ref, watch, type Ref } from 'vue';
+import { centreInPane } from '../helpers/paneScroll';
 
 /**
  * Settings search → the row it picked. The search asks for a row id; every disclosure ("Show more",
@@ -44,7 +45,7 @@ export async function revealSetting(root: ParentNode, id: string, parentId?: str
   if (!target) return null;
 
   const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  target.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  centreInPane(target, !reduce);
   target.removeAttribute('data-search-hit');
   void target.offsetWidth; // restart the fade when the same row is picked twice
   target.setAttribute('data-search-hit', '');

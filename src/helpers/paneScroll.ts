@@ -32,3 +32,33 @@ export function paneScrollTop(key: string, shift: boolean, origin: ScrollKeyOrig
   if (next === undefined) return null;
   return Math.min(max, Math.max(0, next));
 }
+
+/**
+ * Centres `target` in the pane that scrolls it, and moves nothing else. `scrollIntoView` also scrolls every
+ * ancestor that has room, the `overflow: hidden` window shell included: a settings search pick pushed the
+ * sidebar and toolbar out of the window, with no way to scroll them back.
+ */
+export function centreInPane(target: HTMLElement, smooth = false) {
+  let pane = target.parentElement;
+  // A scroller with nothing to scroll (a short list with a max height) cannot bring the row into view.
+  while (pane && !(/auto|scroll/.test(getComputedStyle(pane).overflowY) && pane.scrollHeight > pane.clientHeight)) pane = pane.parentElement;
+  if (!pane) return;
+  const box = target.getBoundingClientRect();
+  const view = pane.getBoundingClientRect();
+  pane.scrollTo?.({ top: pane.scrollTop + box.top - view.top - (view.height - box.height) / 2, behavior: smooth ? 'smooth' : 'auto' });
+}
+
+/** The window shell stays put whatever asks it to scroll (a focus, an anchor, a stray scrollIntoView). */
+export function pinWindowShell(doc: Document = document) {
+  const roots = [doc.documentElement, doc.body];
+  const reset = () => {
+    for (const el of roots) {
+      if (el.scrollTop) el.scrollTop = 0;
+      if (el.scrollLeft) el.scrollLeft = 0;
+    }
+  };
+  // The root's scroll event names the document in some engines and the root element in others.
+  doc.addEventListener('scroll', (event) => {
+    if (event.target === doc || roots.includes(event.target as HTMLElement)) reset();
+  }, { capture: true, passive: true });
+}

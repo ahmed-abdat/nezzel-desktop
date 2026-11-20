@@ -180,6 +180,7 @@ import { useSettingsStore } from '../../stores/settings';
 import { shortcutKeys } from '../../helpers/shortcut';
 import { quickDownloadText } from '../../helpers/quickDownloadText';
 import { LIST_SEARCH_ID } from '../../helpers/domIds';
+import { centreInPane } from '../../helpers/paneScroll';
 import { useCaptureShortcut } from '../../composables/useCaptureShortcut';
 import { useCapturePlatform } from '../../composables/useCapturePlatform';
 import SelectionBar from '../../components/downloads/SelectionBar.vue';
@@ -234,7 +235,7 @@ watch(() => mediaStore.duplicateFocus, async (request, _previous, onCleanup) => 
     mediaStore.duplicateFocus = null;
     return;
   }
-  row.scrollIntoView?.({ block: 'center' });
+  centreInPane(row);
   row.focus({ preventScroll: true });
   highlightedId.value = request.id;
   mediaStore.duplicateFocus = null;

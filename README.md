@@ -59,7 +59,14 @@ The app isn't code-signed yet, so macOS and Windows ask once before it opens. Th
 
 1. Open the downloaded `.dmg`. macOS says it can't verify it: click **Done** (not Move to Trash).
 2. Open System Settings → Privacy & Security, scroll down and click **Open Anyway**, then confirm with your password or Touch ID. The disk image opens.
-3. Drag Nezzel to Applications and open it. If macOS asks again, repeat step 2.
+3. Drag Nezzel to Applications and open it. macOS asks once more for the app itself: click **Done** and repeat step 2.
+
+<details>
+<summary>Watch it on macOS 15 (29 s)</summary>
+
+<img src=".github/assets/install-macos.gif" width="640" alt="Installing Nezzel on macOS 15: the downloaded disk image is opened and macOS says it was not opened, Done is clicked, Open Anyway is clicked in Privacy & Security and confirmed, Nezzel is dragged to Applications, the same notice and Open Anyway repeat for the app, then Nezzel opens.">
+
+</details>
 
 On macOS 14 or earlier you can right-click the app and choose Open instead. From Terminal: `xattr -dr com.apple.quarantine /Applications/Nezzel.app`.
 

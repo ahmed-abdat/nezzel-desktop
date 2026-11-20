@@ -14,8 +14,10 @@ import { useMediaStore } from './stores/media/media.ts';
 import { startCaptureDelivery } from './tauri/listeners/capture';
 import { watchTrayProgress } from './tauri/listeners/trayProgress';
 import { useOnboardingStore } from './stores/onboarding';
+import { pinWindowShell } from './helpers/paneScroll';
 
 export async function mountMainWindow() {
+  pinWindowShell();
   const pinia = createPinia();
   const app = createApp(App);
 
