@@ -67,7 +67,7 @@ test('a saved photo post opens in place and opens the chosen photo, in Arabic to
   await expect(lines.nth(1)).toContainText('post_2.jpg');
   // RTL: the icon sits at the start (right) of the line, the actions at its end (left).
   const second = lines.nth(1);
-  const icon = await second.locator('span[aria-hidden="true"]').first().boundingBox();
+  const icon = await second.getByTestId('saved-file-open').locator('span').first().boundingBox();
   const name = await second.locator('bdi').boundingBox();
   const open = await second.getByRole('button', { name: 'فتح', exact: true }).boundingBox();
   expect(icon!.x).toBeGreaterThan(name!.x);
